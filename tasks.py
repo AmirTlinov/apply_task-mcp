@@ -1224,6 +1224,10 @@ THEMES: Dict[str, Dict[str, str]] = {
         "text.dim": "#97a0a9",
         "text.dimmer": "#6d717a",
         "selected": "bg:#3c4c35 #eef7dc bold",  # мягкий olive, не черный
+        "selected-ok": "bg:#1e3f24 #f0fff0 bold",
+        "selected-warn": "bg:#4b3617 #fff4e0 bold",
+        "selected-fail": "bg:#4f2020 #ffecec bold",
+        "selected-unknown": "bg:#303236 #f0f0f0 bold",
         "header": "#ffb347 bold",
         "border": "#4b525a",
         "icon.check": "#9ad974 bold",
@@ -1240,6 +1244,10 @@ THEMES: Dict[str, Dict[str, str]] = {
         "text.dim": "#a7b0ba",
         "text.dimmer": "#6f757d",
         "selected": "bg:#23452f #f4ffe8 bold",  # тёмно-зеленая, но не черная
+        "selected-ok": "bg:#28492b #f4ffe8 bold",
+        "selected-warn": "bg:#4c3517 #fff5e1 bold",
+        "selected-fail": "bg:#4f2020 #ffecec bold",
+        "selected-unknown": "bg:#33363b #e8eaec bold",
         "header": "#ffb347 bold",
         "border": "#5a6169",
         "icon.check": "#b8f171 bold",
@@ -1909,6 +1917,13 @@ class TaskTrackerTUI:
         start_idx = min(self.list_view_offset, max(0, len(self.filtered_tasks) - visible_rows))
         end_idx = min(len(self.filtered_tasks), start_idx + visible_rows)
 
+        selection_styles = {
+            Status.OK: 'class:selected-ok',
+            Status.WARN: 'class:selected-warn',
+            Status.FAIL: 'class:selected-fail',
+            Status.UNKNOWN: 'class:selected-unknown',
+        }
+
         for idx in range(start_idx, end_idx):
             task = self.filtered_tasks[idx]
             status_text, status_class, _ = self._get_status_info(task)
@@ -1949,8 +1964,8 @@ class TaskTrackerTUI:
                     if col in cell_data:
                         line_parts.append(cell_data[col][0])
                 line = '|' + '|'.join(line_parts) + '|'
-                result.append(('class:selected', line))
-                result.append((status_class, ''))
+                style_class = selection_styles.get(task.status, 'class:selected')
+                result.append((style_class, line))
             else:
                 # Обычная строка
                 result.append(('class:border', '|'))
