@@ -1748,6 +1748,8 @@ class TaskTrackerTUI:
         result.append(('class:border', header_line + '\n'))
 
         # Рендер строк задач
+        compact_status_mode = len(layout.columns) <= 3
+
         for idx, task in enumerate(self.filtered_tasks):
             status_text, status_class, _ = self._get_status_info(task)
 
@@ -1755,7 +1757,15 @@ class TaskTrackerTUI:
             cell_data = {}
 
             if 'stat' in layout.columns:
-                cell_data['stat'] = (self._format_cell(status_text, widths['stat']), status_class)
+                if compact_status_mode:
+                    marker = '●'
+                    if status_class == 'class:status.unknown':
+                        marker = '○'
+                    stat_width = widths['stat']
+                    marker_text = marker.center(stat_width) if stat_width > 1 else marker
+                    cell_data['stat'] = (marker_text, status_class)
+                else:
+                    cell_data['stat'] = (self._format_cell(status_text, widths['stat']), status_class)
 
             if 'title' in layout.columns:
                 title_scrolled = self._apply_scroll(task.name)
