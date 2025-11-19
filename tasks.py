@@ -1223,10 +1223,10 @@ THEMES: Dict[str, Dict[str, str]] = {
         "text": "#d7dfe6",
         "text.dim": "#97a0a9",
         "text.dimmer": "#6d717a",
-        "selected": "bg:#3c4c35 #eef7dc bold",  # мягкий olive, не черный
-        "selected-ok": "bg:#1e3f24 #f0fff0 bold",
-        "selected-warn": "bg:#4b3617 #fff4e0 bold",
-        "selected-fail": "bg:#4f2020 #ffecec bold",
+        "selected": "bg:#3c4c35 #eef7dc bold",  # глобальный селект (резерв)
+        "selected-ok": "bg:#1d4125 #f6fff6 bold",
+        "selected-warn": "bg:#4b3717 #fff4df bold",
+        "selected-fail": "bg:#4d1f23 #ffecec bold",
         "selected-unknown": "bg:#303236 #f0f0f0 bold",
         "header": "#ffb347 bold",
         "border": "#4b525a",
@@ -1243,10 +1243,10 @@ THEMES: Dict[str, Dict[str, str]] = {
         "text": "#e8eaec",
         "text.dim": "#a7b0ba",
         "text.dimmer": "#6f757d",
-        "selected": "bg:#23452f #f4ffe8 bold",  # тёмно-зеленая, но не черная
-        "selected-ok": "bg:#28492b #f4ffe8 bold",
-        "selected-warn": "bg:#4c3517 #fff5e1 bold",
-        "selected-fail": "bg:#4f2020 #ffecec bold",
+        "selected": "bg:#23452f #f4ffe8 bold",  # глобальный селект (резерв)
+        "selected-ok": "bg:#1f4f2a #f4ffe8 bold",
+        "selected-warn": "bg:#4c3517 #fff2d9 bold",
+        "selected-fail": "bg:#4f1d1f #ffe7e7 bold",
         "selected-unknown": "bg:#33363b #e8eaec bold",
         "header": "#ffb347 bold",
         "border": "#5a6169",
