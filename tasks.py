@@ -764,6 +764,28 @@ def get_last_task() -> Tuple[Optional[str], Optional[str]]:
     return raw or None, None
 
 
+def resolve_task_reference(
+    raw_task_id: Optional[str],
+    domain: Optional[str],
+    phase: Optional[str],
+    component: Optional[str],
+) -> Tuple[str, str]:
+    """
+    Возвращает (task_id, domain) с поддержкой шорткатов:
+    '.' / 'last' / '@last' / пустое значение → последняя задача из .last.
+    """
+    sentinel = (raw_task_id or "").strip()
+    use_last = not sentinel or sentinel in (".", "last", "@last")
+    if use_last:
+        last_id, last_domain = get_last_task()
+        if not last_id:
+            raise ValueError("Нет последней задачи: вызови apply_task show/list/next для привязки контекста")
+        resolved_domain = derive_domain_explicit(domain, phase, component) or (last_domain or "")
+        return normalize_task_id(last_id), resolved_domain or ""
+    resolved_domain = derive_domain_explicit(domain, phase, component)
+    return normalize_task_id(sentinel), resolved_domain
+
+
 def normalize_task_id(raw: str) -> str:
     value = raw.strip().upper()
     if re.match(r"^TASK-\d+$", value):
@@ -3097,8 +3119,15 @@ def cmd_subtask(args) -> int:
 
 def cmd_ok(args) -> int:
     manager = TaskManager()
-    domain = derive_domain_explicit(args.domain, getattr(args, "phase", None), getattr(args, "component", None))
-    task_id = normalize_task_id(args.task_id)
+    try:
+        task_id, domain = resolve_task_reference(
+            getattr(args, "task_id", None),
+            getattr(args, "domain", None),
+            getattr(args, "phase", None),
+            getattr(args, "component", None),
+        )
+    except ValueError as exc:
+        return structured_error("ok", str(exc))
     index = args.index
     checkpoints = [
         ("criteria", args.criteria_note, "criteria_done"),
@@ -3119,10 +3148,13 @@ def cmd_ok(args) -> int:
         payload = {"task_id": task_id, "index": index}
         return structured_error("ok", msg or "Не удалось завершить подзадачу", payload=payload)
     detail = manager.load_task(task_id, domain)
+    save_last_task(task_id, domain)
     payload = {
         "task": task_to_dict(detail, include_subtasks=True) if detail else {"id": task_id},
         "subtask_index": index,
     }
+    if detail and 0 <= index < len(detail.subtasks):
+        payload["subtask"] = subtask_to_dict(detail.subtasks[index])
     return structured_response(
         "ok",
         status="OK",
@@ -3134,18 +3166,28 @@ def cmd_ok(args) -> int:
 
 def cmd_note(args) -> int:
     manager = TaskManager()
-    domain = derive_domain_explicit(args.domain, getattr(args, "phase", None), getattr(args, "component", None))
-    task_id = normalize_task_id(args.task_id)
+    try:
+        task_id, domain = resolve_task_reference(
+            getattr(args, "task_id", None),
+            getattr(args, "domain", None),
+            getattr(args, "phase", None),
+            getattr(args, "component", None),
+        )
+    except ValueError as exc:
+        return structured_error("note", str(exc))
     value = not args.undo
     ok, msg = manager.update_subtask_checkpoint(task_id, args.index, args.checkpoint, value, args.note or "", domain)
     if ok:
         detail = manager.load_task(task_id, domain)
+        save_last_task(task_id, domain)
         payload = {
             "task": task_to_dict(detail, include_subtasks=True) if detail else {"id": task_id},
             "checkpoint": args.checkpoint,
             "index": args.index,
             "state": "DONE" if value else "TODO",
         }
+        if detail and 0 <= args.index < len(detail.subtasks):
+            payload["subtask"] = subtask_to_dict(detail.subtasks[args.index])
         return structured_response(
             "note",
             status="OK",
@@ -3173,7 +3215,19 @@ def _parse_bulk_operations(raw: str) -> List[Dict[str, Any]]:
 
 def cmd_bulk(args) -> int:
     manager = TaskManager()
-    domain = derive_domain_explicit(args.domain, getattr(args, "phase", None), getattr(args, "component", None))
+    base_domain = derive_domain_explicit(args.domain, getattr(args, "phase", None), getattr(args, "component", None))
+    default_task_id: Optional[str] = None
+    default_task_domain: str = base_domain
+    if getattr(args, "task", None):
+        try:
+            default_task_id, default_task_domain = resolve_task_reference(
+                args.task,
+                getattr(args, "domain", None),
+                getattr(args, "phase", None),
+                getattr(args, "component", None),
+            )
+        except ValueError as exc:
+            return structured_error("bulk", str(exc))
     try:
         raw = _load_input_source(args.input, "bulk JSON payload")
         operations = _parse_bulk_operations(raw)
@@ -3181,7 +3235,24 @@ def cmd_bulk(args) -> int:
         return structured_error("bulk", str(exc))
     results = []
     for op in operations:
-        task_id = normalize_task_id(op.get("task") or op.get("task_id", ""))
+        raw_task_spec = op.get("task") or op.get("task_id", "")
+        op_domain = base_domain
+        try:
+            if raw_task_spec:
+                task_id, op_domain = resolve_task_reference(
+                    raw_task_spec,
+                    getattr(args, "domain", None),
+                    getattr(args, "phase", None),
+                    getattr(args, "component", None),
+                )
+            elif default_task_id:
+                task_id = default_task_id
+                op_domain = default_task_domain
+            else:
+                task_id = ""
+        except ValueError as exc:
+            results.append({"task": raw_task_spec, "status": "ERROR", "message": str(exc)})
+            continue
         index = op.get("index")
         if not task_id or not isinstance(index, int):
             results.append({"task": task_id, "index": index, "status": "ERROR", "message": "Укажи task/index"})
@@ -3194,7 +3265,7 @@ def cmd_bulk(args) -> int:
                 continue
             done = bool(spec.get("done", True))
             note = spec.get("note", "") or ""
-            ok, msg = manager.update_subtask_checkpoint(task_id, index, checkpoint, done, note, domain)
+            ok, msg = manager.update_subtask_checkpoint(task_id, index, checkpoint, done, note, op_domain)
             if not ok:
                 entry_payload["status"] = "ERROR"
                 entry_payload["message"] = msg or f"Не удалось обновить {checkpoint}"
@@ -3204,15 +3275,23 @@ def cmd_bulk(args) -> int:
             results.append(entry_payload)
             continue
         if op.get("complete"):
-            ok, msg = manager.set_subtask(task_id, index, True, domain)
+            ok, msg = manager.set_subtask(task_id, index, True, op_domain)
             if not ok:
                 entry_payload["status"] = "ERROR"
                 entry_payload["message"] = msg or "Не удалось закрыть подзадачу"
                 results.append(entry_payload)
                 continue
-        detail = manager.load_task(task_id, domain)
+        detail = manager.load_task(task_id, op_domain)
+        save_last_task(task_id, op_domain)
         entry_payload["status"] = "OK"
         entry_payload["task_detail"] = task_to_dict(detail, include_subtasks=True) if detail else {"id": task_id}
+        if detail and 0 <= index < len(detail.subtasks):
+            entry_payload["subtask"] = subtask_to_dict(detail.subtasks[index])
+            entry_payload["checkpoint_states"] = {
+                "criteria": detail.subtasks[index].criteria_confirmed,
+                "tests": detail.subtasks[index].tests_confirmed,
+                "blockers": detail.subtasks[index].blockers_resolved,
+            }
         results.append(entry_payload)
     message = f"Выполнено операций: {sum(1 for r in results if r.get('status') == 'OK')}/{len(results)}"
     return structured_response(
@@ -3449,6 +3528,46 @@ def _template_subtask_entry(idx: int) -> Dict[str, Any]:
     }
 
 
+def _template_test_matrix() -> List[Dict[str, str]]:
+    return [
+        {
+            "name": "Юнит + интеграция ≥85%",
+            "command": "pytest -q --maxfail=1 --cov=src --cov-report=xml",
+            "evidence": "coverage.xml ≥85%, отчёт приложен в задачу",
+        },
+        {
+            "name": "Конфигурационный/перф",
+            "command": "pytest -q tests/perf -k scenario && python scripts/latency_audit.py",
+            "evidence": "p95 ≤ целевой SLO, лог проверки загружен в репозиторий",
+        },
+        {
+            "name": "Регресс + ручная приёмка",
+            "command": "pytest -q tests/e2e && ./scripts/manual-checklist.md",
+            "evidence": "Чеклист приёмки с таймстемпом и ссылкой на демо",
+        },
+    ]
+
+
+def _template_docs_matrix() -> List[Dict[str, str]]:
+    return [
+        {
+            "artifact": "ADR",
+            "path": "docs/adr/ADR-<номер>.md",
+            "goal": "Зафиксировать выбранную архитектуру и компромиссы hexagonal monolith.",
+        },
+        {
+            "artifact": "Runbook/операционный гайд",
+            "path": "docs/runbooks/<feature>.md",
+            "goal": "Описать фич-срез, команды запуска и алерты.",
+        },
+        {
+            "artifact": "Changelog/RELNOTES",
+            "path": "docs/releases/<date>-<feature>.md",
+            "goal": "Протоколировать влияние на пользователей, метрики и тесты.",
+        },
+    ]
+
+
 def cmd_template_subtasks(args) -> int:
     count = max(3, args.count)
     template = [_template_subtask_entry(i + 1) for i in range(count)]
@@ -3456,6 +3575,8 @@ def cmd_template_subtasks(args) -> int:
         "type": "subtasks",
         "count": count,
         "template": template,
+        "tests_template": _template_test_matrix(),
+        "documentation_template": _template_docs_matrix(),
         "usage": "apply_task ... --subtasks 'JSON' | --subtasks @file | --subtasks - (всё на русском)",
     }
     return structured_response(
@@ -3522,7 +3643,12 @@ def build_parser() -> argparse.ArgumentParser:
     cp.add_argument("--description", "-d", required=True)
     cp.add_argument("--context", "-c")
     cp.add_argument("--tags", "-t")
-    cp.add_argument("--subtasks", "-s", required=True, help="semicolon-separated subtasks covering: plan; validation; risks; readiness; execution; final check")
+    cp.add_argument(
+        "--subtasks",
+        "-s",
+        required=True,
+        help="JSON массив подзадач (строкой, --subtasks @file.json или --subtasks - для STDIN; всё на русском)",
+    )
     cp.add_argument("--dependencies")
     cp.add_argument("--next-steps", "-n")
     cp.add_argument("--tests", required=True)
@@ -3547,7 +3673,12 @@ def build_parser() -> argparse.ArgumentParser:
     tp.add_argument("--description", "-d", required=True)
     tp.add_argument("--context", "-c")
     tp.add_argument("--tags", "-t")
-    tp.add_argument("--subtasks", "-s", required=True, help="semicolon-separated subtasks covering: plan; validation; risks; readiness; execution; final check")
+    tp.add_argument(
+        "--subtasks",
+        "-s",
+        required=True,
+        help="JSON массив подзадач (строкой, --subtasks @file.json или --subtasks - для STDIN; всё на русском)",
+    )
     tp.add_argument("--dependencies")
     tp.add_argument("--next-steps", "-n")
     tp.add_argument("--tests", required=True)
@@ -3626,6 +3757,7 @@ def build_parser() -> argparse.ArgumentParser:
     # bulk macro
     blp = sub.add_parser("bulk", help="Выполнить набор чекпоинтов из JSON payload")
     blp.add_argument("--input", "-i", default="-", help="Источник JSON (строка, @file, '-'=STDIN)")
+    blp.add_argument("--task", help="task_id по умолчанию для операций без поля task (используй '.'/last для .last)")
     add_context_args(blp)
     blp.set_defaults(func=cmd_bulk)
 
