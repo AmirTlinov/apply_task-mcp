@@ -1231,7 +1231,7 @@ THEMES: Dict[str, Dict[str, str]] = {
         "border": "#4b525a",
         "icon.check": "#9ad974 bold",
         "icon.warn": "#f9ac60 bold",
-        "icon.fail": "#ff2f34 bold",
+        "icon.fail": "#ff5156 bold",
     },
     "dark-contrast": {
         "": "#e8eaec",  # без черной подложки
@@ -1247,7 +1247,7 @@ THEMES: Dict[str, Dict[str, str]] = {
         "border": "#5a6169",
         "icon.check": "#b8f171 bold",
         "icon.warn": "#f9ac60 bold",
-        "icon.fail": "#ff2f34 bold",
+        "icon.fail": "#ff5156 bold",
     },
 }
 
