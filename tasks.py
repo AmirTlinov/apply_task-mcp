@@ -2486,11 +2486,11 @@ class TaskTrackerTUI:
         parts.extend(path_display)
         desc_header = " Описание: "
         if lines:
-            parts.extend([("", "\n"), ("class:text.dim", desc_header + lines[0])])
+            parts.extend([("", "\n"), ("class:text.dim", desc_header), ("class:text", lines[0])])
             if len(lines) > 1:
-                parts.extend([("", "\n"), ("class:text.dim", " " * len(desc_header) + lines[1])])
+                parts.extend([("", "\n"), ("class:text", " " * len(desc_header) + lines[1])])
         else:
-            parts.extend([("", "\n"), ("class:text.dim", f" {desc_header}—")])
+            parts.extend([("", "\n"), ("class:text.dim", desc_header), ("class:text", "—")])
         legend = " ◉=OK/В работе | ◎=Блокер | %=прогресс | Σ=подзадачи | ?=подсказки"
         parts.extend([("", "\n"), ("class:text.dimmer", legend + scroll_info)])
         return FormattedText(parts)
