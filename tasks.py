@@ -1977,8 +1977,7 @@ class TaskTrackerTUI:
                     result.append(('class:selected', line))
                 else:
                     style_key = selection_styles.get(task.status, 'selected')
-                    style_name = f"class:{style_key} {status_class}"
-                    result.append((style_name, line))
+                    result.append((f"class:{style_key}", line))
             else:
                 # Обычная строка
                 result.append(('class:border', '|'))
