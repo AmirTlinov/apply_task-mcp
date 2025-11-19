@@ -128,6 +128,12 @@ class ApplyTaskResolveTests(unittest.TestCase):
         meta = yaml.safe_load(parts[1]) if len(parts) > 1 else {}
         return meta, content
 
+    def _tasks_root(self):
+        return Path(__file__).resolve().parents[1] / ".tasks"
+
+    def _task_files(self):
+        return list(self._tasks_root().glob("TASK-*.task"))
+
     def _flagship_subtasks_payload(self):
         entries = [
             {
@@ -289,6 +295,52 @@ class ApplyTaskResolveTests(unittest.TestCase):
         body = _json_body(result)
         self.assertEqual(body["status"], "OK")
 
+    @pytest.mark.usefixtures("isolated_tasks")
+    def test_create_validate_only_does_not_persist(self):
+        subtasks = self._flagship_subtasks_payload()
+        result = self._run_apply([
+            "create",
+            "ValOnly",
+            "--parent", "TASK-010",
+            "--tests", "unit",
+            "--risks", "deps",
+            "--subtasks", subtasks,
+            "--description", "validation",
+            "--validate-only",
+        ])
+        self.assertEqual(result.returncode, 0)
+        body = _json_body(result)
+        self.assertEqual(body["command"], "create.validate")
+        self.assertEqual(body["status"], "OK")
+        self.assertEqual(len(self._task_files()), 0)
+
+    @pytest.mark.usefixtures("isolated_tasks")
+    def test_create_validate_only_reports_errors(self):
+        invalid_subtasks = json.dumps([
+            {
+                "title": "Too short",
+                "criteria": ["metric"],
+                "tests": ["unit"],
+                "blockers": ["risk"],
+            }
+        ], ensure_ascii=False)
+        result = self._run_apply([
+            "create",
+            "ValOnlyFail",
+            "--parent", "TASK-011",
+            "--tests", "unit",
+            "--risks", "deps",
+            "--subtasks", invalid_subtasks,
+            "--description", "validation",
+            "--validate-only",
+        ])
+        self.assertNotEqual(result.returncode, 0)
+        body = _json_body(result)
+        self.assertEqual(body["command"], "create.validate")
+        self.assertEqual(body["status"], "ERROR")
+        self.assertIn("issues", body["payload"])
+        self.assertEqual(len(self._task_files()), 0)
+
     def test_ok_requires_subtasks_completed(self):
         # create task with subtasks (incomplete), then try mark OK -> expect failure
         subtasks = self._flagship_subtasks_payload()
@@ -328,6 +380,25 @@ class ApplyTaskResolveTests(unittest.TestCase):
         body = _json_body(result)
         self.assertIn("JSON", body["message"])
         self.assertEqual(body["status"], "ERROR")
+
+    @pytest.mark.usefixtures("isolated_tasks")
+    def test_task_validate_only_preview(self):
+        subtasks = self._flagship_subtasks_payload()
+        result = self._run_apply([
+            "task",
+            "Smart preview #feature",
+            "--parent", "ROOT",
+            "--tests", "unit",
+            "--risks", "deps",
+            "--subtasks", subtasks,
+            "--description", "desc",
+            "--validate-only",
+        ])
+        self.assertEqual(result.returncode, 0)
+        body = _json_body(result)
+        self.assertEqual(body["command"], "task.validate")
+        self.assertEqual(body["status"], "OK")
+        self.assertEqual(len(self._task_files()), 0)
 
     def test_macro_ok_closes_subtask(self):
         task_id = self._create_flagship_task("MacroOK")
@@ -438,6 +509,20 @@ class ApplyTaskResolveTests(unittest.TestCase):
         self.assertEqual(len(body["payload"]["template"]), 4)
         self.assertGreaterEqual(len(body["payload"]["tests_template"]), 1)
         self.assertGreaterEqual(len(body["payload"]["documentation_template"]), 1)
+
+    @pytest.mark.usefixtures("isolated_tasks")
+    def test_checkpoint_auto_completes_subtask(self):
+        task_id = self._create_flagship_task("WizardFlow")
+        result = self._run_apply([
+            "checkpoint", task_id, "--subtask", "0", "--auto", "--note", "wizard"
+        ])
+        self.assertEqual(result.returncode, 0)
+        body = _json_body(result)
+        self.assertEqual(body["command"], "checkpoint")
+        self.assertTrue(body["payload"]["completed"])
+        self.assertGreaterEqual(len(body["payload"]["operations"]), 3)
+        meta, _ = self._read_task_metadata(task_id)
+        self.assertGreaterEqual(meta["progress"], 16)
 
 
 @pytest.mark.usefixtures("isolated_tasks")

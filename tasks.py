@@ -303,6 +303,21 @@ def structured_error(command: str, message: str, *, payload: Optional[Dict[str, 
     return structured_response(command, status=status, message=message, payload=payload, exit_code=1)
 
 
+def validation_response(command: str, success: bool, message: str, payload: Optional[Dict[str, Any]] = None) -> int:
+    body = payload.copy() if payload else {}
+    body["mode"] = "validate-only"
+    label = f"{command}.validate"
+    status = "OK" if success else "ERROR"
+    return structured_response(
+        label,
+        status=status,
+        message=message,
+        payload=body,
+        summary=message,
+        exit_code=0 if success else 1,
+    )
+
+
 class Status(Enum):
     OK = ("OK", "green", "+")
     WARN = ("WARN", "yellow", "~")
@@ -2568,6 +2583,16 @@ def cmd_create(args) -> int:
     args.parent = normalize_task_id(args.parent)
     domain = derive_domain_explicit(args.domain, args.phase, args.component)
 
+    def fail(message: str, payload: Optional[Dict[str, Any]] = None) -> int:
+        if getattr(args, "validate_only", False):
+            return validation_response("create", False, message, payload)
+        return structured_error("create", message, payload=payload)
+
+    def success_preview(task: TaskDetail, message: str = "Валидация пройдена") -> int:
+        task_snapshot = task_to_dict(task, include_subtasks=True)
+        payload = {"task": task_snapshot}
+        return validation_response("create", True, message, payload)
+
     task = manager.create_task(
         args.title,
         status=args.status,
@@ -2578,7 +2603,7 @@ def cmd_create(args) -> int:
         component=args.component or "",
     )
     if not args.description or not args.description.strip() or args.description.strip().upper() == "TBD":
-        return structured_error("create", "Описание обязательно и не может быть пустым/TBD")
+        return fail("Описание обязательно и не может быть пустым/TBD")
     task.description = args.description.strip()
     task.context = args.context or ""
     if args.tags:
@@ -2588,7 +2613,7 @@ def cmd_create(args) -> int:
             subtasks_payload = _load_subtasks_source(args.subtasks)
             task.subtasks = parse_subtasks_flexible(subtasks_payload)
         except SubtaskParseError as e:
-            return structured_error("create", f"Ошибка парсинга подзадач: {e}")
+            return fail(f"Ошибка парсинга подзадач: {e}")
     if args.dependencies:
         for dep in args.dependencies.split(","):
             dep = dep.strip()
@@ -2603,13 +2628,13 @@ def cmd_create(args) -> int:
             if t.strip():
                 task.success_criteria.append(t.strip())
     if not task.success_criteria:
-        return structured_error("create", "Укажи тесты/критерии успеха через --tests")
+        return fail("Укажи тесты/критерии успеха через --tests")
     if args.risks:
         for r in args.risks.split(";"):
             if r.strip():
                 task.risks.append(r.strip())
     if not task.risks:
-        return structured_error("create", "Добавь риски через --risks (например: 'dep outage;perf regression')")
+        return fail("Добавь риски через --risks (например: 'dep outage;perf regression')")
 
     # Flagship-валидация подзадач
     flagship_ok, flagship_issues = validate_flagship_subtasks(task.subtasks)
@@ -2623,9 +2648,11 @@ def cmd_create(args) -> int:
                 "Атомарные действия без 'и затем'",
             ],
         }
-        return structured_error("create", "Подзадачи не соответствуют flagship-качеству", payload=payload)
+        return fail("Подзадачи не соответствуют flagship-качеству", payload=payload)
 
     task.update_status_from_progress()
+    if getattr(args, "validate_only", False):
+        return success_preview(task)
     manager.save_task(task)
     save_last_task(task.id, task.domain)
     payload = {"task": task_to_dict(task, include_subtasks=True)}
@@ -2645,6 +2672,15 @@ def cmd_smart_create(args) -> int:
     title, auto_tags, auto_deps = parse_smart_title(args.title)
     args.parent = normalize_task_id(args.parent)
 
+    def fail(message: str, payload: Optional[Dict[str, Any]] = None) -> int:
+        if getattr(args, "validate_only", False):
+            return validation_response("task", False, message, payload)
+        return structured_error("task", message, payload=payload)
+
+    def success_preview(task: TaskDetail, message: str = "Валидация пройдена") -> int:
+        payload = {"task": task_to_dict(task, include_subtasks=True)}
+        return validation_response("task", True, message, payload)
+
     domain = derive_domain_explicit(args.domain, args.phase, args.component)
     task = manager.create_task(
         title,
@@ -2656,7 +2692,7 @@ def cmd_smart_create(args) -> int:
         component=args.component or "",
     )
     if not args.description or not args.description.strip() or args.description.strip().upper() == "TBD":
-        return structured_error("task", "Описание обязательно и не может быть пустым/TBD")
+        return fail("Описание обязательно и не может быть пустым/TBD")
     task.description = args.description.strip()
     task.context = args.context or ""
     task.tags = [t.strip() for t in args.tags.split(",")] if args.tags else auto_tags
@@ -2671,18 +2707,18 @@ def cmd_smart_create(args) -> int:
     elif template_tests:
         task.success_criteria = [template_tests]
     if not task.success_criteria:
-        return structured_error("task", "Укажи тесты/критерии успеха через --tests")
+        return fail("Укажи тесты/критерии успеха через --tests")
     if args.risks:
         task.risks = [r.strip() for r in args.risks.split(";") if r.strip()]
     if not task.risks:
-        return structured_error("task", "Добавь риски через --risks (например: 'dep outage;perf regression')")
+        return fail("Добавь риски через --risks (например: 'dep outage;perf regression')")
 
     if args.subtasks:
         try:
             subtasks_payload = _load_subtasks_source(args.subtasks)
             task.subtasks = parse_subtasks_flexible(subtasks_payload)
         except SubtaskParseError as e:
-            return structured_error("task", f"Ошибка парсинга подзадач: {e}")
+            return fail(f"Ошибка парсинга подзадач: {e}")
 
     # Flagship-валидация подзадач
     flagship_ok, flagship_issues = validate_flagship_subtasks(task.subtasks)
@@ -2696,9 +2732,11 @@ def cmd_smart_create(args) -> int:
                 "Атомарные действия без 'и затем'",
             ],
         }
-        return structured_error("task", "Подзадачи не соответствуют flagship-качеству", payload=payload)
+        return fail("Подзадачи не соответствуют flagship-качеству", payload=payload)
 
     task.update_status_from_progress()
+    if getattr(args, "validate_only", False):
+        return success_preview(task)
     manager.save_task(task)
     save_last_task(task.id, task.domain)
     payload = {"task": task_to_dict(task, include_subtasks=True)}
@@ -3303,6 +3341,129 @@ def cmd_bulk(args) -> int:
     )
 
 
+def cmd_checkpoint(args) -> int:
+    auto_mode = getattr(args, "auto", False)
+    base_note = (getattr(args, "note", "") or "").strip()
+    if not auto_mode and not is_interactive():
+        return structured_error(
+            "checkpoint",
+            "Мастер чекпоинтов требует интерактивный терминал (или укажи --auto)",
+        )
+    try:
+        task_id, domain = resolve_task_reference(
+            getattr(args, "task_id", None),
+            getattr(args, "domain", None),
+            getattr(args, "phase", None),
+            getattr(args, "component", None),
+        )
+    except ValueError as exc:
+        return structured_error("checkpoint", str(exc))
+    manager = TaskManager()
+    detail = manager.load_task(task_id, domain)
+    if not detail:
+        return structured_error("checkpoint", f"Задача {task_id} не найдена")
+    if not detail.subtasks:
+        return structured_error("checkpoint", f"Задача {task_id} не содержит подзадач")
+
+    def pick_subtask_index() -> int:
+        if args.subtask is not None:
+            return args.subtask
+        if auto_mode:
+            for idx, st in enumerate(detail.subtasks):
+                if not st.completed:
+                    return idx
+            return 0
+        print("\n[Шаг 1] Выбор подзадачи")
+        for idx, st in enumerate(detail.subtasks):
+            flags = subtask_flags(st)
+            glyphs = ''.join(['✓' if flags[k] else '·' for k in ("criteria", "tests", "blockers")])
+            print(f"  {idx}. [{glyphs}] {'[OK]' if st.completed else '[ ]'} {st.title}")
+        while True:
+            raw = prompt("Введите индекс подзадачи", default="0")
+            try:
+                value = int(raw)
+            except ValueError:
+                print("  [!] Используй целое число")
+                continue
+            if 0 <= value < len(detail.subtasks):
+                return value
+            print("  [!] Недопустимый индекс")
+
+    subtask_index = pick_subtask_index()
+    if subtask_index < 0 or subtask_index >= len(detail.subtasks):
+        return structured_error("checkpoint", "Неверный индекс подзадачи")
+
+    checkpoint_labels = [
+        ("criteria", "Критерии"),
+        ("tests", "Тесты"),
+        ("blockers", "Блокеры"),
+    ]
+    operations: List[Dict[str, Any]] = []
+
+    for checkpoint, label in checkpoint_labels:
+        st = manager.load_task(task_id, domain)
+        if not st:
+            return structured_error("checkpoint", "Задача недоступна")
+        sub = st.subtasks[subtask_index]
+        attr_map = {
+            "criteria": sub.criteria_confirmed,
+            "tests": sub.tests_confirmed,
+            "blockers": sub.blockers_resolved,
+        }
+        if attr_map[checkpoint]:
+            operations.append({"checkpoint": checkpoint, "state": "already"})
+            continue
+        note_value = base_note
+        confirm_checkpoint = auto_mode
+        if not auto_mode:
+            print(f"\n[Шаг] {label}: {sub.title}")
+            print(f"  Текущее состояние: TODO. Подтвердить {label.lower()}?")
+            confirm_checkpoint = confirm(f"Подтвердить {label.lower()}?", default=True)
+            if not confirm_checkpoint:
+                operations.append({"checkpoint": checkpoint, "state": "skipped"})
+                continue
+            if not note_value:
+                note_value = prompt("Комментарий/доказательство", default="")
+        if not note_value:
+            note_value = f"checkpoint:{checkpoint}"
+        ok, msg = manager.update_subtask_checkpoint(task_id, subtask_index, checkpoint, True, note_value, domain)
+        if not ok:
+            return structured_error("checkpoint", msg or f"Не удалось подтвердить {label.lower()}")
+        operations.append({"checkpoint": checkpoint, "state": "confirmed", "note": note_value})
+
+    detail = manager.load_task(task_id, domain)
+    completed = False
+    if detail:
+        sub = detail.subtasks[subtask_index]
+        ready = sub.ready_for_completion()
+        if ready:
+            mark_done = auto_mode
+            if not auto_mode:
+                mark_done = confirm("Все чекпоинты отмечены. Закрыть подзадачу?", default=True)
+            if mark_done:
+                ok, msg = manager.set_subtask(task_id, subtask_index, True, domain)
+                if not ok:
+                    return structured_error("checkpoint", msg or "Не удалось закрыть подзадачу")
+                operations.append({"checkpoint": "done", "state": "completed"})
+                completed = True
+    detail = manager.load_task(task_id, domain)
+    save_last_task(task_id, domain)
+    payload = {
+        "task": task_to_dict(detail, include_subtasks=True) if detail else {"id": task_id},
+        "subtask_index": subtask_index,
+        "operations": operations,
+        "auto": auto_mode,
+        "completed": completed,
+    }
+    return structured_response(
+        "checkpoint",
+        status="OK",
+        message="Мастер чекпоинтов завершён",
+        payload=payload,
+        summary=f"{task_id}#{subtask_index} checkpoints",
+    )
+
+
 def cmd_move(args) -> int:
     """Переместить задачу в другую подпапку .tasks"""
     manager = TaskManager()
@@ -3653,6 +3814,7 @@ def build_parser() -> argparse.ArgumentParser:
     cp.add_argument("--next-steps", "-n")
     cp.add_argument("--tests", required=True)
     cp.add_argument("--risks", help="semicolon-separated risks", required=True)
+    cp.add_argument("--validate-only", action="store_true", help="Проверить payload без записи задачи")
     add_context_args(cp)
     cp.set_defaults(func=cmd_create)
 
@@ -3683,6 +3845,7 @@ def build_parser() -> argparse.ArgumentParser:
     tp.add_argument("--next-steps", "-n")
     tp.add_argument("--tests", required=True)
     tp.add_argument("--risks", help="semicolon-separated risks", required=True)
+    tp.add_argument("--validate-only", action="store_true", help="Проверить payload без записи задачи")
     add_context_args(tp)
     tp.set_defaults(func=cmd_smart_create)
 
@@ -3760,6 +3923,22 @@ def build_parser() -> argparse.ArgumentParser:
     blp.add_argument("--task", help="task_id по умолчанию для операций без поля task (используй '.'/last для .last)")
     add_context_args(blp)
     blp.set_defaults(func=cmd_bulk)
+
+    # checkpoint wizard
+    ckp = sub.add_parser(
+        "checkpoint",
+        help="Пошаговый мастер подтверждения критериев/тестов/блокеров",
+        description=(
+            "Интерактивно проводит через чекпоинты выбранной подзадачи (критерии → тесты → блокеры).\n"
+            "Поддерживает шорткат '.'/last и режим --auto для нефтерминальных сред."
+        ),
+    )
+    ckp.add_argument("task_id", nargs="?", help="TASK-ID или '.' для последней задачи")
+    ckp.add_argument("--subtask", type=int, help="Индекс подзадачи (0..n-1)")
+    ckp.add_argument("--note", help="Комментарий по умолчанию для чекпоинтов")
+    ckp.add_argument("--auto", action="store_true", help="Подтвердить все чекпоинты без вопросов")
+    add_context_args(ckp)
+    ckp.set_defaults(func=cmd_checkpoint)
 
     # subtask
     stp = sub.add_parser("subtask", help="Управление подзадачами (add/done/undo)")

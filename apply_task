@@ -191,7 +191,7 @@ def main():
         args = [a for a in args if a != '-v']
 
     # Определение команды
-    known_commands = ['show', 'list', 'done', 'start', 'fail', 'next', 'suggest', 'sg', 'tui', 'lint', 'quick', 'which', 'help', 'create', 'guided', 'subtask', 'clean', 'template', 'ok', 'note', 'bulk', 'history', 'replay', 'update', 'task', 'edit']
+    known_commands = ['show', 'list', 'done', 'start', 'fail', 'next', 'suggest', 'sg', 'tui', 'lint', 'quick', 'which', 'help', 'create', 'guided', 'subtask', 'clean', 'template', 'ok', 'note', 'bulk', 'history', 'replay', 'update', 'task', 'edit', 'checkpoint']
 
     if cmd not in known_commands:
         # Создание задачи: apply_task "Fix bug #critical" --parent TASK-XXX --tests "..."
@@ -230,6 +230,8 @@ def main():
         return run_tasks_py(['note'] + args, verbose=verbose)
     elif cmd == 'bulk':
         return run_tasks_py(['bulk'] + args, verbose=verbose)
+    elif cmd == 'checkpoint':
+        return run_tasks_py(['checkpoint'] + args, verbose=verbose)
     elif cmd == 'update':
         return run_tasks_py(['update'] + args, verbose=verbose)
     elif cmd == 'task':
@@ -331,6 +333,7 @@ def main():
         help_payload = {
             "overview": "apply_task — флагманский CLI для AI-операторов. Пиши описания задач/подзадач только на русском языке и всегда привязывай их к нужному домену/папке (--domain/-F, см. DOMAIN_STRUCTURE.md).",
             "automation": [
+                "create|task --validate-only — прогоняет все проверки без записи .task, удобно для AI перед коммитом.",
                 "create|guided — создание задач; всегда передавай --parent/--description/--tests/--risks/--subtasks (JSON). --subtasks принимает строку, @файл или '-' для STDIN.",
                 "show|list — просмотр задач с учётом --domain/-F или --phase/--component.",
                 "start|done|fail — дисциплина WARN/OK/FAIL для текущей или указанной задачи.",
@@ -339,6 +342,7 @@ def main():
                 "next|quick|suggest|sg — подсказки по приоритету.",
                 "template subtasks --count N — генерация JSON с подзадачами, тестовым планом и требованиями к документации.",
                 "ok|note|bulk — макросы для чекпоинтов ('.'/last → последняя задача, bulk поддерживает --task).",
+                "checkpoint [TASK] — пошаговый мастер критериев/тестов/блокеров (есть режим --auto).",
                 "history [N] / replay N — история и повтор команд.",
                 "lint [--fix] — проверка структуры .tasks.",
             ],
@@ -358,6 +362,7 @@ def main():
                 "После выполнения подпункта: apply_task subtask TASK-ID --criteria-done <idx> --note \"доказательство\" (аналогично для tests/blockers).",
                 "--done <idx> доступно только если все три чекпоинта в статусе DONE.",
                 "Макросы ok|note|bulk поддерживают шорткат '.'/last вместо task_id и автоматически обновляют историю/контекст.",
+                "apply_task checkpoint [TASK] — guided-мастер критериев/тестов/блокеров (интерактивно или --auto).",
             ],
             "context": [
                 "--domain/-F переопределяет .last; без него используется последний контекст.",
