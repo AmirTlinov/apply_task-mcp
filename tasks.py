@@ -1286,6 +1286,8 @@ class TaskTrackerTUI:
         self.status_message: str = ""
         self.status_message_expires: float = 0.0
         self.help_visible: bool = False
+        self.list_view_offset: int = 0
+        self.footer_height: int = 9
 
         # Editing mode
         self.editing_mode = False
@@ -1472,7 +1474,7 @@ class TaskTrackerTUI:
         self.task_list = Window(content=FormattedTextControl(self.get_task_list_text), always_hide_cursor=True, wrap_lines=False)
         self.side_preview = Window(content=FormattedTextControl(self.get_side_preview_text), always_hide_cursor=True, wrap_lines=True, width=Dimension(weight=2))
         self.detail_view = Window(content=FormattedTextControl(self.get_detail_text), always_hide_cursor=True, wrap_lines=True)
-        self.footer = Window(content=FormattedTextControl(self.get_footer_text), height=Dimension(min=9, max=9))
+        self.footer = Window(content=FormattedTextControl(self.get_footer_text), height=Dimension(min=self.footer_height, max=self.footer_height))
 
         self.normal_body = VSplit(
             [
@@ -1502,6 +1504,31 @@ class TaskTrackerTUI:
         except (AttributeError, ValueError, OSError):
             return 100
 
+    @staticmethod
+    def get_terminal_height() -> int:
+        try:
+            return os.get_terminal_size().lines
+        except (AttributeError, ValueError, OSError):
+            return 40
+
+    def _visible_row_limit(self) -> int:
+        total = self.get_terminal_height()
+        usable = total - (self.footer_height + 4)  # статус + отступы
+        return max(5, usable)
+
+    def _ensure_selection_visible(self):
+        total = len(self.filtered_tasks)
+        visible = self._visible_row_limit()
+        if total <= visible:
+            self.list_view_offset = 0
+            return
+        max_offset = max(0, total - visible)
+        if self.selected_index < self.list_view_offset:
+            self.list_view_offset = self.selected_index
+        elif self.selected_index >= self.list_view_offset + visible:
+            self.list_view_offset = self.selected_index - visible + 1
+        self.list_view_offset = max(0, min(self.list_view_offset, max_offset))
+
     def move_vertical_selection(self, delta: int) -> None:
         """
         Move selected row/panel pointer by `delta`, clamping to available items.
@@ -1520,6 +1547,7 @@ class TaskTrackerTUI:
                 self.selected_index = 0
                 return
             self.selected_index = max(0, min(self.selected_index + delta, total - 1))
+            self._ensure_selection_visible()
 
     def apply_horizontal_scroll(self, text: str) -> str:
         """Apply horizontal scroll offset to a text line."""
@@ -1660,6 +1688,9 @@ class TaskTrackerTUI:
         self.current_task = None
         self.current_task_detail = None
         self._last_signature = self.compute_signature()
+        if self.selected_index >= len(self.filtered_tasks):
+            self.selected_index = max(0, len(self.filtered_tasks) - 1)
+        self._ensure_selection_visible()
 
     def set_status_message(self, message: str, ttl: float = 4.0) -> None:
         self.status_message = message
@@ -1874,8 +1905,12 @@ class TaskTrackerTUI:
 
         # Рендер строк задач
         compact_status_mode = len(layout.columns) <= 3
+        visible_rows = self._visible_row_limit()
+        start_idx = min(self.list_view_offset, max(0, len(self.filtered_tasks) - visible_rows))
+        end_idx = min(len(self.filtered_tasks), start_idx + visible_rows)
 
-        for idx, task in enumerate(self.filtered_tasks):
+        for idx in range(start_idx, end_idx):
+            task = self.filtered_tasks[idx]
             status_text, status_class, _ = self._get_status_info(task)
 
             # Подготовка данных для колонок
@@ -1929,34 +1964,7 @@ class TaskTrackerTUI:
 
         result.append(('class:border', header_line))
 
-        # Дополняем каждую строку до ширины терминала
-        table_width = max(40, self.get_terminal_width())
-        lines: List[List[Tuple[str, str]]] = []
-        current_line: List[Tuple[str, str]] = []
-        for style, text in result:
-            parts = text.split('\n')
-            for i, part in enumerate(parts):
-                if part:
-                    current_line.append((style, part))
-                if i < len(parts) - 1:
-                    lines.append(current_line)
-                    current_line = []
-            if parts and parts[-1] == '':
-                lines.append(current_line)
-                current_line = []
-        if current_line:
-            lines.append(current_line)
-
-        padded: List[Tuple[str, str]] = []
-        for idx, line in enumerate(lines):
-            plain = ''.join(fragment for _, fragment in line)
-            padding = max(0, table_width - len(plain))
-            padded.extend(line)
-            if padding:
-                padded.append(('class:text', ' ' * padding))
-            if idx < len(lines) - 1:
-                padded.append(('', '\n'))
-        return FormattedText(padded)
+        return FormattedText(result)
 
     def get_side_preview_text(self) -> FormattedText:
         """Описание выбранной задачи (без подзадач) в правой колонке."""
