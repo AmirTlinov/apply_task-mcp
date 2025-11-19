@@ -1272,7 +1272,7 @@ class TaskTrackerTUI:
         palette = cls.get_theme_palette(theme)
         return Style.from_dict(palette)
 
-    def __init__(self, tasks_dir: Path = Path(".tasks"), domain: str = "", phase: str = "", component: str = "", theme: str = DEFAULT_THEME):
+    def __init__(self, tasks_dir: Path = Path(".tasks"), domain: str = "", phase: str = "", component: str = "", theme: str = DEFAULT_THEME, mono_select: bool = False):
         self.tasks_dir = tasks_dir
         self.manager = TaskManager(tasks_dir)
         self.domain_filter = domain
@@ -1296,6 +1296,7 @@ class TaskTrackerTUI:
         self.help_visible: bool = False
         self.list_view_offset: int = 0
         self.footer_height: int = 9
+        self.mono_select = mono_select
 
         # Editing mode
         self.editing_mode = False
@@ -1964,9 +1965,12 @@ class TaskTrackerTUI:
                     if col in cell_data:
                         line_parts.append(cell_data[col][0])
                 line = '|' + '|'.join(line_parts) + '|'
-                style_key = selection_styles.get(task.status, 'selected')
-                style_name = f"class:{style_key} {status_class}"
-                result.append((style_name, line))
+                if self.mono_select:
+                    result.append(('class:selected', line))
+                else:
+                    style_key = selection_styles.get(task.status, 'selected')
+                    style_name = f"class:{style_key} {status_class}"
+                    result.append((style_name, line))
             else:
                 # Обычная строка
                 result.append(('class:border', '|'))
@@ -2689,7 +2693,11 @@ class TaskTrackerTUI:
 
 
 def cmd_tui(args) -> int:
-    tui = TaskTrackerTUI(Path(".tasks"), theme=getattr(args, "theme", DEFAULT_THEME))
+    tui = TaskTrackerTUI(
+        Path(".tasks"),
+        theme=getattr(args, "theme", DEFAULT_THEME),
+        mono_select=getattr(args, "mono_select", False),
+    )
     tui.run()
     return 0
 
@@ -3952,6 +3960,7 @@ def build_parser() -> argparse.ArgumentParser:
     # tui
     tui_p = sub.add_parser("tui", help="Запустить TUI")
     tui_p.add_argument("--theme", choices=list(THEMES.keys()), default=DEFAULT_THEME, help="палитра интерфейса")
+    tui_p.add_argument("--mono-select", action="store_true", help="использовать монохромное выделение строк")
     tui_p.set_defaults(func=cmd_tui)
 
     # list
