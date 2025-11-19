@@ -1736,13 +1736,13 @@ class TaskTrackerTUI:
     def _task_created_value(self, task: Task) -> str:
         detail = self._get_task_detail(task)
         if detail and detail.created:
-            return str(detail.created)
+            return str(detail.created)[5:]
         return "—"
 
     def _task_done_value(self, task: Task) -> str:
         detail = self._get_task_detail(task)
         if detail and detail.updated and detail.status == "OK":
-            return str(detail.updated)
+            return str(detail.updated)[5:]
         return "—"
 
     def _get_status_info(self, task: Task) -> Tuple[str, str, str]:
