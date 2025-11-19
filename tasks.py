@@ -1332,22 +1332,22 @@ class TaskTrackerTUI:
         def _(event):
             self.move_vertical_selection(-1)
 
-        @kb.add("0")
+        @kb.add("1")
         def _(event):
             self.current_filter = None
             self.selected_index = 0
 
-        @kb.add("1")
+        @kb.add("2")
         def _(event):
             self.current_filter = Status.OK
             self.selected_index = 0
 
-        @kb.add("2")
+        @kb.add("3")
         def _(event):
             self.current_filter = Status.WARN
             self.selected_index = 0
 
-        @kb.add("3")
+        @kb.add("4")
         def _(event):
             self.current_filter = Status.FAIL
             self.selected_index = 0
@@ -1704,20 +1704,20 @@ class TaskTrackerTUI:
         fail = sum(1 for t in items if t.status == Status.FAIL)
         ctx = self.domain_filter or derive_domain_explicit("", self.phase_filter, self.component_filter) or "."
         filter_labels = {
-            "OK": "ГОТОВЫ",
-            "WARN": "В РАБОТЕ",
-            "FAIL": "ЗАБЛОКИРОВАНЫ",
+            "OK": "DONE",
+            "WARN": "IN PROGRESS",
+            "FAIL": "BACKLOG",
         }
         flt = self.current_filter.value[0] if self.current_filter else "ALL"
-        flt_display = filter_labels.get(flt, "ВСЕ") if flt != "ALL" else "ВСЕ"
+        flt_display = filter_labels.get(flt, "ALL")
 
         parts = [
             ("class:text.dim", f" {total} задач | Фильтр: "),
             ("class:header", f"{flt_display}"),
             ("class:text.dim", f" | Контекст: {ctx} | "),
-            ("class:icon.check", f"ГОТОВО={ok} "),
-            ("class:icon.warn", f"В РАБОТЕ={warn} "),
-            ("class:icon.fail", f"БЛОКЕР={fail}"),
+            ("class:icon.check", f"DONE={ok} "),
+            ("class:icon.warn", f"IN PROGRESS={warn} "),
+            ("class:icon.fail", f"BACKLOG={fail}"),
         ]
         if self.status_message and time.time() < self.status_message_expires:
             parts.extend([
@@ -1997,11 +1997,11 @@ class TaskTrackerTUI:
 
         # Status text
         if detail.status == 'OK':
-            result.append(('class:icon.check', 'OK   '))
+            result.append(('class:icon.check', 'DONE '))
         elif detail.status == 'WARN':
-            result.append(('class:icon.warn', 'WARN '))
+            result.append(('class:icon.warn', 'INPR '))
         else:
-            result.append(('class:icon.fail', 'FAIL '))
+            result.append(('class:icon.fail', 'BACK '))
 
         result.append(('class:text.dim', f'| {detail.priority}'))
         result.append(('class:border', '                   |\n'))
@@ -2074,9 +2074,9 @@ class TaskTrackerTUI:
 
         # Status with color
         status_map = {
-            'OK': ('class:icon.check', 'ГОТОВО'),
-            'WARN': ('class:icon.warn', 'В РАБОТЕ'),
-            'FAIL': ('class:icon.fail', 'БЛОКЕР'),
+            'OK': ('class:icon.check', 'DONE'),
+            'WARN': ('class:icon.warn', 'IN PROGRESS'),
+            'FAIL': ('class:icon.fail', 'BACKLOG'),
         }
         status_style, status_label = status_map.get(detail.status, ('class:icon.fail', detail.status))
         result.append((status_style, status_label.ljust(10)))
@@ -2602,7 +2602,7 @@ class TaskTrackerTUI:
         add_block(rows, " Время: ", f"{start_time} → {finish_time}", max_lines=1)
         add_block(rows, " Длительность: ", duration_value, max_lines=1)
         add_block(rows, " Описание: ", desc, max_lines=2)
-        legend_text = "◉=OK/В работе | ◎=Блокер | %=прогресс | Σ=подзадачи | ?=подсказки" + scroll_info
+        legend_text = "◉=Done/In Progress | ◎=Backlog | %=progress | Σ=subtasks | ?=help" + scroll_info
         add_block(rows, " Легенда: ", legend_text, max_lines=1)
         while len(rows) < 7:
             rows.append(" " * inner_width)
