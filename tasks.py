@@ -1230,7 +1230,7 @@ THEMES: Dict[str, Dict[str, str]] = {
         "header": "#ffb347 bold",
         "border": "#4b525a",
         "icon.check": "#9ad974 bold",
-        "icon.warn": "#e5c07b bold",
+        "icon.warn": "#ff8c38 bold",
         "icon.fail": "#e06c75 bold",
     },
     "dark-contrast": {
@@ -1246,7 +1246,7 @@ THEMES: Dict[str, Dict[str, str]] = {
         "header": "#ffb347 bold",
         "border": "#5a6169",
         "icon.check": "#b8f171 bold",
-        "icon.warn": "#f0c674 bold",
+        "icon.warn": "#ff8c38 bold",
         "icon.fail": "#ff6b6b bold",
     },
 }
@@ -1724,14 +1724,15 @@ class TaskTrackerTUI:
     def _get_status_info(self, task: Task) -> Tuple[str, str, str]:
         """Возвращает текст статуса, CSS класс и короткое название"""
         status_char = task.status.value[0].lower()
+        circle = '● '
         if status_char == 'ok':
-            return 'ГОТОВО', 'class:icon.check', '[OK]'
+            return f'{circle}ГОТОВО', 'class:icon.check', '[OK]'
         elif status_char == 'warn':
-            return 'В РАБОТЕ', 'class:icon.warn', '[~]'
+            return f'{circle}В РАБОТЕ', 'class:icon.warn', '[~]'
         elif status_char == 'fail':
-            return 'БЛОКЕР', 'class:icon.fail', '[X]'
+            return f'{circle}БЛОКЕР', 'class:icon.fail', '[X]'
         else:
-            return 'НЕИЗВ', 'class:status.unknown', '?'
+            return '○ НЕИЗВ', 'class:status.unknown', '?'
 
     def _apply_scroll(self, text: str) -> str:
         """Применяет горизонтальную прокрутку к тексту"""
