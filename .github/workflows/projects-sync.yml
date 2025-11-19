@@ -1,0 +1,39 @@
+name: Projects Sync
+
+on:
+  projects_v2_item:
+    types: [created, edited, deleted]
+
+permissions:
+  contents: write
+  projects: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Apply webhook payload
+        env:
+          APPLY_TASK_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ./apply_task projects-webhook --payload @${GITHUB_EVENT_PATH}
+      - name: Commit and push if needed
+        run: |
+          if git status --porcelain | grep .; then
+            git config user.name "apply-task-bot"
+            git config user.email "actions@github.com"
+            git commit -am "chore(projects): sync from board"
+            git push
+          else
+            echo "No changes"
+          fi

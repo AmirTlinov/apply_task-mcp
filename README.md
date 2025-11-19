@@ -192,4 +192,6 @@ apply_task projects-webhook-serve --secret "$HOOK_SECRET"
 
 Point your GitHub webhook to the server URL, set the same secret, and only `projects_v2_item` events are required. When a single-select column such as “Status” is edited on the board, the corresponding `.task` front matter (`status`, `progress`, `domain`) is updated automatically. Signature validation follows `X-Hub-Signature-256` semantics; omit `--secret` to accept unsigned traffic in trusted networks.
 
+Prefer zero servers? Keep `.github/workflows/projects-sync.yml` enabled. GitHub delivers the same `projects_v2_item` payload to Actions, which runs `apply_task projects-webhook --payload @$GITHUB_EVENT_PATH` and commits YAML updates automatically. No daemons or manual commands—the board state and `.tasks/` stay mirrored entirely via CI.
+
 Stay in sync with `apply_task` for every change and let GitHub Projects v2 mirror the exact state of your backlog.

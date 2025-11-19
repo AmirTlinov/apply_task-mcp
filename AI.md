@@ -90,7 +90,7 @@ Required flags: `--parent`, `--description`, `--tests`, `--risks`, `--subtasks`.
 - Provide a token via `APPLY_TASK_GITHUB_TOKEN` (or `GITHUB_TOKEN`) with access to Projects v2.
 - Every `save_task` automatically upserts a draft issue inside the configured project; status, progress, domain, and the subtask checklist are updated on each change.
 - Metadata (`project_item_id`, `project_draft_id`, per-subtask IDs) is stored in the `.task` front matter so sync is idempotent.
-- Optional webhook flow: `apply_task projects-webhook-serve --secret ...` exposes an HTTP endpoint that ingests GitHub `projects_v2_item` events and updates local `.task` metadata when fields (status, progress, domain) change on the board.
+- Optional webhook flow: run `apply_task projects-webhook-serve --secret ...` locally **or** rely on the provided GitHub Actions workflow (`.github/workflows/projects-sync.yml`) which executes the same handler inside CI. The server/workflow exposes an HTTP endpoint that ingests GitHub `projects_v2_item` events and updates local `.task` metadata when fields (status, progress, domain) change on the board.
 - If config or token are missing the sync layer is inert and the CLI continues to work offline.
 
 ## Linting & tests
