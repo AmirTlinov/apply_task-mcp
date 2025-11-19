@@ -1780,11 +1780,11 @@ class TaskTrackerTUI:
         result.append(('class:border', '|'))
 
         column_labels = {
-            'stat': ('Ст', widths.get('stat', 3)),
+            'stat': ('⚪', widths.get('stat', 3)),
             'title': ('Задача', widths.get('title', 20)),
             'progress': ('%', widths.get('progress', 4)),
-            'subtasks': ('Подз', widths.get('subtasks', 3)),
-            'path': ('Путь', widths.get('path', 12)),
+            'subtasks': ('Σ', widths.get('subtasks', 3)),
+            'path': ('⇢', widths.get('path', 12)),
         }
 
         for col in layout.columns:
