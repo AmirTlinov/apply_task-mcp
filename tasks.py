@@ -1944,15 +1944,13 @@ class TaskTrackerTUI:
 
             # Рендер строки
             if idx == self.selected_index:
-                # Выделенная строка - окраска в цвет статуса
                 line_parts = []
-                line_styles = []
                 for col in layout.columns:
                     if col in cell_data:
-                        text_value = cell_data[col][0]
-                        line_parts.append(text_value)
+                        line_parts.append(cell_data[col][0])
                 line = '|' + '|'.join(line_parts) + '|'
-                result.append((status_class, line))
+                result.append(('class:selected', line))
+                result.append((status_class, ''))
             else:
                 # Обычная строка
                 result.append(('class:border', '|'))
