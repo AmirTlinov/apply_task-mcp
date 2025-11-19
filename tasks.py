@@ -1472,7 +1472,7 @@ class TaskTrackerTUI:
         self.task_list = Window(content=FormattedTextControl(self.get_task_list_text), always_hide_cursor=True, wrap_lines=False)
         self.side_preview = Window(content=FormattedTextControl(self.get_side_preview_text), always_hide_cursor=True, wrap_lines=True, width=Dimension(weight=2))
         self.detail_view = Window(content=FormattedTextControl(self.get_detail_text), always_hide_cursor=True, wrap_lines=True)
-        self.footer = Window(content=FormattedTextControl(self.get_footer_text), height=Dimension(exact=9))
+        self.footer = Window(content=FormattedTextControl(self.get_footer_text), height=Dimension(min=9, max=9))
 
         self.normal_body = VSplit(
             [
