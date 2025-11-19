@@ -2459,12 +2459,17 @@ class TaskTrackerTUI:
             current = current[width:]
             if len(lines) == 2:
                 break
-        parts = [("class:text.dim", f" Путь: {path_text}")]
+        parts: List[Tuple[str, str]] = []
+        parts.append(("class:text.dim", f" Путь: {path_text}"))
+        desc_header = " Описание: "
         if lines:
-            parts.extend([("", "\n"), ("class:text.dim", f" {lines[0]}")])
+            parts.extend([("", "\n"), ("class:text.dim", desc_header + lines[0])])
             if len(lines) > 1:
-                parts.extend([("", "\n"), ("class:text.dim", f" {lines[1]}")])
-        parts.extend([("", "\n"), ("class:text.dimmer", f"  Чекпоинты: [✓ ✓ ·] = критерии/тесты/блокеры | ? — подсказки{scroll_info}")])
+                parts.extend([("", "\n"), ("class:text.dim", " " * len(desc_header) + lines[1])])
+        else:
+            parts.extend([("", "\n"), ("class:text.dim", f" {desc_header}—")])
+        legend = " ◉=OK/В работе | ◎=Блокер | %=прогресс | Σ=подзадачи | ?=подсказки"
+        parts.extend([("", "\n"), ("class:text.dimmer", legend + scroll_info)])
         return FormattedText(parts)
 
     def get_edit_dialog(self) -> FormattedText:
