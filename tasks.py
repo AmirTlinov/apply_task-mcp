@@ -1538,6 +1538,14 @@ class TaskTrackerTUI:
             self.list_view_offset = self.selected_index - visible + 1
         self.list_view_offset = max(0, min(self.list_view_offset, max_offset))
 
+    @staticmethod
+    def _merge_styles(base: str, extra: Optional[str]) -> str:
+        if not extra:
+            return base
+        if not base:
+            return extra
+        return f"{base} {extra}"
+
     def move_vertical_selection(self, delta: int) -> None:
         """
         Move selected row/panel pointer by `delta`, clamping to available items.
@@ -2186,6 +2194,12 @@ class TaskTrackerTUI:
             header = f'ПОДЗАДАЧИ ({completed}/{len(detail.subtasks)} завершено):'
             result.append(('class:header', header.ljust(content_width - 2)))
             result.append(('class:border', ' |\n'))
+            selection_styles = {
+                Status.OK: 'selected-ok',
+                Status.WARN: 'selected-warn',
+                Status.FAIL: 'selected-fail',
+                Status.UNKNOWN: 'selected-unknown',
+            }
             for i, st in enumerate(detail.subtasks, 1):
                 status_mark = '[OK]' if st.completed else '[  ]'
                 status_class = 'class:icon.check' if st.completed else 'class:text.dim'
@@ -2198,8 +2212,20 @@ class TaskTrackerTUI:
                 if self.horizontal_offset > 0:
                     st_title = st_title[self.horizontal_offset:] if len(st_title) > self.horizontal_offset else ""
 
-                result.append(('class:border', '| '))
-                result.append((status_class, prefix))
+                selected = (i - 1) == self.detail_selected_index
+                sub_status = Status.OK if st.completed else (Status.WARN if st.ready_for_completion() else Status.FAIL)
+                bg_style = None
+                if selected:
+                    if self.mono_select:
+                        bg_style = 'class:selected'
+                    else:
+                        bg_style = f"class:{selection_styles.get(sub_status, 'selected')}"
+
+                border_style = 'class:border'
+                if selected:
+                    border_style = self._merge_styles('class:border', bg_style)
+                result.append((border_style, '| '))
+                result.append((self._merge_styles(status_class, bg_style), prefix))
                 flags = subtask_flags(st)
                 glyphs = [
                     ('class:icon.check', '✓') if flags['criteria'] else ('class:text.dim', '·'),
@@ -2214,16 +2240,18 @@ class TaskTrackerTUI:
                 flag_width = len('[✓ ✓ ✓]')
                 title_width = max(5, content_width - 2 - len(prefix) - flag_width)
 
-                if (i - 1) == self.detail_selected_index:
-                    result.append(('class:selected', st_title[:title_width].ljust(title_width)))
-                else:
-                    result.append(('class:text', st_title[:title_width].ljust(title_width)))
+                title_style = 'class:text'
+                if selected:
+                    title_style = self._merge_styles('class:text', bg_style)
+                result.append((title_style, st_title[:title_width].ljust(title_width)))
 
-                result.append(('class:text.dim', ' ['))
-                for frag in flag_text:
-                    result.append(frag)
-                result.append(('class:text.dim', ']'))
-                result.append(('class:border', ' |\n'))
+                bracket_style = self._merge_styles('class:text.dim', bg_style) if selected else 'class:text.dim'
+                result.append((bracket_style, ' ['))
+                for frag_style, frag_text in flag_text:
+                    style = self._merge_styles(frag_style, bg_style) if selected else frag_style
+                    result.append((style, frag_text))
+                result.append((bracket_style, ']'))
+                result.append((border_style, ' |\n'))
             result.append(('class:border', '+' + '-'*content_width + '+\n'))
 
         # Next steps with horizontal scroll
