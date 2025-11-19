@@ -1546,6 +1546,15 @@ class TaskTrackerTUI:
             return extra
         return f"{base} {extra}"
 
+    def _selection_style_for_status(self, status: Status) -> str:
+        selection_styles = {
+            Status.OK: 'selected.ok',
+            Status.WARN: 'selected.warn',
+            Status.FAIL: 'selected.fail',
+            Status.UNKNOWN: 'selected.unknown',
+        }
+        return selection_styles.get(status, 'selected')
+
     def move_vertical_selection(self, delta: int) -> None:
         """
         Move selected row/panel pointer by `delta`, clamping to available items.
@@ -1926,13 +1935,6 @@ class TaskTrackerTUI:
         start_idx = min(self.list_view_offset, max(0, len(self.filtered_tasks) - visible_rows))
         end_idx = min(len(self.filtered_tasks), start_idx + visible_rows)
 
-        selection_styles = {
-            Status.OK: 'selected.ok',
-            Status.WARN: 'selected.warn',
-            Status.FAIL: 'selected.fail',
-            Status.UNKNOWN: 'selected.unknown',
-        }
-
         for idx in range(start_idx, end_idx):
             task = self.filtered_tasks[idx]
             status_text, status_class, _ = self._get_status_info(task)
@@ -1976,7 +1978,7 @@ class TaskTrackerTUI:
                 if self.mono_select:
                     result.append(('class:selected', line))
                 else:
-                    style_key = selection_styles.get(task.status, 'selected.ok')
+                    style_key = self._selection_style_for_status(task.status)
                     result.append((f"class:{style_key}", line))
             else:
                 # Обычная строка
@@ -2193,12 +2195,6 @@ class TaskTrackerTUI:
             header = f'ПОДЗАДАЧИ ({completed}/{len(detail.subtasks)} завершено):'
             result.append(('class:header', header.ljust(content_width - 2)))
             result.append(('class:border', ' |\n'))
-            selection_styles = {
-                Status.OK: 'selected-ok',
-                Status.WARN: 'selected-warn',
-                Status.FAIL: 'selected-fail',
-                Status.UNKNOWN: 'selected-unknown',
-            }
             for i, st in enumerate(detail.subtasks, 1):
                 status_mark = '[OK]' if st.completed else '[  ]'
                 status_class = 'class:icon.check' if st.completed else 'class:text.dim'
@@ -2218,7 +2214,7 @@ class TaskTrackerTUI:
                     if self.mono_select:
                         bg_style = 'class:selected'
                     else:
-                        bg_style = f"class:{selection_styles.get(sub_status, 'selected')}"
+                        bg_style = f"class:{self._selection_style_for_status(sub_status)}"
 
                 border_style = 'class:border'
                 if selected:
