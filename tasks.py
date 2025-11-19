@@ -21,6 +21,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import yaml
 import textwrap
 
+from projects_sync import get_projects_sync
+
 TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M"
 
 
@@ -60,6 +62,7 @@ class SubTask:
     criteria_notes: List[str] = field(default_factory=list)
     tests_notes: List[str] = field(default_factory=list)
     blockers_notes: List[str] = field(default_factory=list)
+    project_item_id: Optional[str] = None
 
     def ready_for_completion(self) -> bool:
         return self.criteria_confirmed and self.tests_confirmed and self.blockers_resolved
@@ -131,6 +134,8 @@ class TaskDetail:
     problems: List[str] = field(default_factory=list)
     risks: List[str] = field(default_factory=list)
     history: List[str] = field(default_factory=list)
+    project_item_id: Optional[str] = None
+    project_draft_id: Optional[str] = None
 
     @property
     def filepath(self) -> Path:
@@ -165,7 +170,7 @@ class TaskDetail:
             "parent": self.parent,
             "priority": self.priority,
             "created": self.created or current_timestamp(),
-            "updated": current_timestamp(),
+            "updated": self.updated or current_timestamp(),
             "tags": self.tags,
             "assignee": self.assignee,
             "progress": self.calculate_progress(),
@@ -173,6 +178,13 @@ class TaskDetail:
         if self.blocked:
             metadata["blocked"] = True
             metadata["blockers"] = self.blockers
+        if self.project_item_id:
+            metadata["project_item_id"] = self.project_item_id
+        if self.project_draft_id:
+            metadata["project_draft_id"] = self.project_draft_id
+        subtask_ids = [st.project_item_id for st in self.subtasks]
+        if any(subtask_ids):
+            metadata["subtask_project_ids"] = subtask_ids
 
         lines = ["---", yaml.dump(metadata, allow_unicode=True, default_flow_style=False).strip(), "---", ""]
         lines.append(f"# {self.title}\n")
@@ -405,6 +417,8 @@ class TaskFileParser:
             progress=metadata.get("progress", 0),
             blocked=metadata.get("blocked", False),
             blockers=metadata.get("blockers", []),
+            project_item_id=metadata.get("project_item_id"),
+            project_draft_id=metadata.get("project_draft_id"),
         )
 
         section = None
@@ -423,6 +437,10 @@ class TaskFileParser:
             else:
                 buffer.append(line)
         flush()
+        subtask_projects = metadata.get("subtask_project_ids", []) or []
+        for idx, sub_id in enumerate(subtask_projects):
+            if sub_id and idx < len(task.subtasks):
+                task.subtasks[idx].project_item_id = sub_id
         # Автостатус: если все подзадачи выполнены — статус OK (без изменения файла)
         try:
             if task.subtasks and task.calculate_progress() == 100 and not task.blocked:
@@ -575,6 +593,9 @@ class TaskManager:
         task.domain = self.sanitize_domain(task.domain)
         task.filepath.parent.mkdir(parents=True, exist_ok=True)
         task.filepath.write_text(task.to_file_content(), encoding="utf-8")
+        sync = get_projects_sync()
+        if sync.enabled:
+            sync.sync_task(task)
 
     def _find_file_by_id(self, task_id: str, domain: str = "") -> Optional[Path]:
         if domain:

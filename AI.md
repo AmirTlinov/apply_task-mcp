@@ -84,11 +84,13 @@ Required flags: `--parent`, `--description`, `--tests`, `--risks`, `--subtasks`.
 - Clicking `[← Back]` returns from detail/subtask view.
 - Footer always shows domain path, timestamps, duration, and legend.
 
-## GitHub Projects v2 sync (roadmap)
+## GitHub Projects v2 sync
 
-- Each `.task` stores `project_item_id` + IDs for subtasks.
-- `TaskManager.save_task` enqueues updates; a background sync flush or `apply_task sync` pushes them via GitHub MCP.
-- Status/progress/criteria evidence stay mirrored between the local files and the remote board.
+- Copy `apply_task_projects.example.yaml` → `.apply_task_projects.yaml` and define the project owner/type/number plus field names.
+- Provide a token via `APPLY_TASK_GITHUB_TOKEN` (or `GITHUB_TOKEN`) with access to Projects v2.
+- Every `save_task` automatically upserts a draft issue inside the configured project; status, progress, domain, and the subtask checklist are updated on each change.
+- Metadata (`project_item_id`, `project_draft_id`, per-subtask IDs) is stored in the `.task` front matter so sync is idempotent.
+- If config or token are missing the sync layer is inert and the CLI continues to work offline.
 
 ## Linting & tests
 

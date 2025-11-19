@@ -1,0 +1,18 @@
+project:
+  type: repository            # repository | organization | user
+  owner: AmirTlinov
+  repo: apply_task            # required for repository projects
+  number: 1                   # Project number from the URL
+fields:
+  status:
+    name: Status
+    options:
+      OK: Done
+      WARN: "In Progress"
+      FAIL: Backlog
+  progress:
+    name: Progress
+  domain:
+    name: Domain
+  subtasks:
+    name: Subtasks

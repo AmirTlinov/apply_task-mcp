@@ -145,4 +145,36 @@ apply_task tui
 - [UI_UX_IMPROVEMENTS.md](UI_UX_IMPROVEMENTS.md) — rationale behind the interface.
 - [CHANGES.md](CHANGES.md) — latest UX/feature notes.
 
+## GitHub Projects v2 sync
+
+`apply_task` can mirror every task into a GitHub Projects v2 board:
+
+1. Copy `apply_task_projects.example.yaml` to `.apply_task_projects.yaml` and edit it:
+   ```yaml
+   project:
+     type: repository
+     owner: AmirTlinov
+     repo: apply_task
+     number: 1
+   fields:
+     status:
+       name: Status
+       options:
+         OK: Done
+         WARN: "In Progress"
+         FAIL: Backlog
+     progress:
+       name: Progress
+     domain:
+       name: Domain
+     subtasks:
+       name: Subtasks
+   ```
+2. Provide a token via `APPLY_TASK_GITHUB_TOKEN` (or `GITHUB_TOKEN`) with `project` scope.
+3. Any `apply_task` save automatically creates/updates the corresponding Project draft item, including status, percentage, domain text, and a Markdown checklist of subtasks.
+
+If the config or token is missing, the sync layer silently disables itself. Existing tasks will update as soon as they are touched; for older ones just run `apply_task show TASK-ID` → edit/save to trigger a sync.
+
+Sample config lives in `apply_task_projects.example.yaml`.
+
 Stay in sync with `apply_task` for every change and let GitHub Projects v2 mirror the exact state of your backlog.

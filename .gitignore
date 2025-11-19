@@ -44,6 +44,7 @@ Thumbs.db
 .serena/
 apply_task \(Копия\)
 tasks \(Копия\).py
+.apply_task_projects.yaml
 
 # Optional: uncomment if you don't want to commit your todo file
 # todo.machine.md
