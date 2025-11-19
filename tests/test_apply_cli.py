@@ -197,6 +197,15 @@ class ApplyTaskResolveTests(unittest.TestCase):
         body = _json_body(result)
         return body["payload"]["task"]["id"]
 
+    def _write_stub_tasks_py(self):
+        stub = self._sandbox_dir / "stub_tasks.py"
+        stub.write_text(
+            """#!/usr/bin/env python3\nimport json, sys\nbody = {\"command\": \"stub\", \"status\": \"OK\", \"message\": \"stub runner\", \"payload\": {\"argv\": sys.argv[1:]}}\nprint(json.dumps(body))\n""",
+            encoding="utf-8",
+        )
+        stub.chmod(0o755)
+        return stub
+
     def test_find_tasks_py_env_override(self):
         tasks_path = Path(__file__).resolve().parents[1] / "tasks.py"
         os.environ["APPLY_TASKS_PY"] = str(tasks_path)
@@ -208,6 +217,26 @@ class ApplyTaskResolveTests(unittest.TestCase):
         msg = self.mod.explain_source("script", Path("/tmp/x/tasks.py"))
         self.assertIn("script", msg)
         self.assertIn("/tmp/x/tasks.py", msg)
+
+    def test_projects_commands_forwarded(self):
+        stub = self._write_stub_tasks_py()
+        os.environ["APPLY_TASKS_PY"] = str(stub)
+        self.addCleanup(lambda: os.environ.pop("APPLY_TASKS_PY", None))
+        scenarios = [
+            (["projects", "sync", "--all"], ["projects", "sync", "--all"]),
+            (["projects-auth", "--unset"], ["projects-auth", "--unset"]),
+            (["projects-webhook", "--payload", "payload.json"], ["projects-webhook", "--payload", "payload.json"]),
+            (
+                ["projects-webhook-serve", "--host", "127.0.0.1", "--port", "9180"],
+                ["projects-webhook-serve", "--host", "127.0.0.1", "--port", "9180"],
+            ),
+        ]
+        for args, expected in scenarios:
+            result = self._run_apply(args)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            body = _json_body(result)
+            self.assertEqual(body["status"], "OK")
+            self.assertEqual(body["payload"]["argv"], expected)
 
     def test_create_requires_tests(self):
         result = self._run_apply(["MyTitle", "--parent", "TASK-001"])

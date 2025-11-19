@@ -191,7 +191,39 @@ def main():
         args = [a for a in args if a != '-v']
 
     # Определение команды
-    known_commands = ['show', 'list', 'done', 'start', 'fail', 'next', 'suggest', 'sg', 'tui', 'lint', 'quick', 'which', 'help', 'create', 'guided', 'subtask', 'clean', 'template', 'ok', 'note', 'bulk', 'history', 'replay', 'update', 'task', 'edit', 'checkpoint']
+    known_commands = [
+        'show',
+        'list',
+        'done',
+        'start',
+        'fail',
+        'next',
+        'suggest',
+        'sg',
+        'tui',
+        'lint',
+        'quick',
+        'which',
+        'help',
+        'create',
+        'guided',
+        'subtask',
+        'clean',
+        'template',
+        'ok',
+        'note',
+        'bulk',
+        'history',
+        'replay',
+        'update',
+        'task',
+        'edit',
+        'checkpoint',
+        'projects',
+        'projects-auth',
+        'projects-webhook',
+        'projects-webhook-serve',
+    ]
 
     if cmd not in known_commands:
         # Создание задачи: apply_task "Fix bug #critical" --parent TASK-XXX --tests "..."
@@ -234,6 +266,14 @@ def main():
         return run_tasks_py(['checkpoint'] + args, verbose=verbose)
     elif cmd == 'update':
         return run_tasks_py(['update'] + args, verbose=verbose)
+    elif cmd == 'projects':
+        return run_tasks_py(['projects'] + args, verbose=verbose)
+    elif cmd == 'projects-auth':
+        return run_tasks_py(['projects-auth'] + args, verbose=verbose)
+    elif cmd == 'projects-webhook':
+        return run_tasks_py(['projects-webhook'] + args, verbose=verbose)
+    elif cmd == 'projects-webhook-serve':
+        return run_tasks_py(['projects-webhook-serve'] + args, verbose=verbose)
     elif cmd == 'task':
         return run_tasks_py(['task'] + args, verbose=verbose)
     elif cmd == 'edit':
