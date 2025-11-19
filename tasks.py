@@ -1472,7 +1472,7 @@ class TaskTrackerTUI:
         self.task_list = Window(content=FormattedTextControl(self.get_task_list_text), always_hide_cursor=True, wrap_lines=False)
         self.side_preview = Window(content=FormattedTextControl(self.get_side_preview_text), always_hide_cursor=True, wrap_lines=True, width=Dimension(weight=2))
         self.detail_view = Window(content=FormattedTextControl(self.get_detail_text), always_hide_cursor=True, wrap_lines=True)
-        self.footer = Window(content=FormattedTextControl(self.get_footer_text), height=Dimension(min=2))
+        self.footer = Window(content=FormattedTextControl(self.get_footer_text), height=Dimension(exact=9))
 
         self.normal_body = VSplit(
             [
@@ -1748,13 +1748,14 @@ class TaskTrackerTUI:
     def _parse_task_datetime(self, value: Optional[str]) -> Optional[datetime]:
         if not value:
             return None
+        raw = str(value)
         for fmt in ("%Y-%m-%d", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S%z"):
             try:
-                return datetime.strptime(value[:len(fmt)], fmt)
+                return datetime.strptime(raw[:len(fmt)], fmt)
             except ValueError:
                 continue
         try:
-            return datetime.fromisoformat(value)
+            return datetime.fromisoformat(raw)
         except ValueError:
             return None
 
@@ -2516,35 +2517,7 @@ class TaskTrackerTUI:
                     if formatted not in seen:
                         segments.append(formatted)
                         seen.add(formatted)
-        path_display: List[Tuple[str, str]] = []
-        if segments:
-            for idx, seg in enumerate(segments):
-                style = 'class:header' if idx == len(segments) - 1 else 'class:text.dim'
-                path_display.append((style, seg))
-                if idx < len(segments) - 1:
-                    path_display.append(('class:text.dim', '->'))
-        else:
-            path_display = [('class:text.dim', '-')]
-        width = max(20, self.get_terminal_width() - 4)
-        lines = []
-        current = desc
-        while current:
-            lines.append(current[:width])
-            current = current[width:]
-            if len(lines) == 2:
-                break
-        parts: List[Tuple[str, str]] = []
-        label = " Домен: "
-        parts.append(("class:text.dim", label))
-        current_len = len(label)
-        for style, text in path_display:
-            seg = text
-            if current_len + len(seg) > width:
-                parts.append(("", "\n"))
-                parts.append(("class:text.dim", " " * len(label)))
-                current_len = len(label)
-            parts.append((style, seg))
-            current_len += len(seg)
+        path_text = "->".join(segments) if segments else "-"
         start_time = "-"
         finish_time = "-"
         if detail:
@@ -2552,20 +2525,48 @@ class TaskTrackerTUI:
                 start_time = str(detail.created)
             if detail.status == "OK" and getattr(detail, "updated", None):
                 finish_time = str(detail.updated)
-        parts.extend([("", "\n"), ("class:text.dim", " Время: "), ("class:text", f"{start_time} → {finish_time}")])
         duration_value = self._task_duration_value(detail)
-        parts.extend([("", "\n"), ("class:text.dim", " Длительность: "), ("class:text", duration_value)])
-        desc_header = " Описание: "
-        available = max(10, width - len(desc_header))
-        wrapped = textwrap.wrap(desc, available) if desc else []
-        if not wrapped:
-            wrapped = ["—"]
-        parts.extend([("", "\n"), ("class:text.dim", desc_header), ("class:text", wrapped[0])])
-        indent = " " * len(desc_header)
-        for extra in wrapped[1:]:
-            parts.extend([("", "\n"), ("class:text", indent + extra)])
-        legend = " ◉=OK/В работе | ◎=Блокер | %=прогресс | Σ=подзадачи | ?=подсказки"
-        parts.extend([("", "\n"), ("class:text.dimmer", legend + scroll_info)])
+        table_width = max(60, self.get_terminal_width())
+        inner_width = max(30, table_width - 4)
+
+        def add_block(rows: List[str], label: str, value: str, max_lines: int = 1) -> None:
+            label_len = len(label)
+            available = max(1, inner_width - label_len)
+            text_value = value or "—"
+            chunks = textwrap.wrap(text_value, available) or ["—"]
+            truncated = len(chunks) > max_lines
+            chunks = chunks[:max_lines]
+            if truncated and chunks:
+                tail = chunks[-1]
+                if len(tail) >= available:
+                    tail = tail[:-1] + "…"
+                else:
+                    tail = tail + "…"
+                chunks[-1] = tail
+            for idx in range(max_lines):
+                prefix = label if idx == 0 else " " * label_len
+                chunk = chunks[idx] if idx < len(chunks) else ""
+                row = (prefix + chunk).ljust(inner_width)
+                rows.append(row[:inner_width])
+
+        rows: List[str] = []
+        add_block(rows, " Домен: ", path_text, max_lines=2)
+        add_block(rows, " Время: ", f"{start_time} → {finish_time}", max_lines=1)
+        add_block(rows, " Длительность: ", duration_value, max_lines=1)
+        add_block(rows, " Описание: ", desc, max_lines=2)
+        legend_text = "◉=OK/В работе | ◎=Блокер | %=прогресс | Σ=подзадачи | ?=подсказки" + scroll_info
+        add_block(rows, " Легенда: ", legend_text, max_lines=1)
+        while len(rows) < 7:
+            rows.append(" " * inner_width)
+
+        border = "+" + "-" * (inner_width + 2) + "+"
+        parts: List[Tuple[str, str]] = []
+        parts.append(("class:border", border + "\n"))
+        for idx, row in enumerate(rows):
+            parts.append(("class:border", "| "))
+            parts.append(("class:text", row))
+            parts.append(("class:border", " |\n"))
+        parts.append(("class:border", border))
         return FormattedText(parts)
 
     def get_edit_dialog(self) -> FormattedText:
