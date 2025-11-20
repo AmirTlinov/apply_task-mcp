@@ -2670,6 +2670,7 @@ class TaskTrackerTUI:
         # Get terminal width and calculate adaptive content width
         term_width = self.get_terminal_width()
         content_width = max(40, term_width - 2)
+        compact = self.get_terminal_height() < 32 or content_width < 90
 
         # Header
         result.append(('class:border', '+' + '='*content_width + '+\n'))
@@ -2736,53 +2737,54 @@ class TaskTrackerTUI:
             result.append(('class:border', ' |\n'))
         result.append(('class:border', '+' + '-'*content_width + '+\n'))
 
-        # Metadata
-        if detail.domain or detail.phase or detail.component:
-            if detail.domain:
-                result.append(('class:border', '| '))
-                result.append(('class:text.dim', f'Папка: {detail.domain}'[:content_width-2].ljust(content_width - 2)))
-                result.append(('class:border', ' |\n'))
-            if detail.phase:
-                result.append(('class:border', '| '))
-                result.append(('class:text.dim', f'Фаза: {detail.phase}'[:content_width-2].ljust(content_width - 2)))
-                result.append(('class:border', ' |\n'))
-            if detail.component:
-                result.append(('class:border', '| '))
-                result.append(('class:text.dim', f'Компонент: {detail.component}'[:content_width-2].ljust(content_width - 2)))
-                result.append(('class:border', ' |\n'))
-            result.append(('class:border', '+' + '-'*content_width + '+\n'))
-
-        if detail.tags:
-            result.append(('class:border', '| '))
-            tags_text = f'Теги: {", ".join(detail.tags)}'[:content_width-2]
-            result.append(('class:text.dim', tags_text.ljust(content_width - 2)))
-            result.append(('class:border', ' |\n'))
-            result.append(('class:border', '+' + '-'*content_width + '+\n'))
-
-        if detail.parent:
-            result.append(('class:border', '| '))
-            result.append(('class:text.dim', f'Родитель: {detail.parent}'[:content_width-2].ljust(content_width - 2)))
-            result.append(('class:border', ' |\n'))
-            result.append(('class:border', '+' + '-'*content_width + '+\n'))
-
-        # Description with horizontal scroll
-        if detail.description:
-            result.append(('class:border', '| '))
-            result.append(('class:header', 'ОПИСАНИЕ:'.ljust(content_width - 2)))
-            result.append(('class:border', ' |\n'))
-            desc_lines = detail.description.split('\n')
-            for dline in desc_lines:
-                # Apply horizontal scroll to each line
-                if self.horizontal_offset > 0:
-                    dline = dline[self.horizontal_offset:] if len(dline) > self.horizontal_offset else ""
-                chunks = [dline[i:i+content_width-4] for i in range(0, len(dline), content_width-4)]
-                if not chunks:
-                    chunks = ['']
-                for chunk in chunks:
+        if not compact:
+            # Metadata
+            if detail.domain or detail.phase or detail.component:
+                if detail.domain:
                     result.append(('class:border', '| '))
-                    result.append(('class:text', f'  {chunk}'.ljust(content_width - 2)))
+                    result.append(('class:text.dim', f'Папка: {detail.domain}'[:content_width-2].ljust(content_width - 2)))
                     result.append(('class:border', ' |\n'))
-            result.append(('class:border', '+' + '-'*content_width + '+\n'))
+                if detail.phase:
+                    result.append(('class:border', '| '))
+                    result.append(('class:text.dim', f'Фаза: {detail.phase}'[:content_width-2].ljust(content_width - 2)))
+                    result.append(('class:border', ' |\n'))
+                if detail.component:
+                    result.append(('class:border', '| '))
+                    result.append(('class:text.dim', f'Компонент: {detail.component}'[:content_width-2].ljust(content_width - 2)))
+                    result.append(('class:border', ' |\n'))
+                result.append(('class:border', '+' + '-'*content_width + '+\n'))
+
+            if detail.tags:
+                result.append(('class:border', '| '))
+                tags_text = f'Теги: {", ".join(detail.tags)}'[:content_width-2]
+                result.append(('class:text.dim', tags_text.ljust(content_width - 2)))
+                result.append(('class:border', ' |\n'))
+                result.append(('class:border', '+' + '-'*content_width + '+\n'))
+
+            if detail.parent:
+                result.append(('class:border', '| '))
+                result.append(('class:text.dim', f'Родитель: {detail.parent}'[:content_width-2].ljust(content_width - 2)))
+                result.append(('class:border', ' |\n'))
+                result.append(('class:border', '+' + '-'*content_width + '+\n'))
+
+            # Description with horizontal scroll
+            if detail.description:
+                result.append(('class:border', '| '))
+                result.append(('class:header', 'ОПИСАНИЕ:'.ljust(content_width - 2)))
+                result.append(('class:border', ' |\n'))
+                desc_lines = detail.description.split('\n')
+                for dline in desc_lines:
+                    # Apply horizontal scroll to each line
+                    if self.horizontal_offset > 0:
+                        dline = dline[self.horizontal_offset:] if len(dline) > self.horizontal_offset else ""
+                    chunks = [dline[i:i+content_width-4] for i in range(0, len(dline), content_width-4)]
+                    if not chunks:
+                        chunks = ['']
+                    for chunk in chunks:
+                        result.append(('class:border', '| '))
+                        result.append(('class:text', f'  {chunk}'.ljust(content_width - 2)))
+                        result.append(('class:border', ' |\n'))
+                result.append(('class:border', '+' + '-'*content_width + '+\n'))
 
         # Subtasks with horizontal scroll
         if detail.subtasks:
