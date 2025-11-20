@@ -161,9 +161,9 @@ def test_auto_switches_to_user_projects(monkeypatch, tmp_path):
     monkeypatch.setattr(projects_sync, "detect_repo_slug", lambda: ("octo", "demo"))
 
     def fake_graphql(self, query, variables):
-        if "repository(" in query and "projectsV2(first:10)" in query:
+        if "repository(" in query and "projectsV2(first:20)" in query:
             return {"repository": {"projectsV2": {"nodes": []}}}
-        if "user(" in query and "projectsV2(first:10)" in query:
+        if "user(" in query and "projectsV2(first:20)" in query:
             return {"user": {"projectsV2": {"nodes": [{"number": 14}]}}}
         if "projectV2" in query:
             return {"user": {"projectV2": {"id": "ID", "fields": {"nodes": []}}}}
