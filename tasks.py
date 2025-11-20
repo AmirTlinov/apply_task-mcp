@@ -2351,10 +2351,14 @@ class TaskTrackerTUI:
                 label = f"{label}@{rate_reset}"
             if rate_wait:
                 label = f"{label} wait={int(rate_wait)}s"
-        if snapshot.get("project_id"):
-            label = f"{label} id={snapshot['project_id']}"
         if snapshot.get("project_url"):
             label = f"{label} ↗"
+            def handler(mouse_event):
+                if mouse_event.event_type == MouseEventType.MOUSE_UP and mouse_event.button == MouseButton.LEFT:
+                    self._open_project_url()
+                    return None
+                return NotImplemented
+            return [(style, label, handler)]
         if not enabled and reason:
             label = f"{label} ({reason})"
         return [(style, label, handler)]
