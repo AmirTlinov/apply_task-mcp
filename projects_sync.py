@@ -238,6 +238,9 @@ class ProjectsSync:
         self.config_path = config_path or CONFIG_PATH
         self.detect_error: Optional[str] = None
         self.config: Optional[ProjectConfig] = self._load_config()
+        self._viewer_login: Optional[str] = None
+        self._project_lookup_failed: bool = False
+        self._metadata_attempted: bool = False
         if self.config and self.config.schema_ttl_seconds:
             # применяем кастомный TTL из конфигурации
             global SCHEMA_CACHE_TTL
@@ -271,9 +274,6 @@ class ProjectsSync:
             global _PROJECTS_DISABLED_REASON
             _PROJECTS_DISABLED_REASON = self._runtime_disabled_reason
         self._rate_limiter = _RATE_LIMITER
-        self._project_lookup_failed: bool = False
-        self._metadata_attempted: bool = False
-        self._viewer_login: Optional[str] = None
 
     # ------------------------------------------------------------------
     # Helpers for conflict detection / reporting
@@ -461,19 +461,21 @@ class ProjectsSync:
             self.detect_error = str(exc)
             owner = ""
             repo = ""
-        # если конфиг принадлежит другому репо — сбросим под текущий
-        if project.get("owner") and project.get("repo") and (project.get("owner") != owner or project.get("repo") != repo):
+        # если конфиг от другого репо (для repository-проектов) — жёстко пересоздаем под актуальный origin
+        if stored_type == "repository" and (project.get("owner") != owner or project.get("repo") != repo):
             project = {
                 "type": "repository",
                 "owner": owner,
                 "repo": repo,
                 "number": None,
                 "enabled": True,
-                "runtime_disabled_reason": None,
+                "workers": workers if workers is not None else 0,
             }
             data["project"] = project
             _write_project_file(data, self.config_path)
+            stored_type = "repository"
             number = None
+            runtime_disabled_reason = None
         if stored_type == "user":
             repo = ""
         # migrate workers => default auto(0) записываем без участия пользователя
@@ -770,7 +772,7 @@ class ProjectsSync:
                 self.config = self._load_config()
                 return True
         # 2) fallback: user projects от имени viewer
-        login = cfg.owner or self._fetch_viewer_login()
+        login = self._fetch_viewer_login() or cfg.owner
         if login:
             nodes = self._list_user_projects(login)
             if nodes:
