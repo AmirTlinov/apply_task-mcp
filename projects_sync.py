@@ -273,6 +273,7 @@ class ProjectsSync:
         self._rate_limiter = _RATE_LIMITER
         self._project_lookup_failed: bool = False
         self._metadata_attempted: bool = False
+        self._viewer_login: Optional[str] = None
 
     # ------------------------------------------------------------------
     # Helpers for conflict detection / reporting
@@ -456,6 +457,7 @@ class ProjectsSync:
                 "repo": repo,
                 "number": None,
                 "enabled": True,
+                "runtime_disabled_reason": None,
             }
             data["project"] = project
             _write_project_file(data, self.config_path)
