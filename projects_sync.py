@@ -227,6 +227,7 @@ class ProjectConfig:
     workers: Optional[int] = None
     schema_ttl_seconds: Optional[int] = None
     rate_reset_behavior: Optional[str] = None
+    runtime_disabled_reason: Optional[str] = None
     fields: Dict[str, FieldConfig] = field(default_factory=dict)
     enabled: bool = True
 
@@ -243,6 +244,7 @@ class ProjectsSync:
         if self.config and self.config.rate_reset_behavior:
             global _RATE_RESET_MODE
             _RATE_RESET_MODE = self.config.rate_reset_behavior.lower()
+        self._runtime_disabled_reason: Optional[str] = self.config.runtime_disabled_reason if self.config else None
         if self.config and (not self.config.number or self.config.number <= 0):
             if self._auto_set_project_number():
                 self.config = self._load_config()
@@ -263,7 +265,8 @@ class ProjectsSync:
         self._seen_conflicts: Dict[Tuple[str, str], str] = {}
         self.last_pull: Optional[str] = None
         self.last_push: Optional[str] = None
-        self._runtime_disabled_reason: Optional[str] = None
+        if self._runtime_disabled_reason:
+            self._project_lookup_failed = True
         self._rate_limiter = _RATE_LIMITER
         self._project_lookup_failed: bool = False
         self._metadata_attempted: bool = False
@@ -355,11 +358,17 @@ class ProjectsSync:
     def runtime_disabled_reason(self) -> Optional[str]:
         return self._runtime_disabled_reason
 
-    def _disable_runtime(self, reason: str) -> None:
+    def _disable_runtime(self, reason: str, persist: bool = False) -> None:
         if not self._runtime_disabled_reason:
             self._runtime_disabled_reason = reason
             logger.warning("Projects sync disabled: %s", reason)
         self._project_lookup_failed = True
+        if persist and self.config_path.exists():
+            data = _read_project_file(self.config_path)
+            project = data.get("project") or {}
+            project["runtime_disabled_reason"] = reason
+            data["project"] = project
+            _write_project_file(data, self.config_path)
 
     def sync_task(self, task) -> bool:
         if not self.enabled:
@@ -426,6 +435,7 @@ class ProjectsSync:
         if isinstance(ttl_override, str) and ttl_override.isdigit():
             ttl_override = int(ttl_override)
         reset_behavior = (project.get("rate_reset_behavior") or "").lower() or DEFAULT_RESET_BEHAVIOR
+        runtime_disabled_reason = project.get("runtime_disabled_reason")
         try:
             owner, repo = detect_repo_slug()
             self.detect_error = None
@@ -448,6 +458,7 @@ class ProjectsSync:
             workers=workers if workers else None,
             schema_ttl_seconds=ttl_override if ttl_override else None,
             rate_reset_behavior=reset_behavior,
+            runtime_disabled_reason=runtime_disabled_reason,
             fields=fields_cfg,
             enabled=bool(enabled),
         )
@@ -487,12 +498,11 @@ class ProjectsSync:
                 self._rate_limiter.update(response.headers, errors)
                 if self._looks_like_project_not_found(errors):
                     reason = errors[0].get("message", "project not found")
-                    self._project_lookup_failed = True
-                    self._disable_runtime(reason)
+                    self._disable_runtime(reason, persist=True)
                     raise ProjectsSyncPermissionError(reason)
                 if self._looks_like_permission_error(errors):
                     reason = errors[0].get("message", "permission denied")
-                    self._disable_runtime(reason)
+                    self._disable_runtime(reason, persist=True)
                     raise ProjectsSyncPermissionError(reason)
                 if self._looks_like_rate_limit(errors) and attempt < 3:
                     jitter = random.uniform(0, delay)
@@ -575,6 +585,7 @@ class ProjectsSync:
             self.project_id = cached.get("id")
             self.project_fields = self._map_fields(cached.get("fields") or [])
             if self.project_id:
+                self._clear_runtime_disable()
                 return
         retry = False
         if cfg.project_type == "repository":
