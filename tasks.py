@@ -2864,7 +2864,8 @@ class TaskTrackerTUI:
         for frag in result:
             if isinstance(frag, tuple) and len(frag) >= 2:
                 used_lines += frag[1].count('\n')
-        list_budget = max(1, self.get_terminal_height() - self.footer_height - used_lines - 2)
+        # Добавляем 1 строку запаса под нижние панели/обрезку терминала
+        list_budget = max(1, self.get_terminal_height() - self.footer_height - used_lines - 3)
 
         # Initial visible window that honors the budget
         if total_items:

@@ -94,3 +94,24 @@ def test_selection_stops_at_last_item(tmp_path):
     assert tui.detail_selected_index == len(detail.subtasks) - 1
     # подсветка последнего элемента остаётся на экране
     assert f"> {len(detail.subtasks)}. " in rendered
+
+
+def test_last_subtask_visible_with_long_header(tmp_path):
+    tui = build_tui(tmp_path)
+    tui.get_terminal_height = lambda: 14
+    detail = TaskDetail(
+        id="TASK-LONG",
+        title="Detail",
+        status="WARN",
+        description="\n".join(f"Line {i}" for i in range(8)),  # съедает место
+    )
+    detail.subtasks = [SubTask(False, f"Subtask {i} body text") for i in range(13)]
+
+    tui.detail_mode = True
+    tui.current_task_detail = detail
+    tui.detail_selected_index = len(detail.subtasks) - 1  # последний
+    tui._set_footer_height(0)
+
+    rendered = "".join(text for _, text in tui.get_detail_text())
+    assert f"> {len(detail.subtasks)}. " in rendered  # последний виден
+    # нижний маркер может отсутствовать, но последний элемент должен быть в окне
