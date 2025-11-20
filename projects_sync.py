@@ -452,6 +452,8 @@ class ProjectsSync:
         )
 
     def _graphql(self, query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
+        if self._runtime_disabled_reason:
+            raise ProjectsSyncPermissionError(self._runtime_disabled_reason)
         headers = {"Authorization": f"bearer {self.token}", "Accept": "application/vnd.github+json"}
         attempt = 0
         delay = 1.0
@@ -530,6 +532,8 @@ class ProjectsSync:
         return False
 
     def _ensure_project_metadata(self) -> None:
+        if self._runtime_disabled_reason:
+            raise ProjectsSyncPermissionError(self._runtime_disabled_reason)
         if self.project_id:
             return
         cfg = self.config
