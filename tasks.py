@@ -2857,7 +2857,13 @@ class TaskTrackerTUI:
             items.append(("risk", risk, -1))
 
         total_items = len(items)
-        visible = self._visible_row_limit()
+        # Рассчитываем доступные строки после уже добавленных блоков
+        used_lines = 0
+        for frag in result:
+            if isinstance(frag, tuple) and len(frag) >= 2:
+                used_lines += frag[1].count('\n')
+        available_lines = self.get_terminal_height() - self.footer_height - used_lines - 2
+        visible = max(3, available_lines)
         max_offset = max(0, total_items - visible)
         if self.detail_selected_index < self.detail_view_offset:
             self.detail_view_offset = self.detail_selected_index
