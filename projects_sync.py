@@ -535,6 +535,15 @@ class ProjectsSync:
         cfg = self.config
         if not cfg:
             raise RuntimeError("projects config missing")
+        if cfg.number is None or cfg.number <= 0:
+            # попробуем определить/создать, иначе отключаем синхронизацию без спама
+            if not self._auto_set_project_number() and not self._auto_create_repo_project():
+                self._disable_runtime("Project number not set and auto-detect failed")
+                raise ProjectsSyncPermissionError("project number missing")
+            cfg = self.config
+            if not cfg or cfg.number <= 0:
+                self._disable_runtime("Project number still missing after auto-detect")
+                raise ProjectsSyncPermissionError("project number missing")
         cache_key = (cfg.project_type, cfg.owner, cfg.repo or "", int(cfg.number or 0))
         cached_cache = _load_project_schema_cache()
         cached = cached_cache.get(cache_key)
