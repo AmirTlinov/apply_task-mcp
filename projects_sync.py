@@ -448,6 +448,18 @@ class ProjectsSync:
             self.detect_error = str(exc)
             owner = ""
             repo = ""
+        # если конфиг принадлежит другому репо — сбросим под текущий
+        if project.get("owner") and project.get("repo") and (project.get("owner") != owner or project.get("repo") != repo):
+            project = {
+                "type": "repository",
+                "owner": owner,
+                "repo": repo,
+                "number": None,
+                "enabled": True,
+            }
+            data["project"] = project
+            _write_project_file(data, self.config_path)
+            number = None
         if stored_type == "user":
             repo = ""
         # migrate workers => default auto(0) записываем без участия пользователя
