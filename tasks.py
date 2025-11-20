@@ -2732,11 +2732,12 @@ class TaskTrackerTUI:
             if col in widths:
                 header_parts.append('-' * widths[col])
         header_line = '+' + '+'.join(header_parts) + '+'
+        header_style = 'class:border.dim'
 
         # Рендер заголовка таблицы
-        result.append(('class:border', header_line + '\n'))
+        result.append((header_style, header_line + '\n'))
         line_counter += 1
-        result.append(('class:border', '|'))
+        result.append((header_style, '|'))
 
         column_labels = {
             'stat': ('◉', widths.get('stat', 3)),
@@ -2759,7 +2760,7 @@ class TaskTrackerTUI:
 
         result.append(('', '\n'))
         line_counter += 1
-        result.append(('class:border', header_line + '\n'))
+        result.append((header_style, header_line + '\n'))
         line_counter += 1
 
         # Рендер строк задач
@@ -2817,7 +2818,7 @@ class TaskTrackerTUI:
             result.append(('', '\n'))
             line_counter += 1
 
-        result.append(('class:border', header_line))
+        result.append((header_style, header_line))
 
         return FormattedText(result)
 
