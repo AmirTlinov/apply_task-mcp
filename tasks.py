@@ -1993,7 +1993,7 @@ class TaskTrackerTUI:
                 return None
             return None
         shift = MouseModifier.SHIFT in mouse_event.modifiers
-        vertical_step = 2
+        vertical_step = 1  # перемещаемся по 1 строке
         horizontal_step = 5
         if mouse_event.event_type == MouseEventType.SCROLL_DOWN:
             if shift:
