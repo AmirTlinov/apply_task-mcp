@@ -28,6 +28,7 @@ from contextlib import contextmanager
 import yaml
 import textwrap
 from wcwidth import wcwidth
+import re
 
 import projects_sync
 from projects_sync import (
@@ -2315,6 +2316,24 @@ class TaskTrackerTUI:
         return lines
 
     @staticmethod
+    def _item_style(group_id: int) -> str:
+        return f"class:text item-{group_id}"
+
+    @staticmethod
+    def _extract_group(line: List[Tuple[str, str]]) -> Optional[int]:
+        """Достаёт идентификатор логического элемента из стиля строки, если есть."""
+        for style, _ in line:
+            if not style:
+                continue
+            m = re.search(r"item-(\\d+)", style)
+            if m:
+                try:
+                    return int(m.group(1))
+                except ValueError:
+                    continue
+        return None
+
+    @staticmethod
     def _focusable_line_indices(lines: List[List[Tuple[str, str]]]) -> List[int]:
         focusable: List[int] = []
         for idx, line in enumerate(lines):
@@ -2444,12 +2463,24 @@ class TaskTrackerTUI:
 
         for idx, line in enumerate(visible_lines):
             global_idx = pinned + offset + idx
-            highlight = global_idx == self.subtask_detail_cursor and global_idx in focusables
+        # Второй проход: определяем выбранную группу
+        visible_meta: List[Tuple[List[Tuple[str, str]], int, Optional[int], bool]] = []
+        selected_group: Optional[int] = None
+        for idx, line in enumerate(visible_lines):
+            global_idx = pinned + offset + idx
+            group = self._extract_group(line)
+            is_cursor = global_idx == self.subtask_detail_cursor and global_idx in focusables
+            if is_cursor:
+                selected_group = group
+            visible_meta.append((line, global_idx, group, is_cursor))
+
+        for idx, (line, global_idx, group, is_cursor) in enumerate(visible_meta):
+            highlight = is_cursor or (selected_group is not None and group == selected_group and group is not None)
             style_prefix = 'class:selected' if highlight else None
             for frag_style, frag_text in line:
                 style = self._merge_styles(style_prefix, frag_style) if highlight else frag_style
                 rendered.append((style, frag_text))
-            if idx < len(visible_lines) - 1:
+            if idx < len(visible_meta) - 1:
                 rendered.append(('', '\n'))
 
         if indicator_bottom:
@@ -3320,6 +3351,7 @@ class TaskTrackerTUI:
         content_width = max(40, term_width - 2)
 
         lines: List[Tuple[str, str]] = []
+        group_id = 0  # логический идентификатор для многострочных элементов
         lines.append(('class:border', '+' + '='*content_width + '+\n'))
 
         # Header с кнопкой назад
@@ -3396,9 +3428,10 @@ class TaskTrackerTUI:
             add_section_header("Критерии выполнения", subtask.criteria_confirmed)
             for i, criterion in enumerate(subtask.success_criteria, 1):
                 prefix = f"  {i}. "
+                group_id += 1
                 for ch in self._wrap_with_prefix(criterion, content_width - 2, prefix):
                     lines.append(('class:border', '| '))
-                    lines.append(('class:text', ch))
+                    lines.append((self._item_style(group_id), ch))
                     lines.append(('class:border', ' |\n'))
 
         # Тесты
@@ -3406,9 +3439,10 @@ class TaskTrackerTUI:
             add_section_header("Тесты", subtask.tests_confirmed)
             for i, test in enumerate(subtask.tests, 1):
                 prefix = f"  {i}. "
+                group_id += 1
                 for ch in self._wrap_with_prefix(test, content_width - 2, prefix):
                     lines.append(('class:border', '| '))
-                    lines.append(('class:text', ch))
+                    lines.append((self._item_style(group_id), ch))
                     lines.append(('class:border', ' |\n'))
 
         # Блокеры
@@ -3416,9 +3450,10 @@ class TaskTrackerTUI:
             add_section_header("Блокеры", subtask.blockers_resolved)
             for i, blocker in enumerate(subtask.blockers, 1):
                 prefix = f"  {i}. "
+                group_id += 1
                 for ch in self._wrap_with_prefix(blocker, content_width - 2, prefix):
                     lines.append(('class:border', '| '))
-                    lines.append(('class:text', ch))
+                    lines.append((self._item_style(group_id), ch))
                     lines.append(('class:border', ' |\n'))
 
         # Evidence logs
@@ -3430,11 +3465,13 @@ class TaskTrackerTUI:
             lines.append(('class:label', self._pad_display(f"{label} — отметки:", content_width - 2)))
             lines.append(('class:border', ' |\n'))
             for entry in entries:
+                group_id_nonlocal = len(append_logs._groups) + 1
+                append_logs._groups.append(group_id_nonlocal)
                 for ch in self._wrap_with_prefix(entry, content_width - 2, "  - "):
                     lines.append(('class:border', '| '))
-                    lines.append(('class:text', ch))
+                    lines.append((self._item_style(group_id_nonlocal), ch))
                     lines.append(('class:border', ' |\n'))
-
+        append_logs._groups = []  # type: ignore
         append_logs("Критерии", subtask.criteria_notes)
         append_logs("Тесты", subtask.tests_notes)
         append_logs("Блокеры", subtask.blockers_notes)
