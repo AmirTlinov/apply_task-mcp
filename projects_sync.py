@@ -575,6 +575,11 @@ class ProjectsSync:
                             _SCHEMA_CACHE.pop(cache_key, None)
                         _persist_project_schema_cache()
                         if not self._project_lookup_failed:
+                            # сбросим номер чтобы при следующем запуске произошло авто-определение
+                            try:
+                                _update_project_entry(number=None)
+                            except Exception:
+                                pass
                             self._disable_runtime(f"Project {cfg.owner}/{cfg.repo}#{variables.get('number')} not found")
                             self._project_lookup_failed = True
                         raise ProjectsSyncPermissionError("project not found")
