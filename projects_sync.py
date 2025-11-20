@@ -454,6 +454,7 @@ class ProjectsSync:
             "must enable repository projects",
             "must enable organization projects",
             "apps are not permitted",
+            "could not resolve to a node",
         )
         for err in errors:
             message = str(err.get("message", "")).lower()
@@ -496,6 +497,8 @@ class ProjectsSync:
                     data = self._graphql(query, variables)
                     break
                 except RuntimeError as exc:
+                    message = str(exc).lower()
+                    not_found = "could not resolve to a projectv2" in message
                     if not retry and self._auto_set_project_number():
                         cfg = self.config
                         if not cfg or not cfg.repo:
@@ -503,13 +506,16 @@ class ProjectsSync:
                         variables["number"] = cfg.number
                         retry = True
                         continue
-                    if not retry and self._auto_create_repo_project():
-                        cfg = self.config
+                    if (not retry and not_found) or (not retry and self._auto_create_repo_project()):
                         if not cfg or not cfg.repo:
-                            raise
-                        variables["number"] = cfg.number
+                            cfg = self.config
+                        if cfg:
+                            variables["number"] = cfg.number
                         retry = True
                         continue
+                    if not_found:
+                        self._disable_runtime("project not found and auto-create failed")
+                        cfg = self.config
                     raise
             repo_node = (data.get("repository") or {})
             node = repo_node.get("projectV2")

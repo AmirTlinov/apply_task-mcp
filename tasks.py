@@ -1554,7 +1554,7 @@ class TaskTrackerTUI:
         self.edit_context = None  # 'task_title', 'subtask_title', 'criterion', 'test', 'blocker'
         self.edit_index = None
 
-        self.load_tasks()
+        self.load_tasks(skip_sync=True)
 
         self.style = self.build_style(theme)
 
@@ -2116,10 +2116,10 @@ class TaskTrackerTUI:
             self.load_tasks(preserve_selection=True, selected_task_file=selected)
             self._last_signature = sig
 
-    def load_tasks(self, preserve_selection: bool = False, selected_task_file: Optional[str] = None):
+    def load_tasks(self, preserve_selection: bool = False, selected_task_file: Optional[str] = None, skip_sync: bool = False):
         with self._spinner("Обновление задач"):
             domain_path = derive_domain_explicit(self.domain_filter, self.phase_filter, self.component_filter)
-            details = self.manager.list_tasks(domain_path)
+            details = self.manager.list_tasks(domain_path, skip_sync=skip_sync)
         if self.phase_filter:
             details = [d for d in details if d.phase == self.phase_filter]
         if self.component_filter:
@@ -2301,6 +2301,12 @@ class TaskTrackerTUI:
             lp = snapshot.get("last_pull") or "—"
             lpsh = snapshot.get("last_push") or "—"
             label = f"{label} pull={lp} push={lpsh}"
+        rate_rem = snapshot.get("rate_remaining")
+        rate_reset = snapshot.get("rate_reset_human")
+        if rate_rem is not None:
+            label = f"{label} rlim={rate_rem}"
+            if rate_reset:
+                label = f"{label}@{rate_reset}"
         if not enabled and reason:
             label = f"{label} ({reason})"
         return [(style, label, handler)]
@@ -3058,7 +3064,7 @@ class TaskTrackerTUI:
                 # Обновляем кеш
                 if self.current_task_detail.id in self.task_details_cache:
                     self.task_details_cache[self.current_task_detail.id] = self.current_task_detail
-                self.load_tasks(preserve_selection=True)
+                self.load_tasks(preserve_selection=True, skip_sync=True)
         else:
             # В списке задач - удаляем задачу
             if self.filtered_tasks:
@@ -3070,7 +3076,7 @@ class TaskTrackerTUI:
                 # Корректируем индекс
                 if self.selected_index >= len(self.filtered_tasks) - 1:
                     self.selected_index = max(0, len(self.filtered_tasks) - 2)
-                self.load_tasks(preserve_selection=False)
+                self.load_tasks(preserve_selection=False, skip_sync=True)
 
     def toggle_subtask_completion(self):
         """Переключить состояние выполнения подзадачи"""
@@ -3568,6 +3574,15 @@ class TaskTrackerTUI:
             "label": "Последний pull/push",
             "value": f"{snapshot.get('last_pull') or '—'} / {snapshot.get('last_push') or '—'}",
             "hint": "Обновляется после успешной синхронизации",
+            "action": None,
+        })
+        rate_value = "н/д"
+        if snapshot.get("rate_remaining") is not None:
+            rate_value = f"{snapshot['rate_remaining']} @ {snapshot.get('rate_reset_human') or '—'}"
+        options.append({
+            "label": "Rate limit",
+            "value": rate_value,
+            "hint": "GitHub remaining/reset (обновляется после запросов)",
             "action": None,
         })
 
@@ -4907,6 +4922,9 @@ def _projects_status_payload() -> Dict[str, Any]:
         "project_id": project_id,
         "project_url": project_url,
         "workers": workers,
+        "rate_remaining": getattr(sync._rate_limiter, "last_remaining", None) if getattr(sync, "_rate_limiter", None) else None,
+        "rate_reset": getattr(sync._rate_limiter, "last_reset_epoch", None) if getattr(sync, "_rate_limiter", None) else None,
+        "rate_reset_human": datetime.fromtimestamp(getattr(sync._rate_limiter, "last_reset_epoch", 0), tz=timezone.utc).strftime("%H:%M:%S") if getattr(sync, "_rate_limiter", None) and getattr(sync._rate_limiter, "last_reset_epoch", None) else None,
         "target_label": target_label,
         "target_hint": "Определяется автоматически из git remote origin",
         "auto_sync": auto_sync,
