@@ -1513,6 +1513,7 @@ class TaskTrackerTUI:
         self.current_task_detail: Optional[TaskDetail] = None
         self.current_task: Optional[Task] = None
         self.detail_selected_index = 0
+        self.detail_view_offset: int = 0
         self.navigation_stack = []
         self.task_details_cache: Dict[str, TaskDetail] = {}
         self._last_signature = None
@@ -1523,7 +1524,8 @@ class TaskTrackerTUI:
         self.status_message_expires: float = 0.0
         self.help_visible: bool = False
         self.list_view_offset: int = 0
-        self.footer_height: int = 9
+        self.settings_view_offset: int = 0
+        self.footer_height: int = 9  # default footer height for task list
         self.mono_select = mono_select
         self.settings_mode = False
         self.settings_selected_index = 0
@@ -1828,6 +1830,17 @@ class TaskTrackerTUI:
         with self._spinner(message):
             return func(*args, **kwargs)
 
+    def _set_footer_height(self, lines: int) -> None:
+        """Dynamically adjust footer height (impacts visible rows)."""
+        lines = max(0, lines)
+        self.footer_height = lines
+        try:
+            self.footer.height = Dimension(min=lines, max=lines)
+        except Exception:
+            # UI may not be built yet; storing height is enough
+            pass
+        self.force_render()
+
     def _visible_row_limit(self) -> int:
         total = self.get_terminal_height()
         usable = total - (self.footer_height + 4)  # статус + отступы
@@ -1845,6 +1858,18 @@ class TaskTrackerTUI:
         elif self.selected_index >= self.list_view_offset + visible:
             self.list_view_offset = self.selected_index - visible + 1
         self.list_view_offset = max(0, min(self.list_view_offset, max_offset))
+
+    def _ensure_detail_selection_visible(self, total: int) -> None:
+        visible = self._visible_row_limit()
+        if total <= visible:
+            self.detail_view_offset = 0
+            return
+        max_offset = max(0, total - visible)
+        if self.detail_selected_index < self.detail_view_offset:
+            self.detail_view_offset = self.detail_selected_index
+        elif self.detail_selected_index >= self.detail_view_offset + visible:
+            self.detail_view_offset = self.detail_selected_index - visible + 1
+        self.detail_view_offset = max(0, min(self.detail_view_offset, max_offset))
 
     def _scroll_task_view(self, delta: int) -> None:
         total = len(self.filtered_tasks)
@@ -1870,6 +1895,18 @@ class TaskTrackerTUI:
         if not base:
             return extra
         return f"{base} {extra}"
+
+    def _ensure_settings_selection_visible(self, total: int) -> None:
+        visible = self._visible_row_limit()
+        if total <= visible:
+            self.settings_view_offset = 0
+            return
+        max_offset = max(0, total - visible)
+        if self.settings_selected_index < self.settings_view_offset:
+            self.settings_view_offset = self.settings_selected_index
+        elif self.settings_selected_index >= self.settings_view_offset + visible:
+            self.settings_view_offset = self.settings_selected_index - visible + 1
+        self.settings_view_offset = max(0, min(self.settings_view_offset, max_offset))
 
     @staticmethod
     def _normalize_status_value(status: Union[Status, str, bool, None]) -> Status:
@@ -2042,6 +2079,15 @@ class TaskTrackerTUI:
                 self.detail_selected_index = 0
                 return
             self.detail_selected_index = max(0, min(self.detail_selected_index + delta, items - 1))
+            self._ensure_detail_selection_visible(items)
+        elif self.settings_mode:
+            options = self._settings_options()
+            total = len(options)
+            if total <= 0:
+                self.settings_selected_index = 0
+                return
+            self.settings_selected_index = max(0, min(self.settings_selected_index + delta, total - 1))
+            self._ensure_settings_selection_visible(total)
         else:
             total = len(self.filtered_tasks)
             if total <= 0:
@@ -2049,6 +2095,7 @@ class TaskTrackerTUI:
                 return
             self.selected_index = max(0, min(self.selected_index + delta, total - 1))
             self._ensure_selection_visible()
+        self.force_render()
 
     def apply_horizontal_scroll(self, text: str) -> str:
         """Apply horizontal scroll offset to a text line."""
@@ -2226,14 +2273,31 @@ class TaskTrackerTUI:
             self._last_filter_value = flt_display
         filter_flash_active = now < self._filter_flash_until
 
-        parts = [
-            ("class:text.dim", f" {total} задач | "),
+        def back_handler(event: MouseEvent):
+            if event.event_type == MouseEventType.MOUSE_UP and event.button == MouseButton.LEFT:
+                self.exit_detail_view()
+                return None
+            return NotImplemented
+
+        def settings_handler(event: MouseEvent):
+            if event.event_type == MouseEventType.MOUSE_UP and event.button == MouseButton.LEFT:
+                self.open_settings_dialog()
+                return None
+            return NotImplemented
+
+        parts: List[Tuple[str, str]] = []
+        # back button только в статус-баре
+        if self.detail_mode or getattr(self, "single_subtask_view", None):
+            parts.append(("class:header.bigicon", "[BACK] ", back_handler))
+
+        parts.extend([
+            ("class:text.dim", f"{total} задач | "),
             ("class:icon.check", str(ok)),
             ("class:text.dim", "/"),
             ("class:icon.warn", str(warn)),
             ("class:text.dim", "/"),
             ("class:icon.fail", str(fail)),
-        ]
+        ])
         filter_style = 'class:icon.warn' if filter_flash_active else 'class:header'
         parts.extend([
             ("class:text.dim", " | "),
@@ -2254,6 +2318,18 @@ class TaskTrackerTUI:
             ])
         elif self.status_message:
             self.status_message = ""
+
+        # settings button pinned to the far right of the line
+        try:
+            term_width = self.get_terminal_width()
+        except Exception:
+            term_width = 120
+        current_len = sum(len(text) for _, text, *rest in parts)
+        settings_symbol = "[SETTINGS]"
+        # 1 space padding before settings
+        needed = max(1, term_width - current_len - len(settings_symbol))
+        parts.append(("class:text", " " * needed))
+        parts.append(("class:header.bigicon", settings_symbol, settings_handler))
         return FormattedText(parts)
 
     def _current_description_snippet(self) -> str:
@@ -2661,12 +2737,6 @@ class TaskTrackerTUI:
         self.subtask_row_map = []
         result = []
 
-        def back_handler(event: MouseEvent):
-            if event.event_type == MouseEventType.MOUSE_UP and event.button == MouseButton.LEFT:
-                self.exit_detail_view()
-                return None
-            return NotImplemented
-
         # Get terminal width and calculate adaptive content width
         term_width = self.get_terminal_width()
         content_width = max(40, term_width - 2)
@@ -2675,23 +2745,8 @@ class TaskTrackerTUI:
         # Header
         result.append(('class:border', '+' + '='*content_width + '+\n'))
         result.append(('class:border', '| '))
-        back_label = '[← Назад]'
-        settings_label = '[⚙ Настройки]'
-
-        def settings_handler(event: MouseEvent):
-            if event.event_type == MouseEventType.MOUSE_UP and event.button == MouseButton.LEFT:
-                self.open_settings_dialog()
-                return None
-            return NotImplemented
-
-        slot = content_width - 2
-        spacing = "  "
-        remainder = max(0, slot - len(back_label) - len(settings_label) - len(spacing))
-        result.append(('class:header', back_label, back_handler))
-        result.append(('class:text', spacing))
-        result.append(('class:header', settings_label, settings_handler))
-        if remainder:
-            result.append(('class:text', ' ' * remainder))
+        # no buttons here; все управляется статус-баром
+        result.append(('class:text', ' ' * (content_width - 2)))
         result.append(('class:border', ' |\n'))
         result.append(('class:border', '+' + '-'*content_width + '+\n'))
         result.append(('class:border', '| '))
@@ -2786,45 +2841,87 @@ class TaskTrackerTUI:
                         result.append(('class:border', ' |\n'))
                 result.append(('class:border', '+' + '-'*content_width + '+\n'))
 
-        # Subtasks with horizontal scroll
-        if detail.subtasks:
-            completed = sum(1 for st in detail.subtasks if st.completed)
-            line_counter = 0
-            for frag in result:
-                if isinstance(frag, tuple) and len(frag) >= 2:
-                    line_counter += frag[1].count('\n')
-            self.subtask_row_map = []
+        # Единый список элементов с построчным скроллом
+        items: List[Tuple[str, Any, int]] = []
+        for idx, st in enumerate(detail.subtasks):
+            items.append(("subtask", st, idx))
+        for step in detail.next_steps:
+            items.append(("next", step, -1))
+        for dep in detail.dependencies:
+            items.append(("dep", dep, -1))
+        for sc in detail.success_criteria:
+            items.append(("success", sc, -1))
+        for prob in detail.problems:
+            items.append(("problem", prob, -1))
+        for risk in detail.risks:
+            items.append(("risk", risk, -1))
+
+        total_items = len(items)
+        # посчитаем, сколько строк уже занято до списка
+        pre_lines = 0
+        for frag in result:
+            if isinstance(frag, tuple) and len(frag) >= 2:
+                pre_lines += frag[1].count('\n')
+        available = self.get_terminal_height() - self.footer_height - pre_lines - 2
+        visible = max(3, available)
+        max_offset = max(0, total_items - visible)
+        if self.detail_selected_index < self.detail_view_offset:
+            self.detail_view_offset = self.detail_selected_index
+        elif self.detail_selected_index >= self.detail_view_offset + visible:
+            self.detail_view_offset = self.detail_selected_index - visible + 1
+        self.detail_view_offset = max(0, min(self.detail_view_offset, max_offset))
+        start = self.detail_view_offset
+        end = min(total_items, start + visible)
+
+        hidden_above = start
+        hidden_below = total_items - end
+
+        completed = sum(1 for st in detail.subtasks if st.completed)
+        line_counter = 0
+        for frag in result:
+            if isinstance(frag, tuple) and len(frag) >= 2:
+                line_counter += frag[1].count('\n')
+
+        self.subtask_row_map = []
+        result.append(('class:border', '| '))
+        header = f'ПОДЗАДАЧИ ({completed}/{len(detail.subtasks)} завершено)'
+        result.append(('class:header', header[: content_width - 2].ljust(content_width - 2)))
+        result.append(('class:border', ' |\n'))
+        line_counter += 1
+        if hidden_above:
             result.append(('class:border', '| '))
-            header = f'ПОДЗАДАЧИ ({completed}/{len(detail.subtasks)} завершено):'
-            result.append(('class:header', header.ljust(content_width - 2)))
+            result.append(('class:text.dim', f"↑ +{hidden_above}".ljust(content_width - 2)))
             result.append(('class:border', ' |\n'))
             line_counter += 1
-            for i, st in enumerate(detail.subtasks, 1):
-                pointer = '>' if (i - 1) == self.detail_selected_index else ' '
-                base_prefix = f'{pointer} {i}. '
 
-                # Apply horizontal scroll to subtask title
+        for global_idx in range(start, end):
+            kind, payload, sub_idx = items[global_idx]
+            selected = global_idx == self.detail_selected_index
+            bg_style = f"class:{self._selection_style_for_status(Status.OK if selected else None)}" if selected else None
+            base_border = 'class:border'
+            border_style = self._merge_styles(base_border, bg_style) if selected else base_border
+
+            if kind == "subtask":
+                st = payload
+                pointer = '>' if selected else ' '
+                base_prefix = f'{pointer} {sub_idx + 1}. '
+
                 st_title = st.title
                 if self.horizontal_offset > 0:
                     st_title = st_title[self.horizontal_offset:] if len(st_title) > self.horizontal_offset else ""
 
-                selected = (i - 1) == self.detail_selected_index
                 sub_status = self._subtask_status(st)
                 symbol, icon_class = self._status_indicator(sub_status)
-                bg_style = None
                 if selected:
-                    bg_style = f"class:{self._selection_style_for_status(sub_status)}"
+                    icon_class = self._merge_styles(icon_class, bg_style)
 
-                indicator_width = len(symbol) + 1  # символ + пробел
+                indicator_width = len(symbol) + 1
                 prefix_len = len(base_prefix) + indicator_width
 
-                border_style = 'class:border'
-                if selected:
-                    border_style = self._merge_styles('class:border', bg_style)
                 row_line = line_counter
                 result.append((border_style, '| '))
                 result.append((self._merge_styles('class:text', bg_style), base_prefix))
-                result.append((self._merge_styles(icon_class, bg_style), f"{symbol} "))
+                result.append((icon_class, f"{symbol} "))
                 flags = subtask_flags(st)
                 glyphs = [
                     ('class:icon.check', '•') if flags['criteria'] else ('class:text.dim', '·'),
@@ -2832,18 +2929,14 @@ class TaskTrackerTUI:
                     ('class:icon.check', '•') if flags['blockers'] else ('class:text.dim', '·'),
                 ]
                 flag_text = []
-                for idx, (cls, symbol) in enumerate(glyphs):
-                    flag_text.append((cls, symbol))
-                    if idx < 2:
+                for idxf, (cls, symbol_f) in enumerate(glyphs):
+                    flag_text.append((cls, symbol_f))
+                    if idxf < 2:
                         flag_text.append(('class:text.dim', ' '))
                 flag_width = len(' [• • •]')
                 title_width = max(5, content_width - 2 - prefix_len - flag_width)
-
-                title_style = 'class:text'
-                if selected:
-                    title_style = self._merge_styles('class:text', bg_style)
+                title_style = self._merge_styles('class:text', bg_style) if selected else 'class:text'
                 result.append((title_style, st_title[:title_width].ljust(title_width)))
-
                 bracket_style = self._merge_styles('class:text.dim', bg_style) if selected else 'class:text.dim'
                 result.append((bracket_style, ' ['))
                 for frag_style, frag_text in flag_text:
@@ -2852,81 +2945,33 @@ class TaskTrackerTUI:
                 result.append((bracket_style, ']'))
                 result.append((border_style, ' |\n'))
                 line_counter += 1
-                self.subtask_row_map.append((row_line, i - 1))
-            result.append(('class:border', '+' + '-'*content_width + '+\n'))
+                self.subtask_row_map.append((row_line, sub_idx))
+            else:
+                label_map = {
+                    "next": "NEXT",
+                    "dep": "DEP",
+                    "success": "OKR",
+                    "problem": "ISSUE",
+                    "risk": "RISK",
+                }
+                label = label_map.get(kind, kind.upper())
+                text = str(payload)
+                if self.horizontal_offset > 0:
+                    text = text[self.horizontal_offset:] if len(text) > self.horizontal_offset else ""
+                max_line = max(5, content_width - 6 - len(label))
+                text = text[:max_line]
+                style = self._merge_styles('class:text', bg_style) if selected else 'class:text'
+                result.append((border_style, '| '))
+                result.append((style, f"{('>' if selected else ' ')} [{label}] {text}".ljust(content_width - 2)))
+                result.append((border_style, ' |\n'))
+                line_counter += 1
+
+        if hidden_below:
+            result.append(('class:border', '| '))
+            result.append(('class:text.dim', f"↓ +{hidden_below}".ljust(content_width - 2)))
+            result.append(('class:border', ' |\n'))
             line_counter += 1
 
-        # Next steps with horizontal scroll
-        if detail.next_steps:
-            result.append(('class:border', '| '))
-            result.append(('class:header', 'СЛЕДУЮЩИЕ ШАГИ:'.ljust(content_width - 2)))
-            result.append(('class:border', ' |\n'))
-            for step in detail.next_steps:
-                if self.horizontal_offset > 0:
-                    step = step[self.horizontal_offset:] if len(step) > self.horizontal_offset else ""
-                step_text = f'  - {step}'[:content_width-2]
-                result.append(('class:border', '| '))
-                result.append(('class:text', step_text.ljust(content_width - 2)))
-                result.append(('class:border', ' |\n'))
-            result.append(('class:border', '+' + '-'*content_width + '+\n'))
-
-        # Dependencies with horizontal scroll
-        if detail.dependencies:
-            result.append(('class:border', '| '))
-            result.append(('class:header', 'ЗАВИСИМОСТИ:'.ljust(content_width - 2)))
-            result.append(('class:border', ' |\n'))
-            for dep in detail.dependencies:
-                if self.horizontal_offset > 0:
-                    dep = dep[self.horizontal_offset:] if len(dep) > self.horizontal_offset else ""
-                dep_text = f'  - {dep}'[:content_width-2]
-                result.append(('class:border', '| '))
-                result.append(('class:text', dep_text.ljust(content_width - 2)))
-                result.append(('class:border', ' |\n'))
-            result.append(('class:border', '+' + '-'*content_width + '+\n'))
-
-        # Success criteria with horizontal scroll
-        if detail.success_criteria:
-            result.append(('class:border', '| '))
-            result.append(('class:header', 'КРИТЕРИИ УСПЕХА:'.ljust(content_width - 2)))
-            result.append(('class:border', ' |\n'))
-            for sc in detail.success_criteria:
-                if self.horizontal_offset > 0:
-                    sc = sc[self.horizontal_offset:] if len(sc) > self.horizontal_offset else ""
-                sc_text = f'  - {sc}'[:content_width-2]
-                result.append(('class:border', '| '))
-                result.append(('class:text', sc_text.ljust(content_width - 2)))
-                result.append(('class:border', ' |\n'))
-            result.append(('class:border', '+' + '-'*content_width + '+\n'))
-
-        # Проблемы
-        if detail.problems:
-            result.append(('class:border', '| '))
-            result.append(('class:icon.fail', 'PROBLEMS:'.ljust(content_width - 2)))
-            result.append(('class:border', ' |\n'))
-            for prob in detail.problems:
-                if self.horizontal_offset > 0:
-                    prob = prob[self.horizontal_offset:] if len(prob) > self.horizontal_offset else ""
-                prob_text = f'  ! {prob}'[:content_width-2]
-                result.append(('class:border', '| '))
-                result.append(('class:icon.fail', prob_text.ljust(content_width - 2)))
-                result.append(('class:border', ' |\n'))
-            result.append(('class:border', '+' + '-'*content_width + '+\n'))
-
-        # Risks with horizontal scroll
-        if detail.risks:
-            result.append(('class:border', '| '))
-            result.append(('class:icon.warn', 'RISKS:'.ljust(content_width - 2)))
-            result.append(('class:border', ' |\n'))
-            for risk in detail.risks:
-                if self.horizontal_offset > 0:
-                    risk = risk[self.horizontal_offset:] if len(risk) > self.horizontal_offset else ""
-                risk_text = f'  - {risk}'[:content_width-2]
-                result.append(('class:border', '| '))
-                result.append(('class:text', risk_text.ljust(content_width - 2)))
-                result.append(('class:border', ' |\n'))
-            result.append(('class:border', '+' + '-'*content_width + '+\n'))
-
-        # Footer
         result.append(('class:border', '+' + '='*content_width + '+'))
 
         return FormattedText(result)
@@ -2934,16 +2979,26 @@ class TaskTrackerTUI:
     def get_detail_items_count(self) -> int:
         if not self.current_task_detail:
             return 0
-        return len(self.current_task_detail.subtasks) + len(self.current_task_detail.next_steps) + len(self.current_task_detail.dependencies)
+        detail = self.current_task_detail
+        total = len(detail.subtasks)
+        total += len(detail.next_steps)
+        total += len(detail.dependencies)
+        total += len(detail.success_criteria)
+        total += len(detail.problems)
+        total += len(detail.risks)
+        return total
 
     def show_task_details(self, task: Task):
         self.current_task = task
         self.current_task_detail = task.detail or TaskFileParser.parse(Path(task.task_file))
         self.detail_mode = True
         self.detail_selected_index = 0
+        self.detail_view_offset = 0
+        self._set_footer_height(0)
 
     def show_subtask_details(self, subtask: SubTask, index: int):
         """Render a focused view for a single subtask with full details."""
+        self._set_footer_height(0)
         term_width = self.get_terminal_width()
         content_width = max(40, term_width - 2)
 
@@ -2958,23 +3013,8 @@ class TaskTrackerTUI:
             return NotImplemented
 
         lines.append(('class:border', '| '))
-        back_label = '[← Назад]'
-        settings_label = '[⚙ Настройки]'
-
-        def settings_handler(event: MouseEvent):
-            if event.event_type == MouseEventType.MOUSE_UP and event.button == MouseButton.LEFT:
-                self.open_settings_dialog()
-                return None
-            return NotImplemented
-
-        slot = content_width - 2
-        spacing = "  "
-        remainder = max(0, slot - len(back_label) - len(settings_label) - len(spacing))
-        lines.append(('class:header', back_label, back_handler))
-        lines.append(('class:text', spacing))
-        lines.append(('class:header', settings_label, settings_handler))
-        if remainder:
-            lines.append(('class:text', ' ' * remainder))
+        # no controls here; управляем через статус-бар
+        lines.append(('class:text', ' ' * (content_width - 2)))
         lines.append(('class:border', ' |\n'))
         lines.append(('class:border', '+' + '-'*content_width + '+\n'))
 
@@ -3325,6 +3365,7 @@ class TaskTrackerTUI:
         if hasattr(self, "single_subtask_view") and self.single_subtask_view:
             self.single_subtask_view = None
             self.horizontal_offset = 0
+            self._set_footer_height(0 if self.detail_mode else 9)
             return
         if not self.detail_mode:
             return
@@ -3338,8 +3379,10 @@ class TaskTrackerTUI:
             self.current_task = None
             self.current_task_detail = None
             self.detail_selected_index = 0
-        self.horizontal_offset = 0
-        self.settings_mode = False
+            self.detail_view_offset = 0
+            self.horizontal_offset = 0
+            self.settings_mode = False
+            self._set_footer_height(9)
 
     def edit_current_item(self):
         """Редактировать текущий элемент"""
@@ -3371,6 +3414,10 @@ class TaskTrackerTUI:
                 ("", "\n"),
                 ("class:text.dim", "  Чекпоинты: [✓ ✓ ·] = критерии / тесты / блокеры | ? — скрыть подсказку"),
             ])
+        if getattr(self, "single_subtask_view", None):
+            return FormattedText([])
+        if self.detail_mode and self.current_task_detail:
+            return FormattedText([])
         if self.editing_mode:
             return FormattedText([
                 ("class:text.dimmer", " Enter: сохранить | Esc: отменить"),
@@ -3469,6 +3516,7 @@ class TaskTrackerTUI:
     def close_settings_dialog(self):
         self.settings_mode = False
         self.editing_mode = False
+        self._set_footer_height(9 if not self.detail_mode else 0)
         self.force_render()
 
     def _resolve_body_container(self):
@@ -3521,6 +3569,18 @@ class TaskTrackerTUI:
         label_width = max(14, min(inner_width - 12, max_label + 2))
         value_width = max(10, inner_width - label_width - 2)
         self.settings_selected_index = min(self.settings_selected_index, len(options) - 1)
+        # учитываем высоту хедера/хинтов и футера, оставляем запас под подсказки
+        occupied = 8  # рамки и заголовок
+        available = self.get_terminal_height() - self.footer_height - occupied
+        visible = max(3, available - 3)
+        max_offset = max(0, len(options) - visible)
+        self.settings_view_offset = max(0, min(self.settings_view_offset, max_offset))
+        if self.settings_selected_index < self.settings_view_offset:
+            self.settings_view_offset = self.settings_selected_index
+        elif self.settings_selected_index >= self.settings_view_offset + visible:
+            self.settings_view_offset = self.settings_selected_index - visible + 1
+        start = self.settings_view_offset
+        end = min(len(options), start + visible)
 
         lines: List[Tuple[str, str]] = []
         lines.append(('class:border', '+' + '='*width + '+\n'))
@@ -3530,7 +3590,11 @@ class TaskTrackerTUI:
         lines.append(('class:border', ' |\n'))
         lines.append(('class:border', '+' + '-'*width + '+\n'))
 
-        for idx, option in enumerate(options):
+        hidden_above = start
+        hidden_below = len(options) - end
+
+        for idx in range(start, end):
+            option = options[idx]
             prefix = '▸' if idx == self.settings_selected_index else ' '
             label_text = option['label'][:label_width].ljust(label_width)
             value_text = option['value']
@@ -3547,6 +3611,15 @@ class TaskTrackerTUI:
                     lines.append(('class:border', '| '))
                     lines.append(('class:text.dim', f"  {hint_line}".ljust(inner_width)))
                     lines.append(('class:border', ' |\n'))
+
+        if hidden_below:
+            lines.append(('class:border', '| '))
+            lines.append(('class:text.dim', f"↓ +{hidden_below}".ljust(inner_width)))
+            lines.append(('class:border', ' |\n'))
+        if hidden_above:
+            lines.append(('class:border', '| '))
+            lines.append(('class:text.dim', f"↑ +{hidden_above}".ljust(inner_width)))
+            lines.append(('class:border', ' |\n'))
 
         lines.append(('class:border', '+' + '-'*width + '+\n'))
         hint = "Вверх/вниз — выбор, Enter — действие, Esc — закрыть"
@@ -3739,9 +3812,11 @@ class TaskTrackerTUI:
 
     def move_settings_selection(self, delta: int) -> None:
         options = self._settings_options()
-        if not options:
+        total = len(options)
+        if not total:
             return
-        self.settings_selected_index = (self.settings_selected_index + delta) % len(options)
+        self.settings_selected_index = max(0, min(self.settings_selected_index + delta, total - 1))
+        self._ensure_settings_selection_visible(total)
         self.force_render()
 
     def activate_settings_option(self):
@@ -3792,6 +3867,7 @@ class TaskTrackerTUI:
         self.settings_mode = True
         self.settings_selected_index = 0
         self.editing_mode = False
+        self._set_footer_height(0)
         self.force_render()
 
     def _start_pat_validation(self, token: Optional[str] = None, label: str = "PAT", cache_result: bool = True):

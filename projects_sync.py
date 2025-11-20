@@ -1070,7 +1070,9 @@ class ProjectsSync:
         cfg = self.config
         if not cfg or cfg.project_type != "repository" or not cfg.repo:
             return False
-        if not self.enabled:
+        # Issue sync не должен блокироваться из-за ошибок autodetect GitHub Projects.
+        # Достаточно валидной конфигурации и токена.
+        if not cfg.enabled or not self.token or self._runtime_disabled_reason:
             return False
         headers = {"Authorization": f"token {self.token}", "Accept": "application/vnd.github+json"}
         base_url = f"https://api.github.com/repos/{cfg.owner}/{cfg.repo}/issues"
