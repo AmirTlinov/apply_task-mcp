@@ -3171,20 +3171,17 @@ class TaskTrackerTUI:
                         result.append(('class:border', ' |\n'))
                 result.append(('class:border', '+' + '-'*content_width + '+\n'))
 
-        # Единый список элементов с построчным скроллом
+        # Единый список только для подзадач; остальные секции выводим отдельно ниже
         items: List[Tuple[str, Any, int]] = []
         for idx, st in enumerate(detail.subtasks):
             items.append(("subtask", st, idx))
-        for step in detail.next_steps:
-            items.append(("next", step, -1))
-        for dep in detail.dependencies:
-            items.append(("dep", dep, -1))
-        for sc in detail.success_criteria:
-            items.append(("success", sc, -1))
-        for prob in detail.problems:
-            items.append(("problem", prob, -1))
-        for risk in detail.risks:
-            items.append(("risk", risk, -1))
+        aux_sections = {
+            "next": detail.next_steps,
+            "dep": detail.dependencies,
+            "success": detail.success_criteria,
+            "problem": detail.problems,
+            "risk": detail.risks,
+        }
 
         total_items = len(items)
         # Compute line budget after header/metadata fragments
@@ -3260,76 +3257,81 @@ class TaskTrackerTUI:
             bg_style = f"class:{self._selection_style_for_status(Status.OK if selected else None)}" if selected else None
             base_border = 'class:border'
 
-            if kind == "subtask":
-                st = payload
-                pointer = '>' if selected else ' '
-                base_prefix = f'{pointer} {sub_idx + 1}. '
+            st = payload  # только подзадачи в items
+            pointer = '>' if selected else ' '
+            base_prefix = f'{pointer} {sub_idx + 1}. '
 
-                st_title = st.title
-                if self.horizontal_offset > 0:
-                    st_title = st_title[self.horizontal_offset:] if len(st_title) > self.horizontal_offset else ""
+            st_title = st.title
+            if self.horizontal_offset > 0:
+                st_title = st_title[self.horizontal_offset:] if len(st_title) > self.horizontal_offset else ""
 
-                sub_status = self._subtask_status(st)
-                symbol, icon_class = self._status_indicator(sub_status)
-                if selected:
-                    icon_class = self._merge_styles(icon_class, bg_style)
+            sub_status = self._subtask_status(st)
+            symbol, icon_class = self._status_indicator(sub_status)
+            if selected:
+                icon_class = self._merge_styles(icon_class, bg_style)
 
-                indicator_width = len(symbol) + 1
-                prefix_len = len(base_prefix) + indicator_width
+            indicator_width = len(symbol) + 1
+            prefix_len = len(base_prefix) + indicator_width
 
-                row_line = line_counter
-                result.append((base_border, '| '))
-                result.append((self._merge_styles('class:text', bg_style), base_prefix))
-                result.append((icon_class, f"{symbol} "))
-                flags = subtask_flags(st)
-                glyphs = [
-                    ('class:icon.check', '•') if flags['criteria'] else ('class:text.dim', '·'),
-                    ('class:icon.check', '•') if flags['tests'] else ('class:text.dim', '·'),
-                    ('class:icon.check', '•') if flags['blockers'] else ('class:text.dim', '·'),
-                ]
-                flag_text = []
-                for idxf, (cls, symbol_f) in enumerate(glyphs):
-                    flag_text.append((cls, symbol_f))
-                    if idxf < 2:
-                        flag_text.append(('class:text.dim', ' '))
-                flag_width = len(' [• • •]')
-                title_width = max(5, content_width - 2 - prefix_len - flag_width)
-                title_style = self._merge_styles('class:text', bg_style) if selected else 'class:text'
-                result.append((title_style, st_title[:title_width].ljust(title_width)))
-                bracket_style = self._merge_styles('class:text.dim', bg_style) if selected else 'class:text.dim'
-                result.append((bracket_style, ' ['))
-                for frag_style, frag_text in flag_text:
-                    style = self._merge_styles(frag_style, bg_style) if selected else frag_style
-                    result.append((style, frag_text))
-                result.append((bracket_style, ']'))
-                result.append((base_border, ' |\n'))
-                line_counter += 1
-                self.subtask_row_map.append((row_line, sub_idx))
-            else:
-                label_map = {
-                    "next": "NEXT",
-                    "dep": "DEP",
-                    "success": "OKR",
-                    "problem": "ISSUE",
-                    "risk": "RISK",
-                }
-                label = label_map.get(kind, kind.upper())
-                text = str(payload)
-                if self.horizontal_offset > 0:
-                    text = text[self.horizontal_offset:] if len(text) > self.horizontal_offset else ""
-                max_line = max(5, content_width - 6 - len(label))
-                text = text[:max_line]
-                style = self._merge_styles('class:text', bg_style) if selected else 'class:text'
-                result.append((base_border, '| '))
-                result.append((style, f"{('>' if selected else ' ')} [{label}] {text}".ljust(content_width - 2)))
-                result.append((base_border, ' |\n'))
-                line_counter += 1
+            row_line = line_counter
+            result.append((base_border, '| '))
+            result.append((self._merge_styles('class:text', bg_style), base_prefix))
+            result.append((icon_class, f"{symbol} "))
+            flags = subtask_flags(st)
+            glyphs = [
+                ('class:icon.check', '•') if flags['criteria'] else ('class:text.dim', '·'),
+                ('class:icon.check', '•') if flags['tests'] else ('class:text.dim', '·'),
+                ('class:icon.check', '•') if flags['blockers'] else ('class:text.dim', '·'),
+            ]
+            flag_text = []
+            for idxf, (cls, symbol_f) in enumerate(glyphs):
+                flag_text.append((cls, symbol_f))
+                if idxf < 2:
+                    flag_text.append(('class:text.dim', ' '))
+            flag_width = len(' [• • •]')
+            title_width = max(5, content_width - 2 - prefix_len - flag_width)
+            title_style = self._merge_styles('class:text', bg_style) if selected else 'class:text'
+            result.append((title_style, st_title[:title_width].ljust(title_width)))
+            bracket_style = self._merge_styles('class:text.dim', bg_style) if selected else 'class:text.dim'
+            result.append((bracket_style, ' ['))
+            for frag_style, frag_text in flag_text:
+                style = self._merge_styles(frag_style, bg_style) if selected else frag_style
+                result.append((style, frag_text))
+            result.append((bracket_style, ']'))
+            result.append((base_border, ' |\n'))
+            line_counter += 1
+            self.subtask_row_map.append((row_line, sub_idx))
 
         if hidden_below:
             result.append(('class:border', '| '))
             result.append(('class:text.dim', f"↓ +{hidden_below}".ljust(content_width - 2)))
             result.append(('class:border', ' |\n'))
             line_counter += 1
+
+        # Дополнительные секции: next, deps, success criteria, problems, risks
+        section_titles = {
+            "next": "NEXT",
+            "dep": "DEPENDENCIES",
+            "success": "OKR / Success Criteria",
+            "problem": "Problems",
+            "risk": "Risks",
+        }
+        for key, entries in aux_sections.items():
+            if not entries:
+                continue
+            result.append(('class:border', '+' + '-'*content_width + '+\n'))
+            result.append(('class:border', '| '))
+            result.append(('class:header', section_titles.get(key, key).ljust(content_width - 2)))
+            result.append(('class:border', ' |\n'))
+            for entry in entries:
+                text = str(entry)
+                if self.horizontal_offset > 0:
+                    text = text[self.horizontal_offset:] if len(text) > self.horizontal_offset else ""
+                chunks = [text[i:i+content_width-4] for i in range(0, len(text), content_width-4)] or ['']
+                for ch in chunks:
+                    result.append(('class:border', '| '))
+                    result.append(('class:text', f"  - {ch}".ljust(content_width - 2)))
+                    result.append(('class:border', ' |\n'))
 
         result.append(('class:border', '+' + '='*content_width + '+'))
 
@@ -3339,13 +3341,7 @@ class TaskTrackerTUI:
         if not self.current_task_detail:
             return 0
         detail = self.current_task_detail
-        total = len(detail.subtasks)
-        total += len(detail.next_steps)
-        total += len(detail.dependencies)
-        total += len(detail.success_criteria)
-        total += len(detail.problems)
-        total += len(detail.risks)
-        return total
+        return len(detail.subtasks)
 
     def show_task_details(self, task: Task):
         self.current_task = task

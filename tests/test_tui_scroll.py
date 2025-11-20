@@ -43,7 +43,7 @@ def test_move_selection_clamps_detail_mode(tmp_path):
 
     # Jump beyond total items and ensure we clamp to the last slot
     tui.move_vertical_selection(10)
-    total_items = len(detail.subtasks) + len(detail.next_steps) + len(detail.dependencies)
+    total_items = len(detail.subtasks)
     assert tui.detail_selected_index == total_items - 1
 
     tui.move_vertical_selection(-20)
