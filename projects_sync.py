@@ -356,10 +356,10 @@ class ProjectsSync:
         return self._runtime_disabled_reason
 
     def _disable_runtime(self, reason: str) -> None:
-        if self._runtime_disabled_reason:
-            return
-        self._runtime_disabled_reason = reason
-        logger.warning("Projects sync disabled: %s", reason)
+        if not self._runtime_disabled_reason:
+            self._runtime_disabled_reason = reason
+            logger.warning("Projects sync disabled: %s", reason)
+        self._project_lookup_failed = True
 
     def sync_task(self, task) -> bool:
         if not self.enabled:
@@ -485,6 +485,11 @@ class ProjectsSync:
             errors = payload.get("errors")
             if errors:
                 self._rate_limiter.update(response.headers, errors)
+                if self._looks_like_project_not_found(errors):
+                    reason = errors[0].get("message", "project not found")
+                    self._project_lookup_failed = True
+                    self._disable_runtime(reason)
+                    raise ProjectsSyncPermissionError(reason)
                 if self._looks_like_permission_error(errors):
                     reason = errors[0].get("message", "permission denied")
                     self._disable_runtime(reason)
@@ -519,6 +524,16 @@ class ProjectsSync:
         for err in errors:
             message = str(err.get("message", "")).lower()
             if any(key in message for key in keywords):
+                return True
+        return False
+
+    @staticmethod
+    def _looks_like_project_not_found(errors: Any) -> bool:
+        if not errors:
+            return False
+        for err in errors:
+            message = str(err.get("message", "")).lower()
+            if "could not resolve to a projectv2" in message:
                 return True
         return False
 
