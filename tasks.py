@@ -2091,7 +2091,9 @@ class TaskTrackerTUI:
                 return
             avail = max(5, self.get_terminal_height() - self.footer_height - 1)
             # Двигаем курсор
-            self.subtask_detail_cursor = max(0, min(self.subtask_detail_cursor + delta, total - 1))
+            focusables = self._focusable_line_indices(self._formatted_lines(self._subtask_detail_buffer))
+            desired = self.subtask_detail_cursor + delta
+            self.subtask_detail_cursor = self._snap_cursor(desired, focusables)
             # Обеспечиваем видимость курсора
             indicator_top = 1 if self.subtask_detail_scroll > 0 else 0
             visible_content = max(1, avail - indicator_top)
@@ -2222,6 +2224,36 @@ class TaskTrackerTUI:
         return lines
 
     @staticmethod
+    def _focusable_line_indices(lines: List[List[Tuple[str, str]]]) -> List[int]:
+        focusable: List[int] = []
+        for idx, line in enumerate(lines):
+            texts = "".join(text for _, text in line).strip()
+            if not texts:
+                continue
+            # пропускаем чистые бордеры/хедеры
+            if texts.startswith('+') or texts.startswith('|') and all(texts.startswith(tok) for tok in ['|', '-', '+']):
+                continue
+            if any('header' in (style or '') or 'label' in (style or '') for style, _ in line):
+                continue
+            focusable.append(idx)
+        return focusable
+
+    @staticmethod
+    def _snap_cursor(desired: int, focusables: List[int]) -> int:
+        if not focusables:
+            return max(0, desired)
+        if desired in focusables:
+            return desired
+        # ищем ближайший выше, затем ниже
+        above = [i for i in focusables if i < desired]
+        below = [i for i in focusables if i > desired]
+        if below:
+            return below[0]
+        if above:
+            return above[-1]
+        return focusables[0]
+
+    @staticmethod
     def _formatted_line_count(items: List[Tuple[str, str]]) -> int:
         return len(TaskTrackerTUI._formatted_lines(items))
 
@@ -2239,13 +2271,20 @@ class TaskTrackerTUI:
                 output.append(('', '\n'))
         return output
 
+    def _first_focusable_line_index(self) -> int:
+        lines = self._formatted_lines(self._subtask_detail_buffer or [])
+        focusables = self._focusable_line_indices(lines)
+        return focusables[0] if focusables else 0
+
     def _render_single_subtask_view(self, content_width: int) -> None:
         """Применяет вертикальный скролл к карточке подзадачи."""
         if not getattr(self, "_subtask_detail_buffer", None):
             return
         lines = self._formatted_lines(self._subtask_detail_buffer)
         total = len(lines)
-        self.subtask_detail_cursor = max(0, min(self.subtask_detail_cursor, total - 1)) if total else 0
+        focusables = self._focusable_line_indices(lines)
+        if total:
+            self.subtask_detail_cursor = self._snap_cursor(self.subtask_detail_cursor, focusables)
         avail = max(5, self.get_terminal_height() - self.footer_height - 1)
         offset = max(0, min(self.subtask_detail_scroll, max(0, total - 1)))
 
@@ -3293,7 +3332,7 @@ class TaskTrackerTUI:
         self._subtask_detail_buffer = lines
         self._subtask_detail_total_lines = self._formatted_line_count(lines)
         self.subtask_detail_scroll = 0
-        self.subtask_detail_cursor = 0
+        self.subtask_detail_cursor = self._first_focusable_line_index()
         self._render_single_subtask_view(content_width)
 
     def delete_current_item(self):
