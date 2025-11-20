@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 from threading import Lock
+import hashlib
 
 import requests
 import yaml
@@ -29,6 +30,13 @@ _REPO_ROOT_CACHE: Optional[Path] = None
 _SCHEMA_CACHE: Dict[Tuple[str, str, str, int], Dict[str, Any]] = {}
 _SCHEMA_CACHE_LOCK = Lock()
 SCHEMA_CACHE_PATH = PROJECT_ROOT / ".tasks" / ".projects_schema_cache.yaml"
+SCHEMA_CACHE_TTL = int(os.getenv("APPLY_TASK_SCHEMA_TTL_SECONDS", "86400"))
+
+
+def _token_digest(token: str) -> str:
+    if not token:
+        return ""
+    return hashlib.sha1(token.encode()).hexdigest()
 
 
 def _load_project_schema_cache() -> Dict[Tuple[str, str, str, int], Dict[str, Any]]:
@@ -38,7 +46,15 @@ def _load_project_schema_cache() -> Dict[Tuple[str, str, str, int], Dict[str, An
     if SCHEMA_CACHE_PATH.exists():
         try:
             raw = yaml.safe_load(SCHEMA_CACHE_PATH.read_text()) or {}
+            meta = raw.get("__meta__") if isinstance(raw, dict) else {}
+            current_digest = _token_digest(get_user_token() or "")
+            stored_digest = meta.get("token")
+            if stored_digest and current_digest and stored_digest != current_digest:
+                SCHEMA_CACHE_PATH.unlink(missing_ok=True)
+                return {}
             for key_str, value in raw.items():
+                if key_str == "__meta__":
+                    continue
                 parts = key_str.split("|")
                 if len(parts) != 4:
                     continue
@@ -48,7 +64,7 @@ def _load_project_schema_cache() -> Dict[Tuple[str, str, str, int], Dict[str, An
                     ts_val = float(ts) if ts is not None else None
                 except Exception:
                     ts_val = None
-                if ts_val and time.time() - ts_val > 86400:  # TTL 1d
+                if ts_val and time.time() - ts_val > SCHEMA_CACHE_TTL:
                     continue
                 with _SCHEMA_CACHE_LOCK:
                     _SCHEMA_CACHE[(type_, owner, repo, int(number))] = value
@@ -63,6 +79,7 @@ def _persist_project_schema_cache() -> None:
         if not _SCHEMA_CACHE:
             return
         data = {f"{k[0]}|{k[1]}|{k[2]}|{k[3]}": v for k, v in _SCHEMA_CACHE.items()}
+        data["__meta__"] = {"token": _token_digest(get_user_token() or ""), "ts": time.time()}
     try:
         SCHEMA_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
         SCHEMA_CACHE_PATH.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
@@ -78,6 +95,7 @@ class RateLimiter:
         self._next_ts = 0.0
         self.last_remaining: Optional[int] = None
         self.last_reset_epoch: Optional[float] = None
+        self.last_wait: float = 0.0
 
     def acquire(self) -> None:
         while True:
@@ -124,6 +142,7 @@ class RateLimiter:
                     pass
             if errors and ProjectsSync._looks_like_rate_limit(errors):
                 self._next_ts = max(self._next_ts, now + 60)
+            self.last_wait = max(0.0, self._next_ts - now)
 
 
 _RATE_LIMITER = RateLimiter()
