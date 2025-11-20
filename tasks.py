@@ -3109,7 +3109,6 @@ class TaskTrackerTUI:
             selected = global_idx == self.detail_selected_index
             bg_style = f"class:{self._selection_style_for_status(Status.OK if selected else None)}" if selected else None
             base_border = 'class:border'
-            border_style = self._merge_styles(base_border, bg_style) if selected else base_border
 
             if kind == "subtask":
                 st = payload
@@ -3129,7 +3128,7 @@ class TaskTrackerTUI:
                 prefix_len = len(base_prefix) + indicator_width
 
                 row_line = line_counter
-                result.append((border_style, '| '))
+                result.append((base_border, '| '))
                 result.append((self._merge_styles('class:text', bg_style), base_prefix))
                 result.append((icon_class, f"{symbol} "))
                 flags = subtask_flags(st)
@@ -3153,7 +3152,7 @@ class TaskTrackerTUI:
                     style = self._merge_styles(frag_style, bg_style) if selected else frag_style
                     result.append((style, frag_text))
                 result.append((bracket_style, ']'))
-                result.append((border_style, ' |\n'))
+                result.append((base_border, ' |\n'))
                 line_counter += 1
                 self.subtask_row_map.append((row_line, sub_idx))
             else:
@@ -3171,9 +3170,9 @@ class TaskTrackerTUI:
                 max_line = max(5, content_width - 6 - len(label))
                 text = text[:max_line]
                 style = self._merge_styles('class:text', bg_style) if selected else 'class:text'
-                result.append((border_style, '| '))
+                result.append((base_border, '| '))
                 result.append((style, f"{('>' if selected else ' ')} [{label}] {text}".ljust(content_width - 2)))
-                result.append((border_style, ' |\n'))
+                result.append((base_border, ' |\n'))
                 line_counter += 1
 
         if hidden_below:
