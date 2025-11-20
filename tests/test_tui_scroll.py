@@ -135,3 +135,17 @@ def test_single_subtask_view_scrolls_content(tmp_path):
     rendered = "".join(text for _, text in tui.single_subtask_view)
 
     assert "Blocker 2" in rendered  # нижняя часть стала видимой после скролла
+
+
+def test_single_subtask_view_highlight(tmp_path):
+    tui = build_tui(tmp_path)
+    tui.get_terminal_height = lambda: 12
+    st = SubTask(False, "Subtask", success_criteria=[f"Criterion {i}" for i in range(3)])
+    tui.show_subtask_details(st, 0)
+    styles = [style for style, _ in tui.single_subtask_view]
+    assert any("selected" in (style or "") for style in styles)
+
+    # move cursor
+    tui.move_vertical_selection(1)
+    styles_after = [style for style, _ in tui.single_subtask_view]
+    assert any("selected" in (style or "") for style in styles_after)

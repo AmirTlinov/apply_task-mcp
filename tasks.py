@@ -1536,6 +1536,7 @@ class TaskTrackerTUI:
         self._last_subtask_click_index: Optional[int] = None
         self._last_subtask_click_time: float = 0.0
         self.subtask_detail_scroll: int = 0
+        self.subtask_detail_cursor: int = 0
         self._subtask_detail_buffer: List[Tuple[str, str]] = []
         self._subtask_detail_total_lines: int = 0
         self._last_rate_wait: float = 0.0
@@ -2089,8 +2090,17 @@ class TaskTrackerTUI:
             if total <= 0:
                 return
             avail = max(5, self.get_terminal_height() - self.footer_height - 1)
-            max_offset = max(0, total - avail)
-            self.subtask_detail_scroll = max(0, min(self.subtask_detail_scroll + delta, max_offset))
+            # Двигаем курсор
+            self.subtask_detail_cursor = max(0, min(self.subtask_detail_cursor + delta, total - 1))
+            # Обеспечиваем видимость курсора
+            indicator_top = 1 if self.subtask_detail_scroll > 0 else 0
+            visible_content = max(1, avail - indicator_top)
+            max_offset = max(0, total - visible_content)
+            if self.subtask_detail_cursor < self.subtask_detail_scroll:
+                self.subtask_detail_scroll = self.subtask_detail_cursor
+            elif self.subtask_detail_cursor >= self.subtask_detail_scroll + visible_content:
+                self.subtask_detail_scroll = self.subtask_detail_cursor - visible_content + 1
+            self.subtask_detail_scroll = max(0, min(self.subtask_detail_scroll, max_offset))
             # content_width равен ширине при последнем рендере; если нет — берем терминал
             term_width = self.get_terminal_width()
             content_width = max(40, term_width - 2)
@@ -2233,7 +2243,9 @@ class TaskTrackerTUI:
         """Применяет вертикальный скролл к карточке подзадачи."""
         if not getattr(self, "_subtask_detail_buffer", None):
             return
-        total = self._subtask_detail_total_lines
+        lines = self._formatted_lines(self._subtask_detail_buffer)
+        total = len(lines)
+        self.subtask_detail_cursor = max(0, min(self.subtask_detail_cursor, total - 1)) if total else 0
         avail = max(5, self.get_terminal_height() - self.footer_height - 1)
         offset = max(0, min(self.subtask_detail_scroll, max(0, total - 1)))
 
@@ -2248,7 +2260,7 @@ class TaskTrackerTUI:
         offset = max(0, min(offset, max_offset))
         remaining_below = max(0, total - (offset + visible_content))
 
-        sliced = self._slice_formatted_lines(self._subtask_detail_buffer, offset, offset + visible_content)
+        visible_lines = lines[offset : offset + visible_content]
 
         rendered: List[Tuple[str, str]] = []
         if indicator_top:
@@ -2258,7 +2270,15 @@ class TaskTrackerTUI:
                 ('class:border', ' |\n'),
             ])
 
-        rendered.extend(sliced)
+        for idx, line in enumerate(visible_lines):
+            global_idx = offset + idx
+            highlight = global_idx == self.subtask_detail_cursor
+            style_prefix = 'class:selected' if highlight else None
+            for frag_style, frag_text in line:
+                style = self._merge_styles(style_prefix, frag_style) if highlight else frag_style
+                rendered.append((style, frag_text))
+            if idx < len(visible_lines) - 1:
+                rendered.append(('', '\n'))
 
         if indicator_bottom:
             rendered.extend([
@@ -3273,6 +3293,7 @@ class TaskTrackerTUI:
         self._subtask_detail_buffer = lines
         self._subtask_detail_total_lines = self._formatted_line_count(lines)
         self.subtask_detail_scroll = 0
+        self.subtask_detail_cursor = 0
         self._render_single_subtask_view(content_width)
 
     def delete_current_item(self):
