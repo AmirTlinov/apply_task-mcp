@@ -2516,17 +2516,32 @@ class TaskTrackerTUI:
         return sig
 
     def maybe_reload(self):
-        if self.detail_mode:
-            return
         now = time.time()
         if now - self._last_check < 0.7:
             return
         self._last_check = now
         sig = self.compute_signature()
         if sig != self._last_signature:
-            selected = self.tasks[self.selected_index].task_file if self.tasks else None
-            self.load_tasks(preserve_selection=True, selected_task_file=selected)
+            selected_task_file = self.tasks[self.selected_index].task_file if self.tasks else None
+            prev_detail = self.current_task_detail.id if (self.detail_mode and self.current_task_detail) else None
+            prev_detail_index = self.detail_selected_index
+            prev_single = getattr(self, "single_subtask_view", None)
+
+            self.load_tasks(preserve_selection=True, selected_task_file=selected_task_file, skip_sync=True)
             self._last_signature = sig
+
+            if prev_detail:
+                for t in self.tasks:
+                    if t.id == prev_detail:
+                        # reopen detail preserving selection
+                        self.show_task_details(t)
+                        items = self.get_detail_items_count()
+                        self.detail_selected_index = max(0, min(prev_detail_index, items - 1))
+                        self._ensure_detail_selection_visible(items)
+                        if prev_single and prev_detail_index < len(t.subtasks):
+                            st = t.subtasks[prev_detail_index]
+                            self.show_subtask_details(st, prev_detail_index)
+                        break
 
     def load_tasks(self, preserve_selection: bool = False, selected_task_file: Optional[str] = None, skip_sync: bool = False):
         with self._spinner("Обновление задач"):

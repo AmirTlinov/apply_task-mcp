@@ -225,6 +225,32 @@ def test_selection_not_paint_border(tmp_path):
     # выбрана первая линия; бордеры должны остаться без selected
     assert all("selected" not in s for s in styles if "border" in s)
 
+
+def test_maybe_reload_works_in_detail_mode(tmp_path, monkeypatch):
+    tui = build_tui(tmp_path)
+    detail = TaskDetail(id="TASK-1", title="Detail", status="OK")
+    detail.subtasks = [SubTask(False, "A"), SubTask(False, "B")]
+    tui.detail_mode = True
+    tui.current_task_detail = detail
+    tui.tasks = [Task(id="TASK-1", name="Detail", status=Status.OK, description="", category="", detail=detail)]
+    tui.selected_index = 0
+    called = {}
+
+    def fake_compute():
+        return 2
+
+    def fake_load(*args, **kwargs):
+        called["load"] = True
+        # simulate updated task detail
+        tui.tasks[0].detail = detail
+        return None
+
+    tui._last_signature = 1
+    monkeypatch.setattr(tui, "compute_signature", fake_compute)
+    monkeypatch.setattr(tui, "load_tasks", fake_load)
+    tui.maybe_reload()
+    assert called.get("load")
+
 def test_single_subtask_view_highlight(tmp_path):
     tui = build_tui(tmp_path)
     tui.get_terminal_height = lambda: 12
