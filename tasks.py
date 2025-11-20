@@ -2803,22 +2803,15 @@ class TaskTrackerTUI:
 
             # Рендер строки
             row_line = line_counter
-            if idx == self.selected_index:
-                line_parts = []
-                for col in layout.columns:
-                    if col in cell_data:
-                        line_parts.append(cell_data[col][0])
-                line = '|' + '|'.join(line_parts) + '|'
-                style_key = self._selection_style_for_status(task.status)
-                result.append((f"class:{style_key}", line))
-            else:
-                # Обычная строка
-                result.append(('class:border', '|'))
-                for col in layout.columns:
-                    if col in cell_data:
-                        text, css_class = cell_data[col]
-                        result.append((css_class, text))
-                        result.append(('class:border', '|'))
+            style_key = self._selection_style_for_status(task.status)
+            selected = idx == self.selected_index
+            result.append(('class:border', '|'))
+            for col in layout.columns:
+                if col in cell_data:
+                    text, css_class = cell_data[col]
+                    cell_style = f"class:{style_key}" if selected else css_class
+                    result.append((cell_style, text))
+                    result.append(('class:border', '|'))
 
             self.task_row_map.append((row_line, idx))
             result.append(('', '\n'))
