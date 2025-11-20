@@ -773,6 +773,8 @@ class ProjectsSync:
                 return True
         # 2) fallback: user projects от имени viewer
         login = self._fetch_viewer_login() or cfg.owner
+        if not login:
+            return False
         if login:
             nodes = self._list_user_projects(login)
             if nodes:
@@ -803,6 +805,8 @@ class ProjectsSync:
         return (((data.get("repository") or {}).get("projectsV2") or {}).get("nodes") or [])
 
     def _list_user_projects(self, owner: str) -> List[Dict[str, Any]]:
+        if not owner:
+            return []
         try:
             data = self._graphql(self._user_projects_list_query(), {"login": owner})
         except Exception:
