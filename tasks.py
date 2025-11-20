@@ -2078,7 +2078,14 @@ class TaskTrackerTUI:
             if items <= 0:
                 self.detail_selected_index = 0
                 return
-            self.detail_selected_index = max(0, min(self.detail_selected_index + delta, items - 1))
+            new_index = max(0, min(self.detail_selected_index + delta, items - 1))
+            # Если уже внизу/вверху и дальше скроллить некуда — не трогаем оффсеты, чтобы подсветка не прыгала
+            if new_index == self.detail_selected_index and (
+                (delta > 0 and self.detail_selected_index == items - 1)
+                or (delta < 0 and self.detail_selected_index == 0)
+            ):
+                return
+            self.detail_selected_index = new_index
             self._ensure_detail_selection_visible(items)
         elif self.settings_mode:
             options = self._settings_options()

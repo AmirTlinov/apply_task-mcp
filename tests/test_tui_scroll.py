@@ -72,3 +72,23 @@ def test_subtasks_view_stays_within_height(tmp_path):
     assert len(lines) <= tui.get_terminal_height()
     assert f"> {tui.detail_selected_index + 1}. " in rendered
     assert "↑" in rendered and "↓" in rendered
+
+
+def test_selection_stops_at_last_item(tmp_path):
+    tui = build_tui(tmp_path)
+    tui.get_terminal_height = lambda: 12
+    detail = TaskDetail(id="TASK-STOP", title="Detail", status="WARN")
+    detail.subtasks = [SubTask(False, f"Subtask {i} long body text") for i in range(6)]
+
+    tui.detail_mode = True
+    tui.current_task_detail = detail
+    tui.detail_selected_index = len(detail.subtasks) - 1  # уже на последнем
+    tui._set_footer_height(0)
+
+    # Дополнительный скролл вниз не должен сдвигать подсветку
+    tui.move_vertical_selection(1)
+    rendered = "".join(text for _, text in tui.get_detail_text())
+
+    assert tui.detail_selected_index == len(detail.subtasks) - 1
+    # подсветка последнего элемента остаётся на экране
+    assert f"> {len(detail.subtasks)}. " in rendered
