@@ -33,6 +33,7 @@ from infrastructure.file_repository import FileTaskRepository
 from infrastructure.task_file_parser import TaskFileParser
 from infrastructure.projects_sync_service import ProjectsSyncService
 from application.sync_service import SyncService
+from util.sync_status import sync_status_fragments
 
 import projects_sync
 from projects_sync import (
@@ -53,28 +54,6 @@ def _get_sync_service() -> ProjectsSyncService:
     """Factory used outside TaskManager to obtain sync adapter."""
     return ProjectsSyncService(get_projects_sync())
 
-
-def _sync_status_fragments(snapshot: Dict[str, Any], enabled: bool, flash: bool, filter_flash: bool) -> List[Tuple[str, str]]:
-    """
-    Единый формат отображения статуса синхронизации.
-    Возвращает список (style, text) — используется TUI и CLI.
-    """
-    entries: List[Tuple[str, str]] = []
-    if flash and not filter_flash:
-        entries.append(("class:icon.warn", "Git Projects ■"))
-    status_reason = snapshot.get("status_reason")
-    label = "Git Projects ■" if enabled else "Git Projects □"
-    if snapshot.get("last_pull") or snapshot.get("last_push"):
-        lp = snapshot.get("last_pull") or "—"
-        lpsh = snapshot.get("last_push") or "—"
-        label = f"{label} pull={lp} push={lpsh}"
-    if status_reason:
-        label = f"{label} ({status_reason})"
-    style = "class:icon.check" if enabled else "class:text.dim"
-    if status_reason and not enabled:
-        style = "class:icon.warn"
-    entries.append((style, label))
-    return entries
 
 def current_timestamp() -> str:
     """Возвращает локальное время с точностью до минут для метаданных задач."""
@@ -2369,7 +2348,7 @@ class TaskTrackerTUI:
         self._last_sync_enabled = enabled
 
         flash = bool(self._sync_flash_until and now < self._sync_flash_until)
-        fragments = _sync_status_fragments(snapshot, enabled, flash, filter_flash)
+        fragments = sync_status_fragments(snapshot, enabled, flash, filter_flash)
         fragments.append(("class:text.dim", " | "))
         return fragments
 
@@ -5137,7 +5116,7 @@ def _projects_status_payload() -> Dict[str, Any]:
 
 def cmd_projects_status(args) -> int:
     payload = _projects_status_payload()
-    fragments = _sync_status_fragments(payload, payload["runtime_enabled"], flash=False, filter_flash=False)
+    fragments = sync_status_fragments(payload, payload["runtime_enabled"], flash=False, filter_flash=False)
     message = " ".join(text for _, text in fragments)
     return structured_response(
         "projects status",
