@@ -5,6 +5,7 @@
 - **Архитектура**: hexagonal монолит с вертикальными слайсами; домен = папка `domain/feature`; код раскладывай по слоям `application/domain/infrastructure/interface`. См. `DOMAIN_STRUCTURE.md`.
 - **Качество**: покрытие диффа ≥85%, цикломатическая сложность ≤10, без моков/заглушек в проде; один файл — одна ответственность; коммиты в формате Conventional Commits.
 - **GitHub Projects**: конфиг `.apply_task_projects.yaml`, токен `APPLY_TASK_GITHUB_TOKEN|GITHUB_TOKEN`; без токена sync отключён, CLI работает оффлайн.
+- **Devtools automation** (`automation`): `task-template` → `.tmp/subtasks.template.json`, `task-create` (validate-only по умолчанию, автоген шаблона), `checkpoint` (ноты/ок через лог), `health` (pytest → `.tmp/health.log`), `projects-health` (короткий статус sync).
 
 ## Aliases
 - `README.md` — что за инструмент и как стартовать.

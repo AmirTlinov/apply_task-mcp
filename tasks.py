@@ -13,6 +13,7 @@ import re
 import sys
 import time
 import subprocess
+import shlex
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
@@ -5484,6 +5485,210 @@ def cmd_template_subtasks(args) -> int:
 
 
 # ============================================================================
+# Devtools automation helpers
+# ============================================================================
+
+AUTOMATION_TMP = Path(".tmp")
+
+
+def _ensure_tmp_dir() -> Path:
+    AUTOMATION_TMP.mkdir(parents=True, exist_ok=True)
+    return AUTOMATION_TMP
+
+
+def _write_json(path: Path, data: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _automation_subtask_entry(index: int, coverage: int, risks: str, sla: str) -> Dict[str, Any]:
+    return {
+        "title": f"Subtask {index}: plan and validate",
+        "criteria": [
+            f"Coverage ≥{coverage}%",
+            f"SLA {sla}",
+            "Risks enumerated and mitigations defined",
+        ],
+        "tests": [
+            f"pytest -q --maxfail=1 --cov=. --cov-report=xml (target ≥{coverage}%)",
+            "perf/regression suite with evidence in logs",
+        ],
+        "blockers": [
+            "Dependencies and approvals recorded",
+            f"Risks: {risks}",
+        ],
+    }
+
+
+def _automation_template_payload(count: int, coverage: int, risks: str, sla: str) -> Dict[str, Any]:
+    count = max(3, count)
+    subtasks = [_automation_subtask_entry(i + 1, coverage, risks, sla) for i in range(count)]
+    return {
+        "defaults": {"coverage": coverage, "risks": risks, "sla": sla},
+        "usage": "apply_task automation task-create \"Title\" --parent TASK-XXX --description \"...\" --subtasks @.tmp/subtasks.template.json",
+        "subtasks": subtasks,
+    }
+
+
+def cmd_automation_task_template(args) -> int:
+    payload = _automation_template_payload(args.count, args.coverage, args.risks, args.sla)
+    output_path = Path(args.output or (AUTOMATION_TMP / "subtasks.template.json"))
+    _ensure_tmp_dir()
+    _write_json(output_path, payload)
+    return structured_response(
+        "automation.task-template",
+        status="OK",
+        message=f"Шаблон сохранён: {output_path}",
+        payload={"output": str(output_path.resolve()), "count": len(payload["subtasks"]), "defaults": payload["defaults"]},
+        summary=str(output_path),
+    )
+
+
+def _resolve_parent(default_parent: Optional[str]) -> Optional[str]:
+    if default_parent:
+        return normalize_task_id(default_parent)
+    last_id, _ = get_last_task()
+    return normalize_task_id(last_id) if last_id else None
+
+
+def _load_note(log_path: Path, fallback: str) -> str:
+    if log_path.exists():
+        text = log_path.read_text(encoding="utf-8").strip()
+        if text:
+            return text[:1000]
+    return fallback
+
+
+def cmd_automation_task_create(args) -> int:
+    parent = _resolve_parent(args.parent)
+    if not parent:
+        return structured_error("automation.task-create", "Не найден parent: укажи --parent или установи .last")
+    domain = derive_domain_explicit(getattr(args, "domain", ""), getattr(args, "phase", None), getattr(args, "component", None))
+    subtasks_source = args.subtasks or str(AUTOMATION_TMP / "subtasks.template.json")
+    subtasks_path = Path(subtasks_source[1:]) if subtasks_source.startswith("@") else Path(subtasks_source)
+    if subtasks_source.startswith("@") or subtasks_path.exists():
+        if not subtasks_path.exists():
+            # автоформирование дефолтного шаблона
+            payload = _automation_template_payload(args.count, args.coverage, args.risks, args.sla)
+            _ensure_tmp_dir()
+            _write_json(subtasks_path, payload)
+        resolved_path = subtasks_path
+        try:
+            payload = json.loads(subtasks_path.read_text(encoding="utf-8"))
+            if isinstance(payload, dict) and isinstance(payload.get("subtasks"), list):
+                _ensure_tmp_dir()
+                resolved_path = subtasks_path.parent / "subtasks.resolved.json" if subtasks_path.is_file() else (AUTOMATION_TMP / "subtasks.resolved.json")
+                _write_json(resolved_path, payload["subtasks"])
+        except Exception:
+            resolved_path = subtasks_path
+        subtasks_arg = f"@{resolved_path}"
+    else:
+        subtasks_arg = subtasks_source
+    desc = args.description or args.title
+    create_args = argparse.Namespace(
+        title=args.title,
+        status=args.status,
+        priority=args.priority,
+        parent=parent,
+        description=desc,
+        context=args.context,
+        tags=args.tags,
+        subtasks=subtasks_arg,
+        dependencies=None,
+        next_steps=None,
+        tests=args.tests,
+        risks=args.risks,
+        validate_only=not args.apply,
+        domain=domain,
+        phase=args.phase,
+        component=args.component,
+    )
+    return cmd_create(create_args)
+
+
+def cmd_automation_projects_health(args) -> int:
+    payload = _projects_status_payload(force_refresh=True)
+    summary = f"target={payload.get('target_label','—')} auto-sync={str(payload.get('auto_sync')).lower()} token={'yes' if payload.get('token_present') else 'no'} rate={payload.get('rate_remaining')}/{payload.get('rate_reset_human') or '-'}"
+    return structured_response(
+        "automation.projects-health",
+        status="OK",
+        message=payload.get("status_reason", "") or "Projects status",
+        payload=payload,
+        summary=summary,
+    )
+
+
+def cmd_automation_health(args) -> int:
+    _ensure_tmp_dir()
+    log_path = Path(args.log or (AUTOMATION_TMP / "health.log"))
+    pytest_cmd = args.pytest_cmd.strip()
+    result = {"pytest_cmd": pytest_cmd, "rc": 0, "stdout": "", "stderr": ""}
+    if pytest_cmd:
+        try:
+            proc = subprocess.run(shlex.split(pytest_cmd), capture_output=True, text=True)
+            result["rc"] = proc.returncode
+            result["stdout"] = (proc.stdout or "").strip()
+            result["stderr"] = (proc.stderr or "").strip()
+        except FileNotFoundError as exc:
+            result["rc"] = 1
+            result["stderr"] = str(exc)
+    _write_json(log_path, result)
+    status = "OK" if result["rc"] == 0 else "ERROR"
+    return structured_response(
+        "automation.health",
+        status=status,
+        message="pytest выполнен" if pytest_cmd else "pytest пропущен",
+        payload={"log": str(log_path.resolve()), **result},
+        summary=f"log={log_path} rc={result['rc']}",
+        exit_code=0 if status == "OK" else 1,
+    )
+
+
+def cmd_automation_checkpoint(args) -> int:
+    try:
+        task_id, domain = resolve_task_reference(args.task_id, getattr(args, "domain", None), getattr(args, "phase", None), getattr(args, "component", None))
+    except ValueError as exc:
+        return structured_error("automation.checkpoint", str(exc))
+    manager = TaskManager()
+    log_path = Path(args.log or (AUTOMATION_TMP / "checkpoint.log"))
+    note = args.note or _load_note(log_path, f"log missing: {log_path}")
+    payload: Dict[str, Any] = {"task_id": task_id, "index": args.index, "note": note}
+    if args.mode == "note":
+        ok, msg = manager.update_subtask_checkpoint(task_id, args.index, args.checkpoint, True, note, domain)
+        if not ok:
+            return structured_error("automation.checkpoint", msg or "Не удалось записать чекпоинт", payload=payload)
+        detail = manager.load_task(task_id, domain)
+        if detail:
+            payload["task"] = task_to_dict(detail, include_subtasks=True)
+        return structured_response(
+            "automation.checkpoint.note",
+            status="OK",
+            message=f"Checkpoint {args.checkpoint} обновлён",
+            payload=payload,
+            summary=f"{task_id}#{args.index} {args.checkpoint}",
+        )
+
+    for checkpoint in ("criteria", "tests", "blockers"):
+        ok, msg = manager.update_subtask_checkpoint(task_id, args.index, checkpoint, True, note, domain)
+        if not ok:
+            return structured_error("automation.checkpoint", msg or "Не удалось подтвердить чекпоинты", payload=payload)
+    ok, msg = manager.set_subtask(task_id, args.index, True, domain)
+    if not ok:
+        return structured_error("automation.checkpoint", msg or "Не удалось закрыть подзадачу", payload=payload)
+    detail = manager.load_task(task_id, domain)
+    save_last_task(task_id, domain)
+    if detail:
+        payload["task"] = task_to_dict(detail, include_subtasks=True)
+    return structured_response(
+        "automation.checkpoint",
+        status="OK",
+        message="Подзадача закрыта через automation",
+        payload=payload,
+        summary=f"{task_id}#{args.index} ok",
+    )
+
+
+# ============================================================================
 # CLI
 # ============================================================================
 
@@ -5808,6 +6013,55 @@ def build_parser() -> argparse.ArgumentParser:
     subt = tmp_sub.add_parser("subtasks", help="Создать JSON с заготовками подзадач")
     subt.add_argument("--count", type=int, default=3, help="Количество подзадач (>=3)")
     subt.set_defaults(func=cmd_template_subtasks)
+
+    # automation shortcuts (devtools)
+    auto = sub.add_parser("automation", help="Утилиты devtools/automation для быстрой работы")
+    auto_sub = auto.add_subparsers(dest="auto_command")
+    auto_sub.required = True
+
+    auto_tmpl = auto_sub.add_parser("task-template", help="Сгенерировать шаблон подзадач с дефолтными SLA/coverage")
+    auto_tmpl.add_argument("--count", type=int, default=3)
+    auto_tmpl.add_argument("--coverage", type=int, default=85)
+    auto_tmpl.add_argument("--risks", default="perf;availability")
+    auto_tmpl.add_argument("--sla", default="p95<=200ms")
+    auto_tmpl.add_argument("--output", help="Путь для сохранения JSON (default: .tmp/subtasks.template.json)")
+    auto_tmpl.set_defaults(func=cmd_automation_task_template)
+
+    auto_create = auto_sub.add_parser("task-create", help="Обёртка над create с дефолтами и автогенерацией шаблона")
+    auto_create.add_argument("title")
+    auto_create.add_argument("--parent", help="Если не задан, возьмём .last")
+    auto_create.add_argument("--description", "-d", help="По умолчанию совпадает с title")
+    auto_create.add_argument("--tests", default="pytest -q")
+    auto_create.add_argument("--risks", default="perf;deps")
+    auto_create.add_argument("--count", type=int, default=3, help="count для автогенерации шаблона")
+    auto_create.add_argument("--coverage", type=int, default=85)
+    auto_create.add_argument("--sla", default="p95<=200ms")
+    auto_create.add_argument("--subtasks", default=str(AUTOMATION_TMP / "subtasks.template.json"))
+    auto_create.add_argument("--status", default="FAIL", choices=["OK", "WARN", "FAIL"])
+    auto_create.add_argument("--priority", default="MEDIUM", choices=["LOW", "MEDIUM", "HIGH"])
+    auto_create.add_argument("--context")
+    auto_create.add_argument("--tags")
+    auto_create.add_argument("--apply", action="store_true", help="Создавать задачу вместо validate-only")
+    add_context_args(auto_create)
+    auto_create.set_defaults(func=cmd_automation_task_create)
+
+    auto_health = auto_sub.add_parser("health", help="Сводная проверка: pytest + лог в .tmp")
+    auto_health.add_argument("--pytest-cmd", default="pytest -q")
+    auto_health.add_argument("--log", help="Куда писать лог (default: .tmp/health.log)")
+    auto_health.set_defaults(func=cmd_automation_health)
+
+    auto_proj = auto_sub.add_parser("projects-health", help="Короткий статус GitHub Projects")
+    auto_proj.set_defaults(func=cmd_automation_projects_health)
+
+    auto_ckp = auto_sub.add_parser("checkpoint", help="Быстрое подтверждение чекпоинтов/подзадачи")
+    auto_ckp.add_argument("task_id", help="TASK-ID или '.' для последней")
+    auto_ckp.add_argument("index", type=int)
+    auto_ckp.add_argument("--mode", choices=["ok", "note"], default="ok")
+    auto_ckp.add_argument("--checkpoint", choices=["criteria", "tests", "blockers"], default="tests", help="для mode=note")
+    auto_ckp.add_argument("--note", help="Явная нота для чекпоинта")
+    auto_ckp.add_argument("--log", help="Файл для подтягивания ноты (default: .tmp/checkpoint.log)")
+    add_context_args(auto_ckp)
+    auto_ckp.set_defaults(func=cmd_automation_checkpoint)
 
     return parser
 

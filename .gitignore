@@ -45,6 +45,7 @@ Thumbs.db
 apply_task \(Копия\)
 tasks \(Копия\).py
 .apply_task_projects.yaml
+.tmp/
 
 # Optional: uncomment if you don't want to commit your todo file
 # todo.machine.md

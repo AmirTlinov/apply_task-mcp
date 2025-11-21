@@ -227,6 +227,7 @@ def main():
         'projects-webhook',
         'projects-webhook-serve',
         'move',
+        'automation',
     ]
 
     if cmd not in known_commands:
@@ -361,6 +362,9 @@ def main():
 
     elif cmd == 'quick':
         return run_tasks_py(['quick'] + args, verbose=verbose)
+
+    elif cmd == 'automation':
+        return run_tasks_py(['automation'] + args, verbose=verbose)
 
     elif cmd == 'which':
         tasks_py, source = find_tasks_py(verbose=verbose)
