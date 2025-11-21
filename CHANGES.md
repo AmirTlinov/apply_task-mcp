@@ -7,7 +7,6 @@
 
 ## 2025-11-21 · Docs hygiene
 - Added `AGENTS.md` with hard rules and file aliases, linked from README.
-- Trimmed `AI.md` to concise operator rules; README start section now points to key docs.
 - Added `automation` shortcuts (task-template/create/checkpoint/health/projects-health) with defaults in `.tmp`.
 
 # Changes: Horizontal Scrolling

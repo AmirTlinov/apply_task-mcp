@@ -4,7 +4,6 @@ Task Tracker (`apply_task`) is a single self-contained CLI/TUI that keeps your b
 
 **Start here**
 - Rules & aliases: [AGENTS.md](AGENTS.md)
-- CLI discipline: [AI.md](AI.md)
 - Domain layout: [DOMAIN_STRUCTURE.md](DOMAIN_STRUCTURE.md)
 - Syntax reference: [SYNTAX.md](SYNTAX.md)
 

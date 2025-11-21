@@ -231,11 +231,20 @@ def main():
     ]
 
     if cmd not in known_commands:
-        # Создание задачи: apply_task "Fix bug #critical" --parent TASK-XXX --tests "..."
-        if '--parent' not in args:
-            return emit_cli("task", status="ERROR", message="Нет parent. Пример: --parent TASK-001 или --parent 1", exit_code=1)
-        if '--tests' not in args:
-            return emit_cli("task", status="ERROR", message="Нет --tests. Пример: --tests \"unit;acceptance\"", exit_code=1)
+        required = [
+            ("--parent", "Нет parent. Пример: --parent TASK-001 или --parent 1"),
+            ("--tests", "Нет --tests. Пример: --tests \"unit;acceptance\""),
+            ("--risks", "Нет --risks. Пример: --risks \"perf;deps\""),
+        ]
+        for flag, msg in required:
+            if flag not in args:
+                return emit_cli("task", status="ERROR", message=msg, exit_code=1)
+        if "--subtasks" not in args and "-s" not in args:
+            return emit_cli("task", status="ERROR", message="Нет --subtasks/-s (JSON array или @file)", exit_code=1)
+        has_desc = any(flag in args for flag in ("--description", "-d"))
+        if not has_desc:
+            return emit_cli("task", status="ERROR", message="Нет --description/-d", exit_code=1)
+        # treat as create with implicit title = cmd via tasks.py 'task' command (legacy macro)
         return run_tasks_py(['task', cmd] + args, verbose=verbose)
 
     # Выполнение команды
