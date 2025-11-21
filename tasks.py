@@ -2854,10 +2854,6 @@ class TaskTrackerTUI:
 
         # Header
         result.append(('class:border', '+' + '='*content_width + '+\n'))
-        result.append(('class:border', '| '))
-        # no buttons here; все управляется статус-баром
-        result.append(('class:text', ' ' * (content_width - 2)))
-        result.append(('class:border', ' |\n'))
         result.append(('class:border', '+' + '-'*content_width + '+\n'))
         result.append(('class:border', '| '))
         result.append(('class:header', f'{detail.id} '))
