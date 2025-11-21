@@ -49,6 +49,14 @@ from config import get_user_token, set_user_token
 TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M"
 GITHUB_GRAPHQL = "https://api.github.com/graphql"
 
+# Cache for expensive Git Projects metadata lookups, throttled to avoid
+# blocking the TUI render loop on every keypress.
+_PROJECT_STATUS_CACHE: Optional[Dict[str, Any]] = None
+_PROJECT_STATUS_CACHE_TS: float = 0.0
+_PROJECT_STATUS_TTL: float = 1.0
+_PROJECT_STATUS_LOCK = threading.Lock()
+_PROJECT_STATUS_CACHE_TOKEN_PREVIEW: Optional[str] = None
+
 
 def _get_sync_service() -> ProjectsSyncService:
     """Factory used outside TaskManager to obtain sync adapter."""
@@ -4954,6 +4962,7 @@ def cmd_clean(args) -> int:
 def cmd_projects_auth(args) -> int:
     if args.unset:
         set_user_token("")
+        _invalidate_projects_status_cache()
         return structured_response(
             "projects-auth",
             status="OK",
@@ -4963,6 +4972,7 @@ def cmd_projects_auth(args) -> int:
     if not args.token:
         return structured_error("projects-auth", "Укажи --token или --unset")
     set_user_token(args.token)
+    _invalidate_projects_status_cache()
     return structured_response(
         "projects-auth",
         status="OK",
@@ -5068,6 +5078,7 @@ def cmd_projects_sync_cli(args) -> int:
         "conflicts": conflicts,
     }
     conflict_suffix = f", конфликты={len(conflicts)}" if conflicts else ""
+    _invalidate_projects_status_cache()
     return structured_response(
         "projects sync",
         status="OK",
@@ -5077,11 +5088,32 @@ def cmd_projects_sync_cli(args) -> int:
     )
 
 
-def _projects_status_payload() -> Dict[str, Any]:
+def _invalidate_projects_status_cache() -> None:
+    global _PROJECT_STATUS_CACHE, _PROJECT_STATUS_CACHE_TS, _PROJECT_STATUS_CACHE_TOKEN_PREVIEW
+    with _PROJECT_STATUS_LOCK:
+        _PROJECT_STATUS_CACHE = None
+        _PROJECT_STATUS_CACHE_TS = 0.0
+        _PROJECT_STATUS_CACHE_TOKEN_PREVIEW = None
+
+
+def _projects_status_payload(force_refresh: bool = False) -> Dict[str, Any]:
+    global _PROJECT_STATUS_CACHE, _PROJECT_STATUS_CACHE_TS, _PROJECT_STATUS_CACHE_TOKEN_PREVIEW
+    current_token = get_user_token()
+    current_token_preview = current_token[-4:] if current_token else ""
+    now = time.time()
+    with _PROJECT_STATUS_LOCK:
+        if (
+            not force_refresh
+            and _PROJECT_STATUS_CACHE is not None
+            and _PROJECT_STATUS_CACHE_TOKEN_PREVIEW == current_token_preview
+            and now - _PROJECT_STATUS_CACHE_TS < _PROJECT_STATUS_TTL
+        ):
+            return dict(_PROJECT_STATUS_CACHE)
+
     try:
         sync_service = _get_sync_service()
     except Exception as exc:
-        return {
+        payload = {
             "owner": "",
             "repo": "",
             "project_number": None,
@@ -5101,12 +5133,18 @@ def _projects_status_payload() -> Dict[str, Any]:
             "status_reason": "Git Projects недоступен",
             "last_pull": None,
             "last_push": None,
-            "token_saved": False,
-            "token_preview": "",
+            "token_saved": bool(current_token),
+            "token_preview": current_token_preview,
             "token_env": "",
             "token_present": False,
             "runtime_disabled_reason": str(exc),
         }
+        with _PROJECT_STATUS_LOCK:
+            _PROJECT_STATUS_CACHE = payload
+            _PROJECT_STATUS_CACHE_TS = time.time()
+            _PROJECT_STATUS_CACHE_TOKEN_PREVIEW = current_token_preview
+        return dict(payload)
+
     try:
         sync_service.ensure_metadata()
     except Exception:
@@ -5118,9 +5156,8 @@ def _projects_status_payload() -> Dict[str, Any]:
     project_id = sync_service.project_id
     project_url = sync_service.project_url()
     workers = cfg.workers if cfg else None
-    user_token = get_user_token()
-    token_saved = bool(user_token)
-    token_preview = user_token[-4:] if user_token else ""
+    token_saved = bool(current_token)
+    token_preview = current_token_preview
     env_primary = os.getenv("APPLY_TASK_GITHUB_TOKEN")
     env_secondary = os.getenv("GITHUB_TOKEN") if not env_primary else None
     token_env = "APPLY_TASK_GITHUB_TOKEN" if env_primary else ("GITHUB_TOKEN" if env_secondary else "")
@@ -5168,11 +5205,15 @@ def _projects_status_payload() -> Dict[str, Any]:
         "token_present": token_present,
         "runtime_disabled_reason": runtime_reason,
     }
-    return payload
+    with _PROJECT_STATUS_LOCK:
+        _PROJECT_STATUS_CACHE = payload
+        _PROJECT_STATUS_CACHE_TS = time.time()
+        _PROJECT_STATUS_CACHE_TOKEN_PREVIEW = token_preview
+    return dict(payload)
 
 
 def cmd_projects_status(args) -> int:
-    payload = _projects_status_payload()
+    payload = _projects_status_payload(force_refresh=True)
     fragments = sync_status_fragments(payload, payload["runtime_enabled"], flash=False, filter_flash=False)
     message = " ".join(text for _, text in fragments)
     return structured_response(
@@ -5190,6 +5231,7 @@ def cmd_projects_autosync(args) -> int:
     reload_projects_sync()
     state_label = "включён" if desired else "выключен"
     payload = {"auto_sync": desired}
+    _invalidate_projects_status_cache()
     return structured_response(
         "projects autosync",
         status="OK",
@@ -5204,11 +5246,13 @@ def cmd_projects_workers(args) -> int:
     update_project_workers(target)
     reload_projects_sync()
     label = "auto" if target is None else str(target)
+    payload = {"workers": target}
+    _invalidate_projects_status_cache()
     return structured_response(
         "projects workers",
         status="OK",
         message=f"Пул синхронизации установлен: {label}",
-        payload={"workers": target},
+        payload=payload,
         summary=label,
     )
 
