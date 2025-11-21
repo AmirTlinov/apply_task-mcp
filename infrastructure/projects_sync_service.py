@@ -1,4 +1,5 @@
 import projects_sync
+from typing import Optional, Dict, Any, List
 from core import TaskDetail
 from application.sync_service import SyncService
 
@@ -32,3 +33,13 @@ class ProjectsSyncService(SyncService):
         clone.config = self._sync.config
         clone.project_fields = self._sync.project_fields
         return ProjectsSyncService(clone)
+
+    def handle_webhook(self, body: str, signature: Optional[str], secret: Optional[str]) -> Dict[str, Any]:
+        if not hasattr(self._sync, "handle_webhook"):
+            raise NotImplementedError
+        return self._sync.handle_webhook(body, signature, secret)
+
+    def consume_conflicts(self) -> List[Dict[str, Any]]:
+        if hasattr(self._sync, "consume_conflicts"):
+            return self._sync.consume_conflicts()
+        return []

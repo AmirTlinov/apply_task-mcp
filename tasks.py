@@ -2333,6 +2333,7 @@ class TaskTrackerTUI:
         prefix = "ON" if sync.enabled else "OFF"
         return f"{prefix} {target}"
 
+
     def _sync_indicator_fragments(self, filter_flash: bool = False) -> List[Tuple[str, str]]:
         sync = self.manager.sync_service if hasattr(self, "manager") else _get_sync_service()
         cfg = getattr(sync, "config", None)
@@ -2343,50 +2344,33 @@ class TaskTrackerTUI:
             self._last_sync_enabled = enabled
         elif self._last_sync_enabled and not enabled:
             self._sync_flash_until = now + 1.0
-            self._last_sync_enabled = enabled
-        else:
-            self._last_sync_enabled = enabled
+        self._last_sync_enabled = enabled
 
-        flash = (not enabled) and now < self._sync_flash_until
-        square = "■" if enabled or flash else "□"
-        if filter_flash:
+        # Legacy return format: list of (label, style) entries
+        entries: List[Tuple[str, str]] = []
+        if self._sync_flash_until and now < self._sync_flash_until:
+            entries.append(("class:icon.warn", "Git Projects ■"))
+            if filter_flash:
+                return entries
+
+        status = getattr(sync, "status", None)
+        style = "class:icon.check" if enabled else "class:text.dim"
+        if status == "syncing":
             style = "class:icon.warn"
-        else:
-            style = "class:icon.check" if enabled or flash else "class:text.dim"
+        elif status == "error":
+            style = "class:icon.fail"
 
-        reason = snapshot.get("status_reason")
-
-        def handler(mouse_event):
-            if mouse_event.event_type == MouseEventType.MOUSE_UP and mouse_event.button == MouseButton.LEFT:
-                self.open_settings_dialog()
-                return None
-            return NotImplemented
-
-        label = f"Git Projects {square}"
+        label = "Git Projects ■" if enabled else "Git Projects □"
         if snapshot.get("last_pull") or snapshot.get("last_push"):
             lp = snapshot.get("last_pull") or "—"
             lpsh = snapshot.get("last_push") or "—"
             label = f"{label} pull={lp} push={lpsh}"
-        rate_rem = snapshot.get("rate_remaining")
-        rate_reset = snapshot.get("rate_reset_human")
-        rate_wait = snapshot.get("rate_wait")
-        if rate_rem is not None:
-            label = f"{label} rlim={rate_rem}"
-            if rate_reset:
-                label = f"{label}@{rate_reset}"
-            if rate_wait:
-                label = f"{label} wait={int(rate_wait)}s"
-        if snapshot.get("project_url"):
-            label = f"{label} ↗"
-            def handler(mouse_event):
-                if mouse_event.event_type == MouseEventType.MOUSE_UP and mouse_event.button == MouseButton.LEFT:
-                    self._open_project_url()
-                    return None
-                return NotImplemented
-            return [(style, label, handler)]
-        if not enabled and reason:
-            label = f"{label} ({reason})"
-        return [(style, label, handler)]
+        if snapshot.get("status_reason"):
+            label = f"{label} ({snapshot.get('status_reason')})"
+
+        entries.append((style, label))
+        entries.append(("class:text.dim", " | "))
+        return entries
 
     @staticmethod
     def _sync_target_label(cfg) -> str:
@@ -4950,12 +4934,12 @@ def cmd_projects_auth(args) -> int:
 
 
 def cmd_projects_webhook(args) -> int:
-    sync = _get_sync_service()._sync
-    if not sync.enabled:
+    sync_service = _get_sync_service()
+    if not sync_service.enabled:
         return structured_error("projects-webhook", "Projects sync disabled (missing token or config)")
     body = _load_input_source(args.payload, "--payload")
     try:
-        result = sync.handle_webhook(body, args.signature, args.secret)
+        result = sync_service.handle_webhook(body, args.signature, args.secret)
     except ValueError as exc:
         return structured_error("projects-webhook", str(exc))
     if result and result.get("conflict"):
@@ -4976,8 +4960,8 @@ def cmd_projects_webhook(args) -> int:
 
 
 def cmd_projects_webhook_serve(args) -> int:
-    sync = _get_sync_service()._sync
-    if not sync.enabled:
+    sync_service = _get_sync_service()
+    if not sync_service.enabled:
         return structured_error("projects-webhook-serve", "Projects sync disabled (missing token or config)")
 
     secret = args.secret
@@ -4988,7 +4972,7 @@ def cmd_projects_webhook_serve(args) -> int:
             raw = self_inner.rfile.read(length)
             signature = self_inner.headers.get("X-Hub-Signature-256")
             try:
-                result = sync.handle_webhook(raw.decode(), signature, secret)
+                result = sync_service.handle_webhook(raw.decode(), signature, secret)
                 if result and result.get("conflict"):
                     status = 409
                     payload = {"status": "conflict", **result}
@@ -5021,22 +5005,24 @@ def cmd_projects_sync_cli(args) -> int:
     if not args.all:
         return structured_error("projects sync", "Укажи --all для явного подтверждения")
     sync_service = _get_sync_service()
-    sync = sync_service._sync
-    if not sync.enabled:
+    if not sync_service.enabled:
         status = _projects_status_payload()
         reason = status.get("status_reason") or "Projects sync отключён или не настроен"
         return structured_error("projects sync", reason)
-    sync.consume_conflicts()
+    sync_service.consume_conflicts()
     manager = TaskManager()
     domain = derive_domain_explicit(getattr(args, "domain", ""), getattr(args, "phase", None), getattr(args, "component", None))
     tasks = manager.list_tasks(domain)
     pulled = pushed = 0
     for task in tasks:
-        if sync.pull_task_fields(task):
+        try:
+            sync_service.pull_task_fields(task)
             pulled += 1
-        if sync.sync_task(task):
+        except Exception:
+            pass
+        if sync_service.sync_task(task):
             pushed += 1
-    conflicts = sync.consume_conflicts()
+    conflicts = sync_service.consume_conflicts()
     payload = {
         "tasks": len(tasks),
         "pull_updates": pulled,
