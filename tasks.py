@@ -39,6 +39,7 @@ from projects_sync import (
     update_project_workers,
     detect_repo_slug,
 )
+from core import Status, SubTask, TaskDetail
 from config import get_user_token, set_user_token
 
 TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M"
@@ -115,6 +116,13 @@ class SubTask:
 
     def ready_for_completion(self) -> bool:
         return self.criteria_confirmed and self.tests_confirmed and self.blockers_resolved
+
+    def status_value(self) -> Status:
+        if self.completed:
+            return Status.OK
+        if self.ready_for_completion():
+            return Status.WARN
+        return Status.FAIL
 
     def to_markdown(self) -> str:
         """Сериализация подзадачи в markdown с критериями, тестами, блокерами и чекпоинтами"""
@@ -401,30 +409,6 @@ def validation_response(command: str, success: bool, message: str, payload: Opti
         summary=message,
         exit_code=0 if success else 1,
     )
-
-
-class Status(Enum):
-    OK = ("OK", "green", "+")
-    WARN = ("WARN", "yellow", "~")
-    FAIL = ("FAIL", "red", "x")
-    UNKNOWN = ("?", "blue", "?")
-
-    @classmethod
-    def from_string(cls, value: str) -> "Status":
-        val = (value or "").strip().upper()
-        for status in cls:
-            if status.value[0] == val:
-                return status
-        return cls.UNKNOWN
-
-
-def subtask_status_value(subtask: "SubTask") -> Status:
-    """Определить итоговый статус подзадачи единообразно для всех UI."""
-    if subtask.completed:
-        return Status.OK
-    if subtask.ready_for_completion():
-        return Status.WARN
-    return Status.FAIL
 
 
 @dataclass
@@ -1928,7 +1912,7 @@ class TaskTrackerTUI:
 
     @staticmethod
     def _subtask_status(subtask: SubTask) -> Status:
-        return subtask_status_value(subtask)
+        return subtask.status_value()
 
     def _status_indicator(self, status: Union[Status, str, bool, None]) -> Tuple[str, str]:
         status_obj = self._normalize_status_value(status)
