@@ -20,7 +20,6 @@ import requests
 import webbrowser
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 from contextlib import contextmanager
@@ -28,7 +27,9 @@ from contextlib import contextmanager
 import yaml
 import textwrap
 from wcwidth import wcwidth
-import re
+from core import Status, SubTask, TaskDetail
+from application.ports import TaskRepository
+from infrastructure.file_repository import FileTaskRepository
 
 import projects_sync
 from projects_sync import (
@@ -39,7 +40,6 @@ from projects_sync import (
     update_project_workers,
     detect_repo_slug,
 )
-from core import Status, SubTask, TaskDetail
 from config import get_user_token, set_user_token
 
 TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M"
@@ -97,195 +97,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 # ============================================================================
 # DATA MODELS
 # ============================================================================
-
-
-@dataclass
-class SubTask:
-    completed: bool
-    title: str
-    success_criteria: List[str] = field(default_factory=list)
-    tests: List[str] = field(default_factory=list)
-    blockers: List[str] = field(default_factory=list)
-    criteria_confirmed: bool = False
-    tests_confirmed: bool = False
-    blockers_resolved: bool = False
-    criteria_notes: List[str] = field(default_factory=list)
-    tests_notes: List[str] = field(default_factory=list)
-    blockers_notes: List[str] = field(default_factory=list)
-    project_item_id: Optional[str] = None
-
-    def ready_for_completion(self) -> bool:
-        return self.criteria_confirmed and self.tests_confirmed and self.blockers_resolved
-
-    def status_value(self) -> Status:
-        if self.completed:
-            return Status.OK
-        if self.ready_for_completion():
-            return Status.WARN
-        return Status.FAIL
-
-    def to_markdown(self) -> str:
-        """Сериализация подзадачи в markdown с критериями, тестами, блокерами и чекпоинтами"""
-        lines = [f"- [{'x' if self.completed else ' '}] {self.title}"]
-        if self.success_criteria:
-            lines.append("  - Критерии: " + "; ".join(self.success_criteria))
-        if self.tests:
-            lines.append("  - Тесты: " + "; ".join(self.tests))
-        if self.blockers:
-            lines.append("  - Блокеры: " + "; ".join(self.blockers))
-        status_tokens = [
-            f"Критерии={'OK' if self.criteria_confirmed else 'TODO'}",
-            f"Тесты={'OK' if self.tests_confirmed else 'TODO'}",
-            f"Блокеры={'OK' if self.blockers_resolved else 'TODO'}",
-        ]
-        lines.append("  - Чекпоинты: " + "; ".join(status_tokens))
-        if self.criteria_notes:
-            lines.append("  - Отметки критериев: " + "; ".join(self.criteria_notes))
-        if self.tests_notes:
-            lines.append("  - Отметки тестов: " + "; ".join(self.tests_notes))
-        if self.blockers_notes:
-            lines.append("  - Отметки блокеров: " + "; ".join(self.blockers_notes))
-        return "\n".join(lines)
-
-    def is_valid_flagship(self) -> Tuple[bool, List[str]]:
-        """Проверка flagship-качества подзадачи"""
-        issues = []
-        if not self.success_criteria:
-            issues.append(f"'{self.title}': нет критериев выполнения")
-        if not self.tests:
-            issues.append(f"'{self.title}': нет тестов для проверки")
-        if not self.blockers:
-            issues.append(f"'{self.title}': нет блокеров/зависимостей")
-        if len(self.title) < 20:
-            issues.append(f"'{self.title}': слишком короткое описание (минимум 20 символов)")
-        # Проверка атомарности: задача не должна содержать слов типа "и", "затем", "потом"
-        atomic_violators = ["и затем", "потом", "после этого", "далее", ", и ", " and then", " then "]
-        if any(v in self.title.lower() for v in atomic_violators):
-            issues.append(f"'{self.title}': не атомарна (разбей на несколько подзадач)")
-        return len(issues) == 0, issues
-
-
-@dataclass
-class TaskDetail:
-    id: str
-    title: str
-    status: str
-    domain: str = ""
-    phase: str = ""
-    component: str = ""
-    parent: Optional[str] = None
-    priority: str = "MEDIUM"
-    created: str = ""
-    updated: str = ""
-    tags: List[str] = field(default_factory=list)
-    assignee: str = "ai"
-    progress: int = 0
-    blocked: bool = False
-    blockers: List[str] = field(default_factory=list)
-    description: str = ""
-    context: str = ""
-    subtasks: List[SubTask] = field(default_factory=list)
-    success_criteria: List[str] = field(default_factory=list)
-    dependencies: List[str] = field(default_factory=list)
-    next_steps: List[str] = field(default_factory=list)
-    problems: List[str] = field(default_factory=list)
-    risks: List[str] = field(default_factory=list)
-    history: List[str] = field(default_factory=list)
-    project_item_id: Optional[str] = None
-    project_draft_id: Optional[str] = None
-    project_remote_updated: Optional[str] = None
-    project_issue_number: Optional[int] = None
-
-    @property
-    def folder(self) -> str:
-        return self.domain
-
-    @folder.setter
-    def folder(self, value: str) -> None:
-        self.domain = value
-
-    @property
-    def filepath(self) -> Path:
-        base = Path(".tasks")
-        return (base / self.domain / f"{self.id}.task").resolve() if self.domain else base / f"{self.id}.task"
-
-    def calculate_progress(self) -> int:
-        if not self.subtasks:
-            return self.progress
-        completed = sum(1 for st in self.subtasks if st.completed)
-        return int((completed / len(self.subtasks)) * 100)
-
-    def update_status_from_progress(self) -> None:
-        prog = self.calculate_progress()
-        if self.blocked:
-            self.status = "FAIL"
-        elif prog == 100:
-            self.status = "OK"
-        elif prog > 0:
-            self.status = "WARN"
-        else:
-            self.status = "FAIL"
-
-    def to_file_content(self) -> str:
-        metadata = {
-            "id": self.id,
-            "title": self.title,
-            "status": self.status,
-            "domain": self.domain or None,
-            "phase": self.phase or None,
-            "component": self.component or None,
-            "parent": self.parent,
-            "priority": self.priority,
-            "created": self.created or current_timestamp(),
-            "updated": self.updated or current_timestamp(),
-            "tags": self.tags,
-            "assignee": self.assignee,
-            "progress": self.calculate_progress(),
-        }
-        if self.blocked:
-            metadata["blocked"] = True
-            metadata["blockers"] = self.blockers
-        if self.project_item_id:
-            metadata["project_item_id"] = self.project_item_id
-        if self.project_draft_id:
-            metadata["project_draft_id"] = self.project_draft_id
-        if self.project_remote_updated:
-            metadata["project_remote_updated"] = self.project_remote_updated
-        if self.project_issue_number:
-            metadata["project_issue_number"] = self.project_issue_number
-        subtask_ids = [st.project_item_id for st in self.subtasks]
-        if any(subtask_ids):
-            metadata["subtask_project_ids"] = subtask_ids
-
-        lines = ["---", yaml.dump(metadata, allow_unicode=True, default_flow_style=False).strip(), "---", ""]
-        lines.append(f"# {self.title}\n")
-
-        def add_section(title: str, content: List[str]):
-            if content:
-                lines.append(f"## {title}")
-                lines.extend(content)
-                lines.append("")
-
-        if self.description:
-            lines.append("## Описание")
-            lines.append(self.description)
-            lines.append("")
-        if self.context:
-            lines.append("## Контекст")
-            lines.append(self.context)
-            lines.append("")
-        if self.subtasks:
-            lines.append("## Подзадачи")
-            lines.extend(st.to_markdown() for st in self.subtasks)
-            lines.append("")
-        add_section("Текущие проблемы", [f"{i + 1}. {p}" for i, p in enumerate(self.problems)])
-        add_section("Следующие шаги", [f"- {s}" for s in self.next_steps])
-        add_section("Критерии успеха", [f"- {c}" for c in self.success_criteria])
-        add_section("Зависимости", [f"- {d}" for d in self.dependencies])
-        add_section("Риски", [f"- {r}" for r in self.risks])
-        add_section("История", [f"- {h}" for h in self.history])
-
-        return "\n".join(lines).strip() + "\n"
+# Domain entities SubTask/TaskDetail импортируются из core.
 
 
 def _iso_timestamp() -> str:
@@ -592,9 +404,10 @@ class TaskFileParser:
 
 
 class TaskManager:
-    def __init__(self, tasks_dir: Path = Path(".tasks")):
+    def __init__(self, tasks_dir: Path = Path(".tasks"), repository: Optional[TaskRepository] = None):
         self.tasks_dir = tasks_dir
         self.tasks_dir.mkdir(exist_ok=True)
+        self.repo: TaskRepository = repository or FileTaskRepository(tasks_dir)
         self.config = self.load_config()
         self.auto_sync_message = ""
         self.last_sync_error = ""
@@ -655,8 +468,7 @@ class TaskManager:
         if prog == 100 and not task.blocked:
             task.status = "OK"
         task.domain = self.sanitize_domain(task.domain)
-        task.filepath.parent.mkdir(parents=True, exist_ok=True)
-        task.filepath.write_text(task.to_file_content(), encoding="utf-8")
+        self.repo.save(task)
         sync = get_projects_sync()
         if sync.enabled:
             sync.sync_task(task)
@@ -675,20 +487,14 @@ class TaskManager:
         return None
 
     def load_task(self, task_id: str, domain: str = "") -> Optional[TaskDetail]:
-        file = self._find_file_by_id(task_id, domain)
-        if not file:
+        task = self.repo.load(task_id, domain)
+        if not task:
             return None
-        task = TaskFileParser.parse(file)
-        if task:
-            # если в файле нет domain — берем из пути
-            if not task.domain:
-                rel = file.parent.relative_to(self.tasks_dir)
-                task.domain = "" if str(rel) == "." else rel.as_posix()
-            if task.subtasks:
-                prog = task.calculate_progress()
-                if prog == 100 and not task.blocked and task.status != "OK":
-                    task.status = "OK"
-                    self.save_task(task)
+        if task.subtasks:
+            prog = task.calculate_progress()
+            if prog == 100 and not task.blocked and task.status != "OK":
+                task.status = "OK"
+                self.save_task(task)
         sync = get_projects_sync()
         if sync.enabled and task.project_item_id:
             sync.pull_task_fields(task)
@@ -699,25 +505,18 @@ class TaskManager:
         self.last_sync_error = f"SYNC ERROR: {message[:60]}"
 
     def list_tasks(self, domain: str = "", skip_sync: bool = False) -> List[TaskDetail]:
-        tasks: List[TaskDetail] = []
-        selected = self._all_task_files() if not domain else (self.tasks_dir / self.sanitize_domain(domain)).glob("TASK-*.task")
-        for file in sorted(selected):
-            parsed = TaskFileParser.parse(file)
-            if parsed:
-                if not parsed.domain:
-                    rel = file.parent.relative_to(self.tasks_dir)
-                    parsed.domain = "" if str(rel) == "." else rel.as_posix()
-                if parsed.subtasks:
-                    prog = parsed.calculate_progress()
-                    if prog == 100 and not parsed.blocked and parsed.status != "OK":
-                        parsed.status = "OK"
-                        self.save_task(parsed)
-                if not skip_sync:
-                    sync = get_projects_sync()
-                    if sync.enabled and parsed.project_item_id:
-                        sync.pull_task_fields(parsed)
-                tasks.append(parsed)
-        return tasks
+        tasks: List[TaskDetail] = self.repo.list(domain, skip_sync=skip_sync)
+        for parsed in tasks:
+            if parsed.subtasks:
+                prog = parsed.calculate_progress()
+                if prog == 100 and not parsed.blocked and parsed.status != "OK":
+                    parsed.status = "OK"
+                    self.save_task(parsed)
+            if not skip_sync:
+                sync = get_projects_sync()
+                if sync.enabled and parsed.project_item_id:
+                    sync.pull_task_fields(parsed)
+        return sorted(tasks, key=lambda t: t.id)
 
     def _auto_sync_all(self) -> int:
         if not self.config.get("auto_sync", True):
@@ -790,6 +589,9 @@ class TaskManager:
         if queue_size:
             auto = min(auto, queue_size)
         return max(1, auto)
+
+    def compute_signature(self) -> int:
+        return self.repo.compute_signature()
 
     def update_task_status(self, task_id: str, status: str, domain: str = "") -> Tuple[bool, Optional[Dict[str, str]]]:
         task = self.load_task(task_id, domain)
@@ -2494,10 +2296,7 @@ class TaskTrackerTUI:
         return [t for t in self.tasks if t.status == self.current_filter]
 
     def compute_signature(self) -> int:
-        sig = 0
-        for f in self.tasks_dir.rglob("TASK-*.task"):
-            sig ^= int(f.stat().st_mtime_ns)
-        return sig
+        return self.manager.compute_signature()
 
     def maybe_reload(self):
         now = time.time()

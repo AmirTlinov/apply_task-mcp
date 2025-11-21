@@ -28,6 +28,22 @@ class SubTask:
             return Status.WARN
         return Status.FAIL
 
+    def is_valid_flagship(self) -> tuple[bool, list[str]]:
+        """Quality checks matching legacy validation."""
+        issues: list[str] = []
+        if not self.success_criteria:
+            issues.append(f"'{self.title}': нет критериев выполнения")
+        if not self.tests:
+            issues.append(f"'{self.title}': нет тестов для проверки")
+        if not self.blockers:
+            issues.append(f"'{self.title}': нет блокеров/зависимостей")
+        if len(self.title) < 20:
+            issues.append(f"'{self.title}': слишком короткое описание (минимум 20 символов)")
+        atomic_violators = ["и затем", "потом", "после этого", "далее", ", и ", " and then", " then "]
+        if any(v in self.title.lower() for v in atomic_violators):
+            issues.append(f"'{self.title}': не атомарна (разбей на несколько подзадач)")
+        return len(issues) == 0, issues
+
     def to_markdown(self) -> str:
         lines = [f"- [{'x' if self.completed else ' '}] {self.title}"]
         if self.success_criteria:
