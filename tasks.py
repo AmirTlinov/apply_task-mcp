@@ -6393,7 +6393,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_context_args(auto_ckp)
     auto_ckp.set_defaults(func=cmd_automation_checkpoint)
 
-    ai_help = sub.add_parser("help-ai", help="Жёсткие правила для ИИ-агентов")
+    ai_help = sub.add_parser("help-ai", help="Жёсткие правила для ИИ-агентов (дублирует README/AGENTS)")
     ai_help.set_defaults(func=lambda _: print(AI_HELP.strip()))
 
     return parser
