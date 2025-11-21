@@ -46,5 +46,10 @@ apply_task "Implement refunds API #feature @TASK-042" \
 
 ### Active domains
 
-- `desktop/font-tuning` – font rendering and display pipeline.
-- `desktop/devtools` – CLI/SDK/tooling for the developer workstation.
+- `desktop/devtools` – CLI/TUI, GitHub Projects sync, внутренние инструменты автора.
+
+### Adding a new domain
+
+1. Создай папки `.tasks/<domain>/<feature>/` и `core/<domain>/<feature>/` с подкаталогами слоев (`application`, `domain`, `infrastructure`, `interface`).
+2. Обнови эту таблицу и README, чтобы путь был явным.
+3. При переносе существующего кода — перемести файлы в соответствующие слои целевого домена и поправь импорты.
