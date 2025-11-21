@@ -1,3 +1,9 @@
+# Changes
+
+## 2025-11-21 · Docs hygiene
+- Added `AGENTS.md` with hard rules and file aliases, linked from README.
+- Trimmed `AI.md` to concise operator rules; README start section now points to key docs.
+
 # Changes: Horizontal Scrolling
 
 ## What changed

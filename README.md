@@ -2,7 +2,11 @@
 
 Task Tracker (`apply_task`) is a single self-contained CLI/TUI that keeps your backlog deterministic and AI-friendly. Every non-interactive command returns structured JSON, while the TUI gives instant visibility into objectives, subtasks, tests, and blockers.
 
-**For AI operators**: read [AI.md](AI.md) for the formal discipline, validation rules, and automation tips.
+**Start here**
+- Rules & aliases: [AGENTS.md](AGENTS.md)
+- CLI discipline: [AI.md](AI.md)
+- Domain layout: [DOMAIN_STRUCTURE.md](DOMAIN_STRUCTURE.md)
+- Syntax reference: [SYNTAX.md](SYNTAX.md)
 
 ## Quick start
 
@@ -138,9 +142,6 @@ apply_task tui
 
 ## Additional docs
 
-- [AI.md](AI.md) — flagship rules for AI operators and automation.
-- [SYNTAX.md](SYNTAX.md) — JSON schema, CLI arg formats.
-- [DOMAIN_STRUCTURE.md](DOMAIN_STRUCTURE.md) — required hexagonal folder layout.
 - [SCROLLING.md](SCROLLING.md) — TUI navigation & scrolling design.
 - [UI_UX_IMPROVEMENTS.md](UI_UX_IMPROVEMENTS.md) — rationale behind the interface.
 - [CHANGES.md](CHANGES.md) — latest UX/feature notes.
