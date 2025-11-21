@@ -244,171 +244,14 @@ class Task:
     blocked: bool = False
 
 
-# ============================================================================
-# PERSISTENCE LAYER (legacy parser kept for reference; active one lives in infrastructure.task_file_parser)
-# ============================================================================
-
-
-class _LegacyTaskFileParser:
-    SUBTASK_PATTERN = re.compile(r"^-\s*\[(x|X| )\]\s*(.+)$")
-
-    @classmethod
-    def parse(cls, filepath: Path) -> Optional[TaskDetail]:
-        if not filepath.exists():
-            return None
-        content = filepath.read_text(encoding="utf-8")
-        parts = content.split("---", 2)
-        if len(parts) < 3:
-            return None
-        metadata = yaml.safe_load(parts[1]) or {}
-        body = parts[2].strip()
-
-        task = TaskDetail(
-            id=metadata.get("id", ""),
-            title=metadata.get("title", ""),
-            status=metadata.get("status", "FAIL"),
-            domain=metadata.get("domain", "") or "",
-            phase=metadata.get("phase", "") or "",
-            component=metadata.get("component", "") or "",
-            parent=metadata.get("parent"),
-            priority=metadata.get("priority", "MEDIUM"),
-            created=metadata.get("created", ""),
-            updated=metadata.get("updated", ""),
-            tags=metadata.get("tags", []),
-            assignee=metadata.get("assignee", "ai"),
-            progress=metadata.get("progress", 0),
-            blocked=metadata.get("blocked", False),
-            blockers=metadata.get("blockers", []),
-            project_item_id=metadata.get("project_item_id"),
-            project_draft_id=metadata.get("project_draft_id"),
-            project_remote_updated=metadata.get("project_remote_updated"),
-            project_issue_number=metadata.get("project_issue_number"),
-        )
-        source_path = filepath.resolve()
-        task._source_path = source_path
-        try:
-            task._source_mtime = source_path.stat().st_mtime
-        except OSError:
-            task._source_mtime = time.time()
-
-        section = None
-        buffer: List[str] = []
-
-        def flush():
-            if section is None:
-                return
-            cls._save_section(task, section, buffer.copy())
-
-        for line in body.splitlines():
-            if line.startswith("## "):
-                flush()
-                section = line[3:].strip()
-                buffer = []
-            else:
-                buffer.append(line)
-        flush()
-        subtask_projects = metadata.get("subtask_project_ids", []) or []
-        for idx, sub_id in enumerate(subtask_projects):
-            if sub_id and idx < len(task.subtasks):
-                task.subtasks[idx].project_item_id = sub_id
-        # Автостатус: если все подзадачи выполнены — статус OK (без изменения файла)
-        try:
-            if task.subtasks and task.calculate_progress() == 100 and not task.blocked:
-                task.status = "OK"
-        except Exception:
-            pass
-        return task
-
-    @classmethod
-    def _save_section(cls, task: TaskDetail, section: str, lines: List[str]) -> None:
-        content = "\n".join(lines).strip()
-        if section == "Описание":
-            task.description = content
-        elif section == "Контекст":
-            task.context = content
-        elif section == "Подзадачи":
-            current_subtask = None
-            for line in lines:
-                m = cls.SUBTASK_PATTERN.match(line.strip())
-                if m:
-                    # Новая подзадача
-                    if current_subtask:
-                        task.subtasks.append(current_subtask)
-                    current_subtask = SubTask(m.group(1).lower() == "x", m.group(2))
-                elif current_subtask and line.strip().startswith("- "):
-                    # Вложенные элементы подзадачи
-                    stripped = line.strip()[2:]  # убираем "- "
-                    if stripped.startswith("Критерии:"):
-                        criteria_text = stripped[9:].strip()
-                        current_subtask.success_criteria = [c.strip() for c in criteria_text.split(";") if c.strip()]
-                    elif stripped.startswith("Тесты:"):
-                        tests_text = stripped[6:].strip()
-                        current_subtask.tests = [t.strip() for t in tests_text.split(";") if t.strip()]
-                    elif stripped.startswith("Блокеры:"):
-                        blockers_text = stripped[8:].strip()
-                        current_subtask.blockers = [b.strip() for b in blockers_text.split(";") if b.strip()]
-                    elif stripped.startswith("Чекпоинты:"):
-                        checkpoints = [token.strip() for token in stripped[11:].strip().split(";") if token.strip()]
-                        for token in checkpoints:
-                            key, _, value = token.partition("=")
-                            key = key.strip().lower()
-                            flag = value.strip().lower() in ("ok", "done", "yes", "true", "готово", "готов", "+")
-                            if key.startswith("критер"):
-                                current_subtask.criteria_confirmed = flag
-                            elif key.startswith("тест"):
-                                current_subtask.tests_confirmed = flag
-                            elif key.startswith("блок"):
-                                current_subtask.blockers_resolved = flag
-                    elif stripped.startswith("Отметки критериев:"):
-                        notes_text = stripped.split(":", 1)[1].strip()
-                        current_subtask.criteria_notes = [n.strip() for n in notes_text.split(";") if n.strip()]
-                    elif stripped.startswith("Отметки тестов:"):
-                        notes_text = stripped.split(":", 1)[1].strip()
-                        current_subtask.tests_notes = [n.strip() for n in notes_text.split(";") if n.strip()]
-                    elif stripped.startswith("Отметки блокеров:"):
-                        notes_text = stripped.split(":", 1)[1].strip()
-                        current_subtask.blockers_notes = [n.strip() for n in notes_text.split(";") if n.strip()]
-            # Не забыть последнюю подзадачу
-            if current_subtask:
-                task.subtasks.append(current_subtask)
-        elif section == "Критерии успеха":
-            task.success_criteria = cls._parse_list(lines)
-        elif section == "Следующие шаги":
-            task.next_steps = cls._parse_list(lines)
-        elif section == "Зависимости":
-            task.dependencies = cls._parse_list(lines)
-        elif section == "Текущие проблемы":
-            task.problems = cls._parse_numbered(lines)
-        elif section == "Риски":
-            task.risks = cls._parse_list(lines)
-        elif section == "История":
-            task.history = cls._parse_list(lines)
-
-    @staticmethod
-    def _parse_list(lines: List[str]) -> List[str]:
-        out = []
-        for line in lines:
-            line = line.strip()
-            if line.startswith("- "):
-                out.append(line[2:])
-        return out
-
-    @staticmethod
-    def _parse_numbered(lines: List[str]) -> List[str]:
-        out = []
-        for line in lines:
-            line = line.strip()
-            m = re.match(r"^\d+\.\s+(.*)", line)
-            if m:
-                out.append(m.group(1))
-        return out
 
 
 class TaskManager:
-    def __init__(self, tasks_dir: Path = Path(".tasks"), repository: Optional[TaskRepository] = None):
+    def __init__(self, tasks_dir: Path = Path(".tasks"), repository: Optional[TaskRepository] = None, sync_provider=None):
         self.tasks_dir = tasks_dir
         self.tasks_dir.mkdir(exist_ok=True)
         self.repo: TaskRepository = repository or FileTaskRepository(tasks_dir)
+        self.sync_provider = sync_provider or (lambda: get_projects_sync())
         self.config = self.load_config()
         self.auto_sync_message = ""
         self.last_sync_error = ""
@@ -475,12 +318,14 @@ class TaskManager:
             task.status = "OK"
         task.domain = self.sanitize_domain(task.domain)
         self.repo.save(task)
-        sync = get_projects_sync()
+        sync = self.sync_provider()
         if sync.enabled:
-            sync.sync_task(task)
+            changed = bool(sync.sync_task(task))
             if getattr(task, "_sync_error", None):
                 self._report_sync_error(task._sync_error)
                 task._sync_error = None
+            if changed:
+                self.repo.save(task)
 
     def load_task(self, task_id: str, domain: str = "") -> Optional[TaskDetail]:
         task = self.repo.load(task_id, domain)
@@ -491,7 +336,7 @@ class TaskManager:
             if prog == 100 and not task.blocked and task.status != "OK":
                 task.status = "OK"
                 self.save_task(task)
-        sync = get_projects_sync()
+        sync = self.sync_provider()
         if sync.enabled and task.project_item_id:
             sync.pull_task_fields(task)
         return task
@@ -509,7 +354,7 @@ class TaskManager:
                     parsed.status = "OK"
                     self.save_task(parsed)
             if not skip_sync:
-                sync = get_projects_sync()
+                sync = self.sync_provider()
                 if sync.enabled and parsed.project_item_id:
                     sync.pull_task_fields(parsed)
         return sorted(tasks, key=lambda t: t.id)
@@ -517,7 +362,7 @@ class TaskManager:
     def _auto_sync_all(self) -> int:
         if not self.config.get("auto_sync", True):
             return 0
-        base_sync = get_projects_sync()
+        base_sync = self.sync_provider()
         if not base_sync.enabled or getattr(base_sync, "_full_sync_done", False):
             return 0
         setattr(base_sync, "_full_sync_done", True)
@@ -571,7 +416,7 @@ class TaskManager:
             value = int(env_override)
             if value > 0:
                 return max(1, min(value, queue_size or value))
-        sync = get_projects_sync()
+        sync = self.sync_provider()
         cfg_workers = getattr(sync.config, "workers", None) if sync and sync.config else None
         if cfg_workers:
             return max(1, min(int(cfg_workers), queue_size or int(cfg_workers)))
@@ -692,16 +537,7 @@ class TaskManager:
 
     def move_glob(self, pattern: str, new_domain: str) -> int:
         target_domain = self.sanitize_domain(new_domain)
-        matched = 0
-        for t in self.repo.list("", skip_sync=True):
-            try:
-                rel_path = Path(t.filepath).relative_to(self.tasks_dir)
-            except Exception:
-                rel_path = Path(t.filepath)
-            if rel_path.match(pattern):
-                if self.move_task(t.id, target_domain):
-                    matched += 1
-        return matched
+        return self.repo.move_glob(pattern, target_domain)
 
     def clean_tasks(self, tag: Optional[str] = None, status: Optional[str] = None, phase: Optional[str] = None, dry_run: bool = False) -> Tuple[List[str], int]:
         matched: List[str] = []

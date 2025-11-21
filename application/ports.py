@@ -23,3 +23,6 @@ class TaskRepository(Protocol):
 
     def move(self, task_id: str, new_domain: str, current_domain: str = "") -> bool:
         ...
+
+    def move_glob(self, pattern: str, new_domain: str) -> int:
+        ...

@@ -99,3 +99,16 @@ class FileTaskRepository(TaskRepository):
             except OSError:
                 pass
         return True
+
+    def move_glob(self, pattern: str, new_domain: str) -> int:
+        moved = 0
+        for file in self.tasks_dir.rglob("TASK-*.task"):
+            try:
+                rel = file.relative_to(self.tasks_dir)
+            except Exception:
+                rel = file
+            if rel.match(pattern):
+                tid = file.stem
+                if self.move(tid, new_domain, current_domain=str(rel.parent)) or self.move(tid, new_domain):
+                    moved += 1
+        return moved
