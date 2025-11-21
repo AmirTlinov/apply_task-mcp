@@ -3582,7 +3582,8 @@ class TaskTrackerTUI:
         if getattr(self, "single_subtask_view", None):
             return FormattedText([])
         if self.detail_mode and self.current_task_detail:
-            return FormattedText([])
+            hint = "← свернуть/к родителю · → раскрыть/к первому ребёнку · Enter: карточка · d: done"
+            return FormattedText([("class:text.dim", hint)])
         if self.editing_mode:
             return FormattedText([
                 ("class:text.dimmer", " Enter: сохранить | Esc: отменить"),

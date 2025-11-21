@@ -50,6 +50,7 @@ def test_move_selection_clamps_detail_mode(tmp_path):
 
     tui.detail_mode = True
     tui.current_task_detail = detail
+    tui._rebuild_detail_flat()
     tui.detail_selected_index = 0
 
     # Jump beyond total items and ensure we clamp to the last slot
@@ -134,6 +135,7 @@ def test_selection_stops_at_last_item(tmp_path):
 
     tui.detail_mode = True
     tui.current_task_detail = detail
+    tui._rebuild_detail_flat()
     tui.detail_selected_index = len(detail.subtasks) - 1  # уже на последнем
     tui._set_footer_height(0)
 
@@ -161,6 +163,7 @@ def test_last_subtask_visible_with_long_header(tmp_path):
 
     tui.detail_mode = True
     tui.current_task_detail = detail
+    tui._rebuild_detail_flat()
     tui.detail_selected_index = len(detail.subtasks) - 1  # последний
     tui._set_footer_height(0)
 
