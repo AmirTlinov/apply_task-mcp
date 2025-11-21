@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union, Set
 from contextlib import contextmanager
 
 import yaml
@@ -1208,7 +1208,7 @@ class TaskTrackerTUI:
         self.settings_selected_index = 0
         self.task_row_map: List[Tuple[int, int]] = []
         self.subtask_row_map: List[Tuple[int, int]] = []
-        self.detail_flat_subtasks: List[Tuple[str, SubTask, int]] = []
+        self.detail_flat_subtasks: List[Tuple[str, SubTask, int, bool, bool]] = []
         self._last_click_index: Optional[int] = None
         self._last_click_time: float = 0.0
         self._last_subtask_click_index: Optional[int] = None
@@ -1231,6 +1231,7 @@ class TaskTrackerTUI:
             self.set_status_message(self.manager.auto_sync_message, ttl=4)
         if getattr(self.manager, "last_sync_error", ""):
             self.set_status_message(self.manager.last_sync_error, ttl=6)
+        self.detail_collapsed: Set[str] = set()
 
         # Editing mode
         self.editing_mode = False
@@ -1319,7 +1320,7 @@ class TaskTrackerTUI:
                 # В режиме деталей Enter показывает карточку выбранной подзадачи
                 entry = self._selected_subtask_entry()
                 if entry:
-                    path, _, _ = entry
+                    path, _, _, _, _ = entry
                     self.show_subtask_details(path)
             else:
                 if self.filtered_tasks:
@@ -1396,6 +1397,22 @@ class TaskTrackerTUI:
         def _(event):
             """] - scroll content right (alternative)"""
             self.horizontal_offset = min(200, self.horizontal_offset + 3)
+
+        @kb.add("left")
+        def _(event):
+            """Left - collapse or go to parent in detail tree"""
+            if self.detail_mode and not getattr(self, "single_subtask_view", None):
+                self._toggle_collapse_selected(expand=False)
+                return
+            # в остальных режимах пока нет действий
+
+        @kb.add("right")
+        def _(event):
+            """Right - expand or go to first child in detail tree"""
+            if self.detail_mode and not getattr(self, "single_subtask_view", None):
+                self._toggle_collapse_selected(expand=True)
+                return
+            # в остальных режимах пока нет действий
 
         @kb.add("home")
         def _(event):
@@ -1579,12 +1596,15 @@ class TaskTrackerTUI:
             return extra
         return f"{base} {extra}"
 
-    def _flatten_detail_subtasks(self, subtasks: List[SubTask], prefix: str = "", level: int = 0) -> List[Tuple[str, SubTask, int]]:
-        flat: List[Tuple[str, SubTask, int]] = []
+    def _flatten_detail_subtasks(self, subtasks: List[SubTask], prefix: str = "", level: int = 0) -> List[Tuple[str, SubTask, int, bool, bool]]:
+        flat: List[Tuple[str, SubTask, int, bool, bool]] = []
         for idx, st in enumerate(subtasks):
             path = f"{prefix}.{idx}" if prefix else str(idx)
-            flat.append((path, st, level))
-            flat.extend(self._flatten_detail_subtasks(st.children, path, level + 1))
+            collapsed = path in self.detail_collapsed
+            has_children = bool(st.children)
+            flat.append((path, st, level, collapsed, has_children))
+            if not collapsed:
+                flat.extend(self._flatten_detail_subtasks(st.children, path, level + 1))
         return flat
 
     def _rebuild_detail_flat(self, selected_path: Optional[str] = None) -> None:
@@ -1595,12 +1615,17 @@ class TaskTrackerTUI:
             return
         flat = self._flatten_detail_subtasks(self.current_task_detail.subtasks)
         self.detail_flat_subtasks = flat
-        if selected_path and any(p == selected_path for p, _, _ in flat):
-            for idx, (p, _, _) in enumerate(flat):
-                if p == selected_path:
-                    self.detail_selected_index = idx
-                    self.detail_selected_path = p
-                    return
+        if selected_path:
+            probe = selected_path
+            while True:
+                for idx, (p, _, _, _, _) in enumerate(flat):
+                    if p == probe:
+                        self.detail_selected_index = idx
+                        self.detail_selected_path = p
+                        return
+                if "." not in probe:
+                    break
+                probe = ".".join(probe.split(".")[:-1])
         if not flat:
             self.detail_selected_index = 0
             self.detail_selected_path = ""
@@ -1608,21 +1633,21 @@ class TaskTrackerTUI:
         self.detail_selected_index = max(0, min(self.detail_selected_index, len(flat) - 1))
         self.detail_selected_path = flat[self.detail_selected_index][0]
 
-    def _selected_subtask_entry(self) -> Optional[Tuple[str, SubTask, int]]:
+    def _selected_subtask_entry(self) -> Optional[Tuple[str, SubTask, int, bool, bool]]:
         if not self.detail_flat_subtasks:
             return None
         idx = max(0, min(self.detail_selected_index, len(self.detail_flat_subtasks) - 1))
         self.detail_selected_index = idx
-        path, subtask, level = self.detail_flat_subtasks[idx]
+        path, subtask, level, collapsed, has_children = self.detail_flat_subtasks[idx]
         self.detail_selected_path = path
-        return path, subtask, level
+        return path, subtask, level, collapsed, has_children
 
     def _select_subtask_by_path(self, path: str) -> None:
         if not self.detail_flat_subtasks:
             self.detail_selected_index = 0
             self.detail_selected_path = ""
             return
-        for idx, (p, _, _) in enumerate(self.detail_flat_subtasks):
+        for idx, (p, _, _, _, _) in enumerate(self.detail_flat_subtasks):
             if p == path:
                 self.detail_selected_index = idx
                 self.detail_selected_path = p
@@ -1635,6 +1660,39 @@ class TaskTrackerTUI:
             return None
         st, _, _ = _find_subtask_by_path(self.current_task_detail.subtasks, path)
         return st
+
+    def _toggle_collapse_selected(self, expand: bool) -> None:
+        entry = self._selected_subtask_entry()
+        if not entry:
+            return
+        path, st, _, collapsed, has_children = entry
+        if not has_children:
+            # нет детей – попытка перейти к родителю при сворачивании
+            if not expand and "." in path:
+                parent_path = ".".join(path.split(".")[:-1])
+                self._select_subtask_by_path(parent_path)
+                self._ensure_detail_selection_visible(len(self.detail_flat_subtasks))
+                self.force_render()
+            return
+        if expand:
+            if collapsed:
+                self.detail_collapsed.discard(path)
+                self._rebuild_detail_flat(path)
+            else:
+                # перейти к первому ребёнку
+                child_path = f"{path}.0" if st.children else path
+                self._select_subtask_by_path(child_path)
+                self._rebuild_detail_flat(child_path)
+        else:
+            if not collapsed:
+                self.detail_collapsed.add(path)
+                self._rebuild_detail_flat(path)
+            elif "." in path:
+                parent_path = ".".join(path.split(".")[:-1])
+                self._select_subtask_by_path(parent_path)
+                self._rebuild_detail_flat(parent_path)
+        self._ensure_detail_selection_visible(len(self.detail_flat_subtasks))
+        self.force_render()
 
     def _ensure_settings_selection_visible(self, total: int) -> None:
         visible = self._visible_row_limit()
@@ -1740,7 +1798,7 @@ class TaskTrackerTUI:
         self.detail_selected_index = idx
         self._selected_subtask_entry()
         if double_click:
-            path, _, _ = self.detail_flat_subtasks[idx]
+            path = self.detail_flat_subtasks[idx][0]
             self._last_subtask_click_index = None
             self._last_subtask_click_time = 0.0
             self.show_subtask_details(path)
@@ -2892,7 +2950,7 @@ class TaskTrackerTUI:
 
         # Единый список только для подзадач; остальные секции выводим отдельно ниже
         self._rebuild_detail_flat(self.detail_selected_path)
-        items: List[Tuple[str, SubTask, int]] = list(self.detail_flat_subtasks)
+        items: List[Tuple[str, SubTask, int, bool, bool]] = list(self.detail_flat_subtasks)
         aux_sections = {
             "next": detail.next_steps,
             "dep": detail.dependencies,
@@ -2953,7 +3011,7 @@ class TaskTrackerTUI:
         if items:
             self._selected_subtask_entry()
 
-        completed = sum(1 for _, st, _ in items if st.completed)
+        completed = sum(1 for _, st, _, _, _ in items if st.completed)
         line_counter = 0
         for frag in result:
             if isinstance(frag, tuple) and len(frag) >= 2:
@@ -2972,14 +3030,15 @@ class TaskTrackerTUI:
             line_counter += 1
 
         for global_idx in range(start, end):
-            path, st, level = items[global_idx]
+            path, st, level, collapsed, has_children = items[global_idx]
             selected = global_idx == self.detail_selected_index
             bg_style = f"class:{self._selection_style_for_status(Status.OK if selected else None)}" if selected else None
             base_border = 'class:border'
 
             pointer = '>' if selected else ' '
             indent = '  ' * level
-            base_prefix = f'{indent}{pointer} {path} '
+            indicator = "▸" if (has_children and collapsed) else ("▾" if has_children else " ")
+            base_prefix = f'{indent}{pointer}{indicator} {path} '
 
             st_title = st.title
             if self.horizontal_offset > 0:
@@ -3067,6 +3126,7 @@ class TaskTrackerTUI:
         self.current_task_detail = task.detail or TaskFileParser.parse(Path(task.task_file))
         self.detail_mode = True
         self.detail_selected_index = 0
+        self.detail_collapsed = set()
         self._rebuild_detail_flat()
         self.detail_view_offset = 0
         self._set_footer_height(0)
@@ -3231,7 +3291,7 @@ class TaskTrackerTUI:
             # В режиме деталей - удаляем подзадачу
             entry = self._selected_subtask_entry()
             if entry:
-                path, _, _ = entry
+                path, _, _, _, _ = entry
                 target, parent, idx = _find_subtask_by_path(self.current_task_detail.subtasks, path)
                 if target is None or idx is None:
                     return
@@ -3267,7 +3327,7 @@ class TaskTrackerTUI:
         if self.detail_mode and self.current_task_detail:
             entry = self._selected_subtask_entry()
             if entry:
-                path, st, _ = entry
+                path, st, _, _, _ = entry
                 desired = not st.completed
                 domain = self.current_task_detail.domain
                 ok, msg = self.manager.set_subtask(self.current_task_detail.id, 0, desired, domain, path=path)
@@ -3495,13 +3555,13 @@ class TaskTrackerTUI:
                 # Редактируем название подзадачи
                 entry = self._selected_subtask_entry()
                 if entry:
-                    _, st, _ = entry
+                    _, st, _, _, _ = entry
                     self.start_editing('subtask_title', st.title, self.detail_selected_index)
             else:
                 # В списке подзадач - редактируем название подзадачи
                 entry = self._selected_subtask_entry()
                 if entry:
-                    _, st, _ = entry
+                    _, st, _, _, _ = entry
                     self.start_editing('subtask_title', st.title, self.detail_selected_index)
         else:
             # В списке задач - редактируем название задачи

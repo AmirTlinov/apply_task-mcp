@@ -63,7 +63,7 @@ Mouse: wheel scrolls viewport, click selects, double-click opens details.
 - **Git-aware** — works from any subdirectory, always anchors to the project root.
 - **TUI + CLI** — human-friendly interface, deterministic JSON for automation.
 - **Keyboard & mouse parity** — dual-language hotkeys plus wheel + click navigation.
-- **Nested subtasks tree** — detail pane renders recursive subtasks with `--path` prefixes (e.g., `0.1.2`), all actions honor the tree.
+- **Nested subtasks tree** — detail pane renders recursive subtasks with `--path` prefixes (e.g., `0.1.2`), all actions honor the tree; use `←/→` in detail view to collapse/expand.
 - **Domain discipline** — tasks live in domain folders inside `.tasks/` (see [DOMAIN_STRUCTURE.md](DOMAIN_STRUCTURE.md)).
 - **Guided quality gates** — criteria/tests/blockers must be proven before OK status.
 - **Templates & validators** — `apply_task template subtasks --count N` generates JSON stubs, flagship validation guarantees ≥3 detailed subtasks, ≥85% coverage.

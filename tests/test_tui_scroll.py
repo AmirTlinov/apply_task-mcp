@@ -81,7 +81,7 @@ def test_subtasks_view_stays_within_height(tmp_path):
     lines = rendered.split("\n")
 
     assert len(lines) <= tui.get_terminal_height()
-    assert f"> {tui.detail_selected_index} " in rendered
+    assert f">  {tui.detail_selected_index} " in rendered
     assert "↑" in rendered and "↓" in rendered
 
 
@@ -99,8 +99,31 @@ def test_detail_renders_nested_subtasks_with_paths(tmp_path):
     rendered = "".join(text for _, text in tui.get_detail_text())
 
     assert "ПОДЗАДАЧИ (0/2 завершено)" in rendered
-    assert "| > 0 " in rendered  # родитель
-    assert "|     0.0 " in rendered  # вложенная подзадача с отступом
+    assert "| >▾ 0 " in rendered  # родитель с индикатором раскрытия
+    assert "|      0.0 " in rendered  # вложенная подзадача с отступом
+
+
+def test_collapse_expand_toggles_visibility(tmp_path):
+    tui = build_tui(tmp_path)
+    detail = TaskDetail(id="TASK-NEST", title="Detail", status="WARN")
+    child = SubTask(False, "Child item", success_criteria=["c"], tests=["t"], blockers=["b"])
+    parent = SubTask(False, "Parent item", success_criteria=["p"], tests=["t"], blockers=["b"], children=[child])
+    detail.subtasks = [parent]
+    tui.detail_mode = True
+    tui.current_task_detail = detail
+    tui._rebuild_detail_flat()
+
+    rendered = "".join(text for _, text in tui.get_detail_text())
+    assert "0.0" in rendered  # expanded by default
+
+    tui._toggle_collapse_selected(expand=False)
+    collapsed = "".join(text for _, text in tui.get_detail_text())
+    assert "0.0" not in collapsed
+    assert ">▸ 0 " in collapsed  # свернутый индикатор
+
+    tui._toggle_collapse_selected(expand=True)
+    expanded = "".join(text for _, text in tui.get_detail_text())
+    assert "0.0" in expanded
 
 
 def test_selection_stops_at_last_item(tmp_path):
@@ -118,11 +141,11 @@ def test_selection_stops_at_last_item(tmp_path):
     for _ in range(3):
         tui.move_vertical_selection(1)
         rendered = "".join(text for _, text in tui.get_detail_text())
-        assert f"> {tui.detail_selected_index} " in rendered
+        assert f">  {tui.detail_selected_index} " in rendered
 
     assert tui.detail_selected_index == len(detail.subtasks) - 1
     # подсветка последнего элемента остаётся на экране
-    assert f"> {tui.detail_selected_index} " in rendered
+    assert f">  {tui.detail_selected_index} " in rendered
 
 
 def test_last_subtask_visible_with_long_header(tmp_path):
@@ -142,7 +165,7 @@ def test_last_subtask_visible_with_long_header(tmp_path):
     tui._set_footer_height(0)
 
     rendered = "".join(text for _, text in tui.get_detail_text())
-    assert f"> {tui.detail_selected_index} " in rendered  # последний виден
+    assert f">  {tui.detail_selected_index} " in rendered  # последний виден
     # нижний маркер может отсутствовать, но последний элемент должен быть в окне
 
 
