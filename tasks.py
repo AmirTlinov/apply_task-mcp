@@ -3676,6 +3676,9 @@ class TaskTrackerTUI:
         add_block(rows, " Время: ", f"{start_time} → {finish_time}", max_lines=1)
         add_block(rows, " Длительность: ", duration_value, max_lines=1)
         add_block(rows, " Описание: ", desc, max_lines=2)
+        if detail and detail.blockers:
+            blockers_snippet = "; ".join(detail.blockers)
+            add_block(rows, " Блокеры: ", blockers_snippet, max_lines=2)
         legend_text = "◉=Done/In Progress | ◎=Backlog | %=progress | Σ=subtasks | ?=help" + scroll_info
         add_block(rows, " Легенда: ", legend_text, max_lines=1)
         while len(rows) < 7:
