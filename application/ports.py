@@ -20,3 +20,6 @@ class TaskRepository(Protocol):
 
     def delete(self, task_id: str, domain: str = "") -> bool:
         ...
+
+    def move(self, task_id: str, new_domain: str, current_domain: str = "") -> bool:
+        ...

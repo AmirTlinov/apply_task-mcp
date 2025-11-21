@@ -23,7 +23,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 from contextlib import contextmanager
-from fnmatch import fnmatch
 
 import yaml
 import textwrap
@@ -688,15 +687,7 @@ class TaskManager:
 
     def move_task(self, task_id: str, new_domain: str) -> bool:
         target_domain = self.sanitize_domain(new_domain)
-        detail = self.load_task(task_id)
-        if not detail:
-            return False
-        old_domain = detail.domain
-        detail.domain = target_domain
-        self.save_task(detail)
-        if old_domain != target_domain:
-            self.repo.delete(task_id, old_domain)
-        return True
+        return self.repo.move(task_id, target_domain)
 
     def move_glob(self, pattern: str, new_domain: str) -> int:
         target_domain = self.sanitize_domain(new_domain)
@@ -731,6 +722,9 @@ class TaskManager:
                 if self.repo.delete(detail.id, detail.domain):
                     removed += 1
         return matched, removed
+
+    def delete_task(self, task_id: str, domain: str = "") -> bool:
+        return self.repo.delete(task_id, domain)
 
 
 def save_last_task(task_id: str, domain: str = "") -> None:
@@ -3296,10 +3290,7 @@ class TaskTrackerTUI:
             # В списке задач - удаляем задачу
             if self.filtered_tasks:
                 task = self.filtered_tasks[self.selected_index]
-                # Удаляем файл задачи
-                task_file = Path(task.task_file)
-                if task_file.exists():
-                    task_file.unlink()
+                self.manager.delete_task(task.id, task.domain)
                 # Корректируем индекс
                 if self.selected_index >= len(self.filtered_tasks) - 1:
                     self.selected_index = max(0, len(self.filtered_tasks) - 2)

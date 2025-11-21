@@ -100,3 +100,19 @@ def test_delete_removes_file(tmp_path: Path):
     assert repo.load(task.id, task.domain) is not None
     assert repo.delete(task.id, task.domain)
     assert repo.load(task.id, task.domain) is None
+
+
+def test_move_updates_domain_and_path(tmp_path: Path):
+    repo = FileTaskRepository(tmp_path / ".tasks")
+    task = _sample_task()
+    task.id = "TASK-060"
+    task.domain = "phase1/api"
+    repo.save(task)
+
+    assert repo.move(task.id, "phase2/api", current_domain=task.domain)
+    moved = repo.load(task.id, "phase2/api")
+    assert moved is not None
+    assert moved.domain == "phase2/api"
+    # старый путь удалён
+    old_path = (tmp_path / ".tasks" / "phase1" / "api" / f"{task.id}.task")
+    assert not old_path.exists()

@@ -1,7 +1,6 @@
 import time
 from pathlib import Path
 from typing import List, Optional
-from fnmatch import fnmatch
 
 from core import TaskDetail
 from application.ports import TaskRepository
@@ -85,3 +84,20 @@ class FileTaskRepository(TaskRepository):
             except OSError:
                 continue
         return deleted
+
+    def move(self, task_id: str, new_domain: str, current_domain: str = "") -> bool:
+        task = self.load(task_id, current_domain)
+        if not task:
+            return False
+        old_path = Path(task.filepath)
+        task.domain = new_domain
+        dest_path = self._resolve_path(task_id, new_domain)
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        # переписываем с обновленной метой
+        dest_path.write_text(task.to_file_content(), encoding="utf-8")
+        if old_path.exists() and old_path != dest_path:
+            try:
+                old_path.unlink()
+            except OSError:
+                pass
+        return True
