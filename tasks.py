@@ -2322,7 +2322,7 @@ class TaskTrackerTUI:
         return None
 
     def _sync_status_summary(self) -> str:
-        sync = self.manager.sync_service if hasattr(self, "manager") else get_projects_sync()
+        sync = self.manager.sync_service if hasattr(self, "manager") else _get_sync_service()
         cfg = getattr(sync, "config", None)
         if not cfg:
             return "OFF"
@@ -2334,7 +2334,7 @@ class TaskTrackerTUI:
         return f"{prefix} {target}"
 
     def _sync_indicator_fragments(self, filter_flash: bool = False) -> List[Tuple[str, str]]:
-        sync = self.manager.sync_service if hasattr(self, "manager") else get_projects_sync()
+        sync = self.manager.sync_service if hasattr(self, "manager") else _get_sync_service()
         cfg = getattr(sync, "config", None)
         snapshot = self._project_config_snapshot()
         enabled = bool(sync and sync.enabled and cfg and snapshot["config_enabled"])
