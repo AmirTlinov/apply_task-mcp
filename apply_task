@@ -226,6 +226,7 @@ def main():
         'projects-auth',
         'projects-webhook',
         'projects-webhook-serve',
+        'move',
     ]
 
     if cmd not in known_commands:
@@ -279,6 +280,8 @@ def main():
         return run_tasks_py(['projects-webhook'] + args, verbose=verbose)
     elif cmd == 'projects-webhook-serve':
         return run_tasks_py(['projects-webhook-serve'] + args, verbose=verbose)
+    elif cmd == 'move':
+        return run_tasks_py(['move'] + args, verbose=verbose)
     elif cmd == 'task':
         return run_tasks_py(['task'] + args, verbose=verbose)
     elif cmd == 'edit':
@@ -384,13 +387,14 @@ def main():
                 "start|done|fail — дисциплина WARN/OK/FAIL для текущей или указанной задачи.",
                 "subtask TASK-ID --add/--criteria/--tests/--blockers — управление подзадачами, описания строго на русском.",
                 "clean [--tag/--status/--phase] [--dry-run] — безопасное удаление по фильтрам.",
-                "next|quick|suggest|sg — подсказки по приоритету.",
-                "template subtasks --count N — генерация JSON с подзадачами, тестовым планом и требованиями к документации.",
-                "ok|note|bulk — макросы для чекпоинтов ('.'/last → последняя задача, bulk поддерживает --task).",
-                "checkpoint [TASK] — пошаговый мастер критериев/тестов/блокеров (есть режим --auto).",
-                "history [N] / replay N — история и повтор команд.",
-                "lint [--fix] — проверка структуры .tasks.",
-            ],
+            "next|quick|suggest|sg — подсказки по приоритету.",
+            "template subtasks --count N — генерация JSON с подзадачами, тестовым планом и требованиями к документации.",
+            "ok|note|bulk — макросы для чекпоинтов ('.'/last → последняя задача, bulk поддерживает --task).",
+            "checkpoint [TASK] — пошаговый мастер критериев/тестов/блокеров (есть режим --auto).",
+            "history [N] / replay N — история и повтор команд.",
+            "move --glob '*.task' --to phaseX — пакетное перемещение; clean --glob '*.task' или --tag/--status — пакетное удаление.",
+            "lint [--fix] — проверка структуры .tasks.",
+        ],
             "discipline": [
                 "Каждая задача дробится на атомарные результаты (<1 рабочего дня).",
                 "Критерии успеха и описания обязательно формулируются на русском и содержат измеримые метрики.",
