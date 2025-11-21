@@ -2854,7 +2854,6 @@ class TaskTrackerTUI:
 
         # Header
         result.append(('class:border', '+' + '='*content_width + '+\n'))
-        result.append(('class:border', '+' + '-'*content_width + '+\n'))
         result.append(('class:border', '| '))
         result.append(('class:header', f'{detail.id} '))
         result.append(('class:text.dim', '| '))
