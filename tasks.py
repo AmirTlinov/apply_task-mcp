@@ -1408,9 +1408,16 @@ class TaskTrackerTUI:
             if self.detail_mode:
                 entry = self._selected_subtask_entry()
                 if entry:
-                    _, _, _, collapsed, has_children = entry
+                    path, _, _, collapsed, has_children = entry
                     if has_children and not collapsed:
                         self._toggle_collapse_selected(expand=False)
+                        return
+                    # go one level up in tree if possible
+                    if "." in path:
+                        parent_path = ".".join(path.split(".")[:-1])
+                        self._select_subtask_by_path(parent_path)
+                        self._ensure_detail_selection_visible(len(self.detail_flat_subtasks))
+                        self.force_render()
                         return
                 self.exit_detail_view()
                 return
