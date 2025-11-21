@@ -146,6 +146,31 @@ def test_collapse_state_persists_per_task(tmp_path):
     assert "0.0" not in reopened
 
 
+def test_selected_subtask_details_rendered(tmp_path):
+    tui = build_tui(tmp_path)
+    detail = TaskDetail(id="TASK-DETAIL", title="Detail", status="WARN")
+    detail.subtasks = [
+        SubTask(
+            False,
+            "Sub with data",
+            success_criteria=["crit A"],
+            tests=["test A"],
+            blockers=["block A"],
+        ),
+        SubTask(False, "Other"),
+    ]
+    tui.detail_mode = True
+    tui.current_task_detail = detail
+    tui._rebuild_detail_flat()
+    tui.detail_selected_index = 0
+    rendered = "".join(text for _, text in tui.get_detail_text())
+
+    assert "ДЕТАЛИ ПОДЗАДАЧИ" in rendered
+    assert "crit A" in rendered
+    assert "test A" in rendered
+    assert "block A" in rendered
+
+
 def test_selection_stops_at_last_item(tmp_path):
     tui = build_tui(tmp_path)
     tui.get_terminal_height = lambda: 12
