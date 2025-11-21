@@ -2878,7 +2878,6 @@ class TaskTrackerTUI:
             result.append(('class:text.dim', ' ' * padding_needed))
         result.append(('class:border', ' |\n'))
         result.append(('class:border', '+' + '='*content_width + '+\n'))
-
         # Title - wrap if needed, apply horizontal scroll
         title_display = detail.title
         if self.horizontal_offset > 0:
@@ -2918,10 +2917,13 @@ class TaskTrackerTUI:
                         desc_lines.append(('class:border', '| '))
                         desc_lines.append(('class:text', ch))
                         desc_lines.append(('class:border', ' |\n'))
-                budget -= max(0, len(desc_lines) // 3)
+                    budget -= max(0, len(desc_lines) // 3)
                 if detail.blockers and budget > 0:
+                    block_lines.append(('class:border', '| '))
+                    block_lines.append(('class:text.dim', ' Блокеры:'.ljust(content_width - 2)))
+                    block_lines.append(('class:border', ' |\n'))
                     blockers_text = "; ".join(detail.blockers)
-                    wrapped_bl = self._wrap_with_prefix(blockers_text, content_width - 2, " Блокеры: ")
+                    wrapped_bl = self._wrap_with_prefix(blockers_text, content_width - 2, "  ")
                     for ch, _ in wrapped_bl[:max(1, min(len(wrapped_bl), budget))]:
                         block_lines.append(('class:border', '| '))
                         block_lines.append(('class:text', ch))
