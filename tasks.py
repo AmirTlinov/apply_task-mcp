@@ -5041,18 +5041,16 @@ def cmd_projects_sync_cli(args) -> int:
 
 def _projects_status_payload() -> Dict[str, Any]:
     sync_service = _get_sync_service()
-    sync = sync_service._sync
     try:
-        if sync.enabled:
-            sync._ensure_project_metadata()
+        sync_service.ensure_metadata()
     except Exception:
         pass
-    cfg = sync.config
+    cfg = sync_service.config
     owner = (cfg.owner if cfg and cfg.owner else "") if cfg else ""
     repo = (cfg.repo if cfg and cfg.repo else "") if cfg else ""
     number = cfg.number if cfg else None
-    project_id = getattr(sync, "project_id", None)
-    project_url = sync.project_url() if hasattr(sync, "project_url") else None
+    project_id = sync_service.project_id
+    project_url = sync_service.project_url()
     workers = cfg.workers if cfg else None
     user_token = get_user_token()
     token_saved = bool(user_token)
@@ -5060,14 +5058,15 @@ def _projects_status_payload() -> Dict[str, Any]:
     env_primary = os.getenv("APPLY_TASK_GITHUB_TOKEN")
     env_secondary = os.getenv("GITHUB_TOKEN") if not env_primary else None
     token_env = "APPLY_TASK_GITHUB_TOKEN" if env_primary else ("GITHUB_TOKEN" if env_secondary else "")
-    token_present = bool(sync.token)
+    token_present = sync_service.token_present
     auto_sync = bool(cfg and cfg.enabled)
-    if cfg and cfg.project_type == "user":
-        target_label = f"{owner}#{number}" if owner and number else "—"
-    else:
-        target_label = f"{owner}/{repo}#{number}" if owner and repo and number else "—"
-    detect_error = getattr(sync, "detect_error", None)
-    runtime_reason = sync.runtime_disabled_reason
+    target_label = (
+        f"{owner}#{number}" if (cfg and cfg.project_type == "user") else f"{owner}/{repo}#{number}"
+        if owner and repo and number
+        else "—"
+    )
+    detect_error = sync_service.detect_error
+    runtime_reason = sync_service.runtime_disabled_reason
     status_reason = detect_error or runtime_reason
     if not status_reason:
         if not cfg:
@@ -5076,6 +5075,7 @@ def _projects_status_payload() -> Dict[str, Any]:
             status_reason = "auto-sync выключена"
         elif not token_present:
             status_reason = "нет PAT"
+    rate = sync_service.rate_info() or {}
     payload = {
         "owner": owner,
         "repo": repo,
@@ -5083,19 +5083,19 @@ def _projects_status_payload() -> Dict[str, Any]:
         "project_id": project_id,
         "project_url": project_url,
         "workers": workers,
-        "rate_remaining": getattr(sync._rate_limiter, "last_remaining", None) if getattr(sync, "_rate_limiter", None) else None,
-        "rate_reset": getattr(sync._rate_limiter, "last_reset_epoch", None) if getattr(sync, "_rate_limiter", None) else None,
-        "rate_reset_human": datetime.fromtimestamp(getattr(sync._rate_limiter, "last_reset_epoch", 0), tz=timezone.utc).strftime("%H:%M:%S") if getattr(sync, "_rate_limiter", None) and getattr(sync._rate_limiter, "last_reset_epoch", None) else None,
-        "rate_wait": getattr(sync._rate_limiter, "last_wait", None) if getattr(sync, "_rate_limiter", None) else None,
+        "rate_remaining": rate.get("remaining"),
+        "rate_reset": rate.get("reset_epoch"),
+        "rate_reset_human": datetime.fromtimestamp(rate["reset_epoch"], tz=timezone.utc).strftime("%H:%M:%S") if rate.get("reset_epoch") else None,
+        "rate_wait": rate.get("wait"),
         "target_label": target_label,
         "target_hint": "Определяется автоматически из git remote origin",
         "auto_sync": auto_sync,
-        "runtime_enabled": sync.enabled,
+        "runtime_enabled": sync_service.enabled,
         "runtime_reason": runtime_reason,
         "detect_error": detect_error,
         "status_reason": status_reason or "",
-        "last_pull": sync.last_pull,
-        "last_push": sync.last_push,
+        "last_pull": sync_service.last_pull,
+        "last_push": sync_service.last_push,
         "token_saved": token_saved,
         "token_preview": token_preview,
         "token_env": token_env,

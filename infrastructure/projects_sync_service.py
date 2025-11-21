@@ -34,6 +34,58 @@ class ProjectsSyncService(SyncService):
         clone.project_fields = self._sync.project_fields
         return ProjectsSyncService(clone)
 
+    @property
+    def last_pull(self):
+        return getattr(self._sync, "last_pull", None)
+
+    @property
+    def last_push(self):
+        return getattr(self._sync, "last_push", None)
+
+    @property
+    def project_id(self):
+        return getattr(self._sync, "project_id", None)
+
+    def project_url(self):
+        return self._sync.project_url() if hasattr(self._sync, "project_url") else None
+
+    @property
+    def runtime_disabled_reason(self):
+        return getattr(self._sync, "runtime_disabled_reason", None)
+
+    @property
+    def detect_error(self):
+        return getattr(self._sync, "detect_error", None)
+
+    @property
+    def token_present(self) -> bool:
+        return bool(getattr(self._sync, "token", None))
+
+    def ensure_metadata(self) -> None:
+        if hasattr(self._sync, "_ensure_project_metadata"):
+            self._sync._ensure_project_metadata()
+
+    def rate_info(self) -> dict:
+        limiter = getattr(self._sync, "_rate_limiter", None)
+        if not limiter:
+            return {}
+        return {
+            "remaining": getattr(limiter, "last_remaining", None),
+            "reset_epoch": getattr(limiter, "last_reset_epoch", None),
+            "wait": getattr(limiter, "last_wait", None),
+        }
+    @last_push.setter
+    def last_push(self, value):
+        if hasattr(self._sync, "last_push"):
+            try:
+                self._sync.last_push = value
+            except Exception:
+                pass
+
+    def serve_webhook(self, body: str, signature: Optional[str], secret: Optional[str]) -> Dict[str, Any]:
+        # alias to handle_webhook for protocol completeness
+        return self.handle_webhook(body, signature, secret)
+
     def handle_webhook(self, body: str, signature: Optional[str], secret: Optional[str]) -> Dict[str, Any]:
         if not hasattr(self._sync, "handle_webhook"):
             raise NotImplementedError
