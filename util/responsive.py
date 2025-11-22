@@ -19,6 +19,7 @@ class ColumnLayout:
 
     def _base_min_widths(self, desired: Optional[Dict[str, int]] = None) -> Dict[str, int]:
         base = {
+            'idx': 3,
             'stat': self.stat_w,
             'progress': self.prog_w,
             'subtasks': self.subt_w,
@@ -78,7 +79,7 @@ class ColumnLayout:
         total = sum(widths.values()) + separators
         if total > term_width:
             overflow = total - term_width
-            min_limits = {'stat': 1, 'progress': 2, 'subtasks': 2, 'title': 4, 'notes': 4, 'context': 4}
+            min_limits = {'idx': 1, 'stat': 1, 'progress': 2, 'subtasks': 2, 'title': 2, 'notes': 2, 'context': 2}
             for col in reversed(self.columns):
                 reducible = max(0, widths[col] - min_limits.get(col, 1))
                 if reducible <= 0:
@@ -96,12 +97,12 @@ class ResponsiveLayoutManager:
     """Responsive layout selector for TUI tables."""
 
     LAYOUTS = [
-        ColumnLayout(min_width=140, columns=['stat', 'title', 'progress', 'subtasks'], stat_w=4, prog_w=8, subt_w=8, title_min=22),
-        ColumnLayout(min_width=110, columns=['stat', 'title', 'progress', 'subtasks'], stat_w=3, prog_w=7, subt_w=7, title_min=18),
-        ColumnLayout(min_width=90, columns=['stat', 'title', 'progress', 'subtasks'], stat_w=3, prog_w=6, subt_w=6, title_min=16),
-        ColumnLayout(min_width=72, columns=['stat', 'title', 'progress', 'subtasks'], stat_w=2, prog_w=5, subt_w=5, title_min=12),
-        ColumnLayout(min_width=56, columns=['stat', 'title', 'progress'], stat_w=2, prog_w=5, title_min=12),
-        ColumnLayout(min_width=0, columns=['stat', 'title'], stat_w=2, title_min=10),
+        ColumnLayout(min_width=140, columns=['idx', 'stat', 'title', 'progress', 'subtasks'], stat_w=4, prog_w=8, subt_w=8, title_min=22),
+        ColumnLayout(min_width=110, columns=['idx', 'stat', 'title', 'progress', 'subtasks'], stat_w=3, prog_w=7, subt_w=7, title_min=18),
+        ColumnLayout(min_width=90, columns=['idx', 'stat', 'title', 'progress', 'subtasks'], stat_w=3, prog_w=6, subt_w=6, title_min=16),
+        ColumnLayout(min_width=72, columns=['idx', 'stat', 'title', 'progress', 'subtasks'], stat_w=2, prog_w=5, subt_w=5, title_min=12),
+        ColumnLayout(min_width=56, columns=['idx', 'stat', 'title', 'progress'], stat_w=2, prog_w=5, title_min=12),
+        ColumnLayout(min_width=0, columns=['idx', 'stat', 'title'], stat_w=2, title_min=10),
     ]
 
     @classmethod

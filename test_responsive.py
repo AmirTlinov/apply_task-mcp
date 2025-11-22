@@ -22,7 +22,7 @@ def test_layout_selection():
     for width in test_cases:
         layout = ResponsiveLayoutManager.select_layout(width)
         cols = layout.columns
-        assert cols[0] == 'stat'
+        assert cols[0] == 'idx'
         assert len(cols) >= prev_len  # ширина растёт — колонок не становится меньше
         if width >= 72:
             assert 'subtasks' in cols
@@ -31,7 +31,7 @@ def test_layout_selection():
             assert 'progress' in cols
             assert 'subtasks' not in cols
         else:
-            assert cols == ['stat', 'title']
+            assert cols == ['idx', 'stat', 'title']
         prev_len = len(cols)
         status = "✓ OK"
         print(f"{width:<10} | {str(cols):<60} | {status}")

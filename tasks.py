@@ -3407,6 +3407,7 @@ class TaskTrackerTUI:
         result.append((header_style, '|'))
 
         column_labels = {
+            'idx': ('#', widths.get('idx', 3)),
             'stat': ('◉', widths.get('stat', 3)),
             'title': (self._t("TABLE_HEADER_TASK"), widths.get('title', 20)),
             'progress': (self._t("TABLE_HEADER_PROGRESS"), widths.get('progress', 4)),
@@ -3414,6 +3415,7 @@ class TaskTrackerTUI:
         }
 
         header_align = {
+            'idx': 'center',
             'stat': 'center',
             'progress': 'center',
             'subtasks': 'center',
@@ -3442,6 +3444,9 @@ class TaskTrackerTUI:
 
             # Подготовка данных для колонок
             cell_data = {}
+
+            if 'idx' in layout.columns:
+                cell_data['idx'] = (self._format_cell(str(idx), widths['idx'], align='center'), 'class:text.dim')
 
             if 'stat' in layout.columns:
                 if compact_status_mode:
