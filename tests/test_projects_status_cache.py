@@ -86,3 +86,35 @@ def test_projects_status_payload_error_and_token(monkeypatch):
     payload2 = cache.projects_status_payload(lambda: sync)
     assert payload2["token_present"] is True
     assert payload2["status_reason"] == "auto-sync выключена"
+
+
+def test_projects_status_payload_missing_config_and_token(monkeypatch):
+    class NoConfigSync:
+        def __init__(self):
+            self.config = None
+            self.enabled = True
+            self.token_present = False
+
+        def ensure_metadata(self):
+            pass
+
+        def rate_info(self):
+            return {}
+
+        def project_url(self):
+            return None
+
+    cache.invalidate_cache()
+    payload = cache.projects_status_payload(lambda: NoConfigSync())
+    assert payload["status_reason"] == "нет конфигурации"
+
+    class NoTokenSync(NoConfigSync):
+        def __init__(self):
+            super().__init__()
+            self.config = type("Cfg", (), {"enabled": True, "owner": "", "repo": "", "number": None, "project_type": "repo", "workers": None})
+            self.token_present = False
+            self.enabled = True
+
+    cache.invalidate_cache()
+    payload2 = cache.projects_status_payload(lambda: NoTokenSync())
+    assert payload2["status_reason"] == "нет PAT"

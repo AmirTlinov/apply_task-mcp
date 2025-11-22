@@ -43,6 +43,7 @@ def test_domain_derivation_and_parsing(tmp_path, monkeypatch):
     assert tags == ["fast"]
     assert deps == ["TASK-123"]
     assert normalize_task_id("5") == "TASK-005"
+    assert normalize_task_id("TASK-9") == "TASK-009"
 
 
 def test_next_recommendations_order_and_remember():
@@ -91,6 +92,33 @@ def test_quick_overview_filters_and_remembers():
     assert calls == [("TASK-2", "")]
     assert [entry["id"] for entry in payload["top"]] == ["TASK-2", "TASK-1"]
     assert [t.id for t in top] == ["TASK-2", "TASK-1"]
+
+
+def test_last_task_missing_raises(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ValueError):
+        resolve_task_reference(None, None, None, None)
+
+
+def test_last_task_no_domain(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    save_last_task("TASK-42", "")
+    tid, dom = resolve_task_reference(".", None, None, None)
+    assert tid == "TASK-042"
+    assert dom == ""
+
+
+def test_effective_lang_env(monkeypatch):
+    from core.desktop.devtools.interface import i18n
+
+    monkeypatch.setenv("APPLY_TASK_LANG", "fr")
+    assert i18n.effective_lang() == "fr"
+    monkeypatch.delenv("APPLY_TASK_LANG")
+    monkeypatch.setenv("PYTEST_CURRENT_TEST", "x")
+    assert i18n.effective_lang("es") == "en"
+    monkeypatch.delenv("PYTEST_CURRENT_TEST")
+    monkeypatch.setattr(i18n, "get_user_lang", lambda: "zz")
+    assert i18n.effective_lang() == "en"
 
 
 def test_structured_response_variants(capsys):
