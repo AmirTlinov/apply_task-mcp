@@ -6,7 +6,7 @@
 import sys
 sys.path.insert(0, '.')
 
-from tasks import ResponsiveLayoutManager, ColumnLayout
+from util.responsive import ResponsiveLayoutManager, ColumnLayout
 
 
 def test_layout_selection():
