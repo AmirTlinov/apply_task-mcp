@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """
-tasks.py — flagship-уровень менеджер задач.
+tasks.py — flagship task manager (single-file CLI/TUI).
 
-Все задачи хранятся только в каталоге .tasks (по одной задаче в файле .task).
-Файл todo.machine.md больше не требуется и нигде не используется.
+All tasks live under .tasks/ (one .task file per task).
 """
 
 import argparse
@@ -379,23 +378,23 @@ def current_timestamp() -> str:
 
 def validate_pat_token_http(token: str, timeout: float = 10.0) -> Tuple[bool, str]:
     if not token:
-        return False, "PAT отсутствует"
+        return False, "PAT missing"
     query = "query { viewer { login } }"
     headers = {"Authorization": f"bearer {token}", "Accept": "application/vnd.github+json"}
     try:
         resp = requests.post(GITHUB_GRAPHQL, json={"query": query}, headers=headers, timeout=timeout)
     except requests.RequestException as exc:
-        return False, f"Сеть недоступна: {exc}"
+        return False, f"Network unavailable: {exc}"
     if resp.status_code >= 400:
-        return False, f"GitHub ответил {resp.status_code}: {resp.text[:120]}"
+        return False, f"GitHub replied {resp.status_code}: {resp.text[:120]}"
     payload = resp.json()
     if payload.get("errors"):
-        err = payload["errors"][0].get("message", "Неизвестная ошибка")
+        err = payload["errors"][0].get("message", "Unknown error")
         return False, err
     login = ((payload.get("data") or {}).get("viewer") or {}).get("login")
     if not login:
-        return False, "Ответ без viewer"
-    return True, f"PAT активен (viewer={login})"
+        return False, "Response missing viewer"
+    return True, f"PAT valid (viewer={login})"
 
 
 from prompt_toolkit.application import Application
@@ -432,22 +431,22 @@ def _iso_timestamp() -> str:
 
 
 def _load_input_source(raw: str, label: str) -> str:
-    """Загружает текстовый payload из строки, файла или STDIN."""
+    """Load text payload from string, file, or STDIN."""
     source = (raw or "").strip()
     if not source:
         return source
     if source == "-":
         data = sys.stdin.read()
         if not data.strip():
-            raise SubtaskParseError(f"STDIN пуст: передай {label}")
+            raise SubtaskParseError(f"STDIN is empty: provide {label}")
         return data
     if source.startswith("@"):
         path_str = source[1:].strip()
         if not path_str:
-            raise SubtaskParseError(f"Укажи путь к {label} после символа '@'")
+            raise SubtaskParseError(f"Specify path to {label} after '@'")
         file_path = Path(path_str).expanduser()
         if not file_path.exists():
-            raise SubtaskParseError(f"Файл не найден: {file_path}")
+            raise SubtaskParseError(f"File not found: {file_path}")
         return file_path.read_text(encoding="utf-8")
     return source
 
