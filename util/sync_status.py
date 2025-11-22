@@ -2,7 +2,7 @@ from typing import Dict, List, Tuple
 
 
 def sync_status_fragments(snapshot: Dict[str, str], enabled: bool, flash: bool, filter_flash: bool) -> List[Tuple[str, str]]:
-    """Единый формат отображения статуса синхронизации."""
+    """Unified status label for Git Projects."""
     entries: List[Tuple[str, str]] = []
     has_issue = bool(snapshot.get("status_reason"))
     if flash and not filter_flash:
