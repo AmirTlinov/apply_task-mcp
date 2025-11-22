@@ -2114,7 +2114,7 @@ class TaskTrackerTUI:
                 if self.filtered_tasks:
                     self.show_task_details(self.filtered_tasks[self.selected_index])
 
-        @kb.add("escape")
+        @kb.add("escape", eager=True)
         def _(event):
             if self.editing_mode:
                 # В режиме редактирования - отменить
