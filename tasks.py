@@ -1767,30 +1767,88 @@ class ColumnLayout:
     min_width: int
     columns: List[str]
     stat_w: int = 3
-    prog_w: int = 7
-    subt_w: int = 9
+    prog_w: int = 6
+    subt_w: int = 7
+    title_min: int = 16
+    notes_w: int = 12
+    context_w: int = 12
 
     def has_column(self, name: str) -> bool:
         return name in self.columns
 
-    def calculate_widths(self, term_width: int) -> Dict[str, int]:
-        """Рассчитывает динамические ширины для гибких колонок (title)"""
-        widths = {
+    def _base_min_widths(self, desired: Optional[Dict[str, int]] = None) -> Dict[str, int]:
+        base = {
             'stat': self.stat_w,
             'progress': self.prog_w,
             'subtasks': self.subt_w,
+            'title': self.title_min,
+            'notes': self.notes_w,
+            'context': self.context_w,
         }
+        result: Dict[str, int] = {}
+        for col in self.columns:
+            width = base.get(col, 8)
+            if desired and col in desired:
+                width = max(width, desired[col])
+            result[col] = max(1, width)
+        return result
 
-        # Подсчёт фиксированных колонок
-        fixed_width = sum(widths[col] for col in widths if col in self.columns)
-        separators = len(self.columns) + 1  # Количество |
+    def required_width(self, desired: Optional[Dict[str, int]] = None) -> int:
+        widths = self._base_min_widths(desired)
+        return sum(widths.values()) + len(self.columns) + 1
 
-        remaining = max(term_width - fixed_width - separators, 20)
+    def calculate_widths(self, term_width: int, desired: Optional[Dict[str, int]] = None) -> Dict[str, int]:
+        """Рассчитывает ширины колонок так, чтобы таблица умещалась в терминал."""
+        separators = len(self.columns) + 1  # количество вертикальных разделителей
+        usable_width = max(len(self.columns), term_width - separators)
+        widths = self._base_min_widths(desired)
+        min_total = sum(widths.values())
 
-        # Распределяем оставшееся пространство
-        if 'title' in self.columns:
-            # Заголовок получает всё оставшееся пространство
-            widths['title'] = max(20, remaining)
+        if min_total <= usable_width:
+            remaining = usable_width - min_total
+            flex_cols = [c for c in self.columns if c in ('title', 'notes', 'context', 'subtasks')]
+            if not flex_cols:
+                flex_cols = list(self.columns)
+            weights = {col: (3 if col == 'title' else 1) for col in flex_cols}
+            total_weight = max(1, sum(weights.values()))
+            distributed = 0
+            for col in flex_cols:
+                share = (remaining * weights[col]) // total_weight
+                widths[col] += share
+                distributed += share
+            leftover = remaining - distributed
+            if leftover and flex_cols:
+                widths[flex_cols[0]] += leftover
+        else:
+            deficit = min_total - usable_width
+            shrink_order = [c for c in self.columns if c != 'stat'] or list(self.columns)
+            min_limits = {'stat': max(2, self.stat_w - 1), 'progress': 2, 'subtasks': 3, 'title': 6, 'notes': 6, 'context': 6}
+            while deficit > 0 and shrink_order:
+                progressed = False
+                for col in shrink_order:
+                    limit = min_limits.get(col, 2)
+                    if widths[col] > limit:
+                        widths[col] -= 1
+                        deficit -= 1
+                        progressed = True
+                        if deficit == 0:
+                            break
+                if not progressed:
+                    break
+
+        total = sum(widths.values()) + separators
+        if total > term_width:
+            overflow = total - term_width
+            min_limits = {'stat': 1, 'progress': 2, 'subtasks': 2, 'title': 4, 'notes': 4, 'context': 4}
+            for col in reversed(self.columns):
+                reducible = max(0, widths[col] - min_limits.get(col, 1))
+                if reducible <= 0:
+                    continue
+                take = min(reducible, overflow)
+                widths[col] -= take
+                overflow -= take
+                if overflow == 0:
+                    break
 
         return widths
 
@@ -1799,20 +1857,20 @@ class ResponsiveLayoutManager:
     """Управляет адаптивными layout в зависимости от ширины терминала"""
 
     LAYOUTS = [
-        ColumnLayout(min_width=200, columns=['stat', 'title', 'progress', 'subtasks']),
-        ColumnLayout(min_width=150, columns=['stat', 'title', 'progress', 'subtasks']),
-        ColumnLayout(min_width=120, columns=['stat', 'title', 'progress', 'subtasks']),
-        ColumnLayout(min_width=95, columns=['stat', 'title', 'progress', 'subtasks']),
-        ColumnLayout(min_width=75, columns=['stat', 'title', 'progress', 'subtasks']),
-        ColumnLayout(min_width=55, columns=['stat', 'title', 'progress', 'subtasks']),
-        ColumnLayout(min_width=0, columns=['stat', 'progress', 'title', 'subtasks'], stat_w=3, prog_w=6),
+        ColumnLayout(min_width=140, columns=['stat', 'title', 'progress', 'subtasks'], stat_w=4, prog_w=8, subt_w=8, title_min=22),
+        ColumnLayout(min_width=110, columns=['stat', 'title', 'progress', 'subtasks'], stat_w=3, prog_w=7, subt_w=7, title_min=18),
+        ColumnLayout(min_width=90, columns=['stat', 'title', 'progress', 'subtasks'], stat_w=3, prog_w=6, subt_w=6, title_min=16),
+        ColumnLayout(min_width=72, columns=['stat', 'title', 'progress', 'subtasks'], stat_w=2, prog_w=5, subt_w=5, title_min=12),
+        ColumnLayout(min_width=56, columns=['stat', 'title', 'progress'], stat_w=2, prog_w=5, title_min=12),
+        ColumnLayout(min_width=0, columns=['stat', 'title'], stat_w=2, title_min=10),
     ]
 
     @classmethod
     def select_layout(cls, term_width: int) -> ColumnLayout:
         """Выбирает подходящий layout для текущей ширины терминала"""
         for layout in cls.LAYOUTS:
-            if term_width >= layout.min_width:
+            effective_min = max(layout.min_width, layout.required_width())
+            if term_width >= effective_min:
                 return layout
         return cls.LAYOUTS[-1]
 
@@ -3392,8 +3450,9 @@ class TaskTrackerTUI:
         return text if self.horizontal_offset == 0 else ""
 
     def get_task_list_text(self) -> FormattedText:
+        term_width = max(1, self.get_terminal_width())
         if not self.filtered_tasks:
-            empty_width = min(80, self.get_terminal_width() - 4)
+            empty_width = min(term_width, max(10, min(80, term_width - 2)))
             self.task_row_map = []
             return FormattedText([
                 ('class:border', '+' + '-' * empty_width + '+\n'),
@@ -3402,17 +3461,15 @@ class TaskTrackerTUI:
             ])
 
         result: List[Tuple[str, str]] = []
-        term_width = self.get_terminal_width()
         self.task_row_map = []
         line_counter = 0
 
         # Выбор адаптивного layout
         layout = ResponsiveLayoutManager.select_layout(term_width)
-        widths = layout.calculate_widths(term_width)
-
+        desired_widths: Dict[str, int] = {}
         if layout.has_column('progress'):
             max_prog = max((len(f"{t.progress}%") for t in self.filtered_tasks), default=4)
-            widths['progress'] = max(max_prog, 2)
+            desired_widths['progress'] = max(3, max_prog)
         if layout.has_column('subtasks'):
             max_sub = 0
             for t in self.filtered_tasks:
@@ -3420,19 +3477,9 @@ class TaskTrackerTUI:
                     max_sub = max(max_sub, len(f"{t.subtasks_completed}/{t.subtasks_count}"))
                 else:
                     max_sub = max(max_sub, 1)
-            widths['subtasks'] = max(max_sub, 3)
+            desired_widths['subtasks'] = max(3, max_sub)
 
-        # растягиваем таблицу на ширину терминала
-        terminal_width = max(40, self.get_terminal_width())
-        total_columns = sum(widths.get(col, 0) for col in layout.columns)
-        separators = len(layout.columns) + 1  # '|' и '+'
-        target_total = max(total_columns, terminal_width - separators)
-        extra = max(0, target_total - total_columns)
-        if extra and 'title' in layout.columns:
-            widths['title'] = widths.get('title', 0) + extra
-        elif extra and layout.columns:
-            first = layout.columns[0]
-            widths[first] = widths.get(first, 0) + extra
+        widths = layout.calculate_widths(term_width, desired_widths)
 
         # Построение header line
         header_parts = []

@@ -2,7 +2,7 @@
 
 ## Summary
 
-The TUI now adapts to the terminal width, gradually hiding low-priority columns while keeping Stat, Title, Progress, and Subtasks visible as long as possible.
+The TUI now clamps the task table to the terminal width: columns shrink and reflow without breaking borders, keeping Stat, Title, Progress, and Subtasks visible down to tight viewports.
 
 ## Responsive layout system
 
@@ -11,14 +11,14 @@ The TUI now adapts to the terminal width, gradually hiding low-priority columns 
 
 | Width          | Columns rendered                                      |
 |----------------|-------------------------------------------------------|
-| < 70 chars     | Stat, Title                                           |
-| 70–89          | + Progress                                            |
-| 90–109         | Stat, Title, Progress                                 |
-| 110–149        | + Subtasks                                            |
-| 150–179        | + Notes                                               |
-| ≥ 180          | + Context (full view)                                 |
+| < 56 chars     | Stat, Title                                           |
+| 56–71          | Stat, Title, Progress                                 |
+| 72–89          | Stat, Title, Progress, Subtasks (compact)             |
+| 90–109         | Stat, Title, Progress, Subtasks (balanced)            |
+| 110–139        | Stat, Title, Progress, Subtasks (roomy)               |
+| ≥ 140          | Stat, Title, Progress, Subtasks (wide)                |
 
-Subtasks remain visible down to 80 px thanks to the compact layout (see [SUBTASKS_VISIBILITY_FIX.md](SUBTASKS_VISIBILITY_FIX.md)).
+Subtasks remain visible down to 72 px thanks to the compact layout (see [SUBTASKS_VISIBILITY_FIX.md](SUBTASKS_VISIBILITY_FIX.md)).
 
 ## Task list refactor
 
@@ -27,20 +27,17 @@ Subtasks remain visible down to 80 px thanks to the compact layout (see [SUBTA
 - `_format_cell` ensures consistent padding.
 - `_get_status_info` centralizes icons/colors.
 - `_apply_scroll` trims content by the horizontal offset.
+- Width calculator distributes the remaining budget to flexible columns without exceeding the terminal size.
+- Numeric columns (progress, subtasks) honor the longest values and stay within the viewport.
 - Layout transitions are smooth; no abrupt jumps.
 
 ## Detail view width
 
 ```
-if term_width < 60:
-    content_width = max(40, term_width - 4)
-elif term_width < 100:
-    content_width = term_width - 8
-else:
-    content_width = min(int(term_width * 0.92), 160)
+content_width = max(40, term_width - 2)
 ```
 
-Subtask detail view reuses the same formula, so both panels now occupy ~92 % of the terminal width on large screens instead of being capped at 120 chars.
+Detail and single-subtask panels currently keep a two-character margin to preserve borders on narrow terminals. Further height/width tuning can be layered on top of this clamp.
 
 ## Architecture diagram
 
@@ -66,11 +63,11 @@ Detail View Width     ✓
 
 **70 chars**
 ```
-+----+--------------------------------------+-----+
-|Stat|Title                                 |Prog |
-+----+--------------------------------------+-----+
-| OK |Implement authentication              |100% |
-|WARN|Add database migrations               | 45% |
++----+----------------------------------+-----+
+|Stat|Title                             |Prog |
++----+----------------------------------+-----+
+| OK |Implement authentication          |100% |
+|WARN|Add database migrations           | 45% |
 ```
 
 **120 chars**
@@ -84,27 +81,25 @@ Detail View Width     ✓
 
 **180+ chars**
 ```
-+----+-------------------------+-----+------+----------+---------------------------+
-|Stat|Title                    |Prog |Subt  |Context   |Notes                      |
-+----+-------------------------+-----+------+----------+---------------------------+
-| OK |Implement auth           |100% | 6/6  |backend   |JWT tokens, refresh flow   |
-|WARN|Add DB migrations        | 45% | 3/8  |database  |Alembic setup needed       |
++----+--------------------------------------+-----+------+
+|Stat|Title                                 |Prog |Subt  |
++----+--------------------------------------+-----+------+
+| OK |Implement auth                        |100% | 6/6  |
+|WARN|Add DB migrations                     | 45% | 3/8  |
 ```
 
 ## Metrics
 
-- Removed 167 lines of duplicated logic.
-- Added ~120 lines (layout manager + helpers).
-- Net reduction: 47 lines.
-- Cyclomatic complexity of `get_task_list_text()` dropped from ~15 to ~8.
-- Layout selection cost is O(1) (6 breakpoints).
+- Table width is clamped to the terminal size even with long numbers.
+- Breakpoints collapse cleanly from 4 → 3 → 2 columns (72 px and 56 px thresholds).
+- Layout selection cost is O(1) across six breakpoints.
 
 ## Compatibility
 
 - CLI commands unchanged.
 - Themes and keyboard shortcuts work as before.
 - `.task` files are backward compatible.
-- Recommended terminal width ≥ 80 columns.
+- Best viewed at ≥72 columns (full columns), graceful fallback below.
 
 ## Next ideas
 

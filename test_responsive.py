@@ -24,10 +24,14 @@ def test_layout_selection():
         cols = layout.columns
         assert cols[0] == 'stat'
         assert len(cols) >= prev_len  # ширина растёт — колонок не становится меньше
-        if width >= 70:
-            assert 'title' in cols
-        if width >= 90:
+        if width >= 72:
+            assert 'subtasks' in cols
             assert 'progress' in cols
+        elif width >= 56:
+            assert 'progress' in cols
+            assert 'subtasks' not in cols
+        else:
+            assert cols == ['stat', 'title']
         prev_len = len(cols)
         status = "✓ OK"
         print(f"{width:<10} | {str(cols):<60} | {status}")
@@ -57,7 +61,7 @@ def test_width_calculation():
 
         print(f"{term_width:<6} | {layout_desc:<30} | {title_w!s:<8} | {notes_w!s:<8} | {total}")
         assert total > 0
-        assert total <= term_width + 5  # с учётом разделителей
+        assert total <= term_width  # таблица не выходит за рамки терминала
 
     print("\n" + "="*80)
 
