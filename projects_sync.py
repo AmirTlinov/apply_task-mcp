@@ -13,12 +13,20 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 from threading import Lock
-import hashlib
 
 import requests
 import yaml
 
 from config import get_user_token, set_user_token
+from infrastructure.projects_sync.graphql_client import (
+    GraphQLClient,
+    GraphQLClientError,
+    GraphQLPermissionError,
+    GraphQLRateLimitError,
+)
+from infrastructure.projects_sync.issues_client import IssuesClient, IssuesPermissionError
+from infrastructure.projects_sync.rate_limiter import RateLimiter
+from infrastructure.projects_sync.schema_cache import SchemaCache
 
 PROJECT_ROOT = Path(os.environ.get("APPLY_TASK_PROJECT_ROOT") or Path.cwd()).resolve()
 GRAPHQL_URL = "https://api.github.com/graphql"
@@ -34,130 +42,6 @@ SCHEMA_CACHE_PATH = PROJECT_ROOT / ".tasks" / ".projects_schema_cache.yaml"
 SCHEMA_CACHE_TTL = int(os.getenv("APPLY_TASK_SCHEMA_TTL_SECONDS", "86400"))
 DEFAULT_RESET_BEHAVIOR = os.getenv("APPLY_TASK_RATE_RESET", "auto")  # auto|hard
 _RATE_RESET_MODE = DEFAULT_RESET_BEHAVIOR
-
-
-def _token_digest(token: str) -> str:
-    if not token:
-        return ""
-    return hashlib.sha1(token.encode()).hexdigest()
-
-
-def _load_project_schema_cache() -> Dict[Tuple[str, str, str, int], Dict[str, Any]]:
-    with _SCHEMA_CACHE_LOCK:
-        if _SCHEMA_CACHE:
-            return dict(_SCHEMA_CACHE)
-    if SCHEMA_CACHE_PATH.exists():
-        try:
-            raw = yaml.safe_load(SCHEMA_CACHE_PATH.read_text()) or {}
-            meta = raw.get("__meta__") if isinstance(raw, dict) else {}
-            current_digest = _token_digest(get_user_token() or "")
-            stored_digest = meta.get("token")
-            if stored_digest and current_digest and stored_digest != current_digest:
-                SCHEMA_CACHE_PATH.unlink(missing_ok=True)
-                return {}
-            ttl_override = meta.get("ttl_seconds")
-            for key_str, value in raw.items():
-                if key_str == "__meta__":
-                    continue
-                parts = key_str.split("|")
-                if len(parts) != 4:
-                    continue
-                type_, owner, repo, number = parts
-                ts = value.get("ts")
-                try:
-                    ts_val = float(ts) if ts is not None else None
-                except Exception:
-                    ts_val = None
-                ttl_limit = ttl_override if isinstance(ttl_override, (int, float)) else SCHEMA_CACHE_TTL
-                if ts_val and time.time() - ts_val > ttl_limit:
-                    continue
-                with _SCHEMA_CACHE_LOCK:
-                    _SCHEMA_CACHE[(type_, owner, repo, int(number))] = value
-        except Exception:
-            return dict(_SCHEMA_CACHE)
-    with _SCHEMA_CACHE_LOCK:
-        return dict(_SCHEMA_CACHE)
-
-
-def _persist_project_schema_cache() -> None:
-    with _SCHEMA_CACHE_LOCK:
-        if not _SCHEMA_CACHE:
-            return
-        data = {f"{k[0]}|{k[1]}|{k[2]}|{k[3]}": v for k, v in _SCHEMA_CACHE.items()}
-        data["__meta__"] = {
-            "token": _token_digest(get_user_token() or ""),
-            "ts": time.time(),
-            "ttl_seconds": SCHEMA_CACHE_TTL,
-        }
-    try:
-        SCHEMA_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        SCHEMA_CACHE_PATH.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
-    except Exception:
-        pass
-
-
-class RateLimiter:
-    """Глобальный rate-limit с учётом заголовков GitHub."""
-
-    def __init__(self) -> None:
-        self._lock = Lock()
-        self._next_ts = 0.0
-        self.last_remaining: Optional[int] = None
-        self.last_reset_epoch: Optional[float] = None
-        self.last_wait: float = 0.0
-
-    def acquire(self) -> None:
-        while True:
-            with self._lock:
-                now = time.time()
-                wait = self._next_ts - now
-            if wait <= 0:
-                return
-            time.sleep(min(wait, 2.0))
-
-    def update(self, headers: Dict[str, Any], errors: Optional[Any] = None) -> None:
-        remaining = headers.get("X-RateLimit-Remaining") or headers.get("x-ratelimit-remaining")
-        reset = headers.get("X-RateLimit-Reset") or headers.get("x-ratelimit-reset")
-        retry_after = headers.get("Retry-After") or headers.get("retry-after")
-        with self._lock:
-            now = time.time()
-            if retry_after:
-                try:
-                    delay = float(retry_after)
-                    self._next_ts = max(self._next_ts, now + delay)
-                except Exception:
-                    pass
-            if remaining is not None:
-                try:
-                    rem = int(remaining)
-                    self.last_remaining = rem
-                    if rem <= 1:
-                        if reset:
-                            try:
-                                reset_ts = float(reset)
-                                if reset_ts > now:
-                                    self._next_ts = max(self._next_ts, reset_ts)
-                                    self.last_reset_epoch = reset_ts
-                                    if _RATE_RESET_MODE == "hard":
-                                        self._next_ts = max(self._next_ts, reset_ts + 5)
-                            except Exception:
-                                self._next_ts = max(self._next_ts, now + 60)
-                        else:
-                            if _RATE_RESET_MODE == "hard":
-                                self._next_ts = max(self._next_ts, now + 300)
-                            else:
-                                self._next_ts = max(self._next_ts, now + 60)
-                except Exception:
-                    pass
-            if reset and self.last_reset_epoch is None:
-                try:
-                    self.last_reset_epoch = float(reset)
-                except Exception:
-                    pass
-            if errors and ProjectsSync._looks_like_rate_limit(errors):
-                hard_extra = 120 if _RATE_RESET_MODE == "hard" else 60
-                self._next_ts = max(self._next_ts, now + hard_extra)
-            self.last_wait = max(0.0, self._next_ts - now)
 
 
 _RATE_LIMITER = RateLimiter()
@@ -234,7 +118,16 @@ class ProjectConfig:
 
 
 class ProjectsSync:
-    def __init__(self, config_path: Optional[Path] = None) -> None:
+    def __init__(
+        self,
+        config_path: Optional[Path] = None,
+        *,
+        session: Optional[requests.Session] = None,
+        rate_limiter: Optional[RateLimiter] = None,
+        schema_cache: Optional[SchemaCache] = None,
+        graphql_client: Optional[GraphQLClient] = None,
+        issues_client: Optional[IssuesClient] = None,
+    ) -> None:
         self.config_path = config_path or CONFIG_PATH
         self.detect_error: Optional[str] = None
         self.config: Optional[ProjectConfig] = self._load_config()
@@ -268,7 +161,7 @@ class ProjectsSync:
         ):
             if self._auto_set_project_number():
                 self.config = self._load_config()
-        self.session = requests.Session()
+        self.session = session or requests.Session()
         self.project_id: Optional[str] = None
         self.project_fields: Dict[str, Dict[str, Any]] = {}
         self.conflicts_dir = PROJECT_ROOT / ".tasks" / ".projects_conflicts"
@@ -280,7 +173,14 @@ class ProjectsSync:
             self._project_lookup_failed = True
             global _PROJECTS_DISABLED_REASON
             _PROJECTS_DISABLED_REASON = self._runtime_disabled_reason
-        self._rate_limiter = _RATE_LIMITER
+        self._rate_limiter = rate_limiter or _RATE_LIMITER
+        self.schema_cache = schema_cache or SchemaCache(
+            SCHEMA_CACHE_PATH, SCHEMA_CACHE_TTL, lambda: self.token, data_ref=_SCHEMA_CACHE, lock=_SCHEMA_CACHE_LOCK
+        )
+        self._graphql_client = graphql_client or GraphQLClient(
+            GRAPHQL_URL, self.session, lambda: self.token, self._rate_limiter
+        )
+        self._issues_client = issues_client or IssuesClient(self.session, lambda: self.token, self._rate_limiter)
 
     # ------------------------------------------------------------------
     # Helpers for conflict detection / reporting
@@ -512,51 +412,19 @@ class ProjectsSync:
     def _graphql(self, query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
         if self._runtime_disabled_reason:
             raise ProjectsSyncPermissionError(self._runtime_disabled_reason)
-        headers = {"Authorization": f"bearer {self.token}", "Accept": "application/vnd.github+json"}
-        attempt = 0
-        delay = 1.0
-        while True:
-            attempt += 1
-            try:
-                self._rate_limiter.acquire()
-                response = self.session.post(GRAPHQL_URL, json={"query": query, "variables": variables}, headers=headers, timeout=30)
-            except requests.RequestException as exc:
-                if attempt >= 3:
-                    raise RuntimeError(f"GitHub API network error: {exc}") from exc
-                jitter = random.uniform(0, delay)
-                time.sleep(delay + jitter)
-                delay *= 2
-                continue
-            if response.status_code >= 500 and attempt < 3:
-                jitter = random.uniform(0, delay)
-                time.sleep(delay + jitter)
-                delay *= 2
-                continue
-            self._rate_limiter.update(response.headers)
-            if response.status_code in (401, 403):
-                self._disable_runtime(f"GitHub token lacks Projects access (HTTP {response.status_code})")
-                raise ProjectsSyncPermissionError("projects sync disabled due to insufficient permissions")
-            if response.status_code >= 400:
-                raise RuntimeError(f"GitHub API error: {response.status_code} {response.text}")
-            payload = response.json()
-            errors = payload.get("errors")
-            if errors:
-                self._rate_limiter.update(response.headers, errors)
-                if self._looks_like_project_not_found(errors):
-                    reason = errors[0].get("message", "project not found")
-                    self._disable_runtime(reason, persist=True)
-                    raise ProjectsSyncPermissionError(reason)
-                if self._looks_like_permission_error(errors):
-                    reason = errors[0].get("message", "permission denied")
-                    self._disable_runtime(reason, persist=True)
-                    raise ProjectsSyncPermissionError(reason)
-                if self._looks_like_rate_limit(errors) and attempt < 3:
-                    jitter = random.uniform(0, delay)
-                    time.sleep(delay + jitter)
-                    delay *= 2
-                    continue
-                raise RuntimeError(errors)
-            return payload["data"]
+        self._graphql_client.session = self.session
+        try:
+            return self._graphql_client.execute(query, variables)
+        except GraphQLPermissionError as exc:
+            self._disable_runtime(f"GitHub token lacks Projects access ({exc})")
+            raise ProjectsSyncPermissionError("projects sync disabled due to insufficient permissions") from exc
+        except GraphQLRateLimitError as exc:
+            hard_extra = 120 if _RATE_RESET_MODE == "hard" else 60
+            self._rate_limiter.update({}, errors=[{"message": "rate limit"}])
+            self._rate_limiter._next_ts = max(self._rate_limiter._next_ts, time.time() + hard_extra)  # type: ignore[attr-defined]
+            raise RuntimeError(str(exc)) from exc
+        except GraphQLClientError as exc:
+            raise RuntimeError(str(exc)) from exc
 
     @staticmethod
     def _looks_like_permission_error(errors: Any) -> bool:
@@ -593,16 +461,6 @@ class ProjectsSync:
                 return True
         return False
 
-    @staticmethod
-    def _looks_like_rate_limit(errors: Any) -> bool:
-        if not errors:
-            return False
-        for err in errors:
-            message = str(err.get("message", "")).lower()
-            if "rate limit" in message or "abuse detection" in message:
-                return True
-        return False
-
     def _ensure_project_metadata(self) -> None:
         if not self.token:
             raise ProjectsSyncPermissionError("GitHub token missing")
@@ -629,8 +487,7 @@ class ProjectsSync:
                 self._project_lookup_failed = True
                 raise ProjectsSyncPermissionError("project number missing")
         cache_key = (cfg.project_type, cfg.owner, cfg.repo or "", int(cfg.number or 0))
-        cached_cache = _load_project_schema_cache()
-        cached = cached_cache.get(cache_key)
+        cached = self.schema_cache.get(cache_key)
         if cached:
             self.project_id = cached.get("id")
             self.project_fields = self._map_fields(cached.get("fields") or [])
@@ -668,7 +525,7 @@ class ProjectsSync:
                     if not_found:
                         with _SCHEMA_CACHE_LOCK:
                             _SCHEMA_CACHE.pop(cache_key, None)
-                        _persist_project_schema_cache()
+                        self.schema_cache.persist()
                         if not self._project_lookup_failed:
                             # сбросим номер чтобы при следующем запуске произошло авто-определение
                             try:
@@ -696,9 +553,8 @@ class ProjectsSync:
         field_nodes = ((node.get("fields") or {}).get("nodes") or [])
         self.project_fields = self._map_fields(field_nodes)
         if self.project_id:
-            with _SCHEMA_CACHE_LOCK:
-                _SCHEMA_CACHE[cache_key] = {"id": self.project_id, "fields": field_nodes}
-            _persist_project_schema_cache()
+            self.schema_cache.set(cache_key, {"id": self.project_id, "fields": field_nodes})
+            self.schema_cache.persist()
 
     def _repo_project_query(self) -> str:
         return (
@@ -1087,7 +943,6 @@ class ProjectsSync:
         # Достаточно валидной конфигурации и токена.
         if not cfg.enabled or not self.token or self._runtime_disabled_reason:
             return False
-        headers = {"Authorization": f"token {self.token}", "Accept": "application/vnd.github+json"}
         base_url = f"https://api.github.com/repos/{cfg.owner}/{cfg.repo}/issues"
         payload = {
             "title": f"{task.id}: {task.title}",
@@ -1095,7 +950,7 @@ class ProjectsSync:
         }
         changed = False
         if not getattr(task, "project_issue_number", None):
-            resp = self._issue_request_with_retry("post", base_url, payload, headers)
+            resp = self._issue_request_with_retry("post", base_url, payload)
             if resp.status_code >= 400:
                 self._report_issue_error(task, resp)
                 return False
@@ -1105,7 +960,7 @@ class ProjectsSync:
         else:
             issue_url = f"{base_url}/{task.project_issue_number}"
             payload["state"] = "closed" if task.status == "OK" else "open"
-            resp = self._issue_request_with_retry("patch", issue_url, payload, headers)
+            resp = self._issue_request_with_retry("patch", issue_url, payload)
             if resp.status_code >= 400:
                 self._report_issue_error(task, resp)
                 return False
@@ -1117,25 +972,15 @@ class ProjectsSync:
         setattr(task, "_sync_error", message)
         self._record_conflict(task.id, Path(task.filepath), task.to_file_content(), task.to_file_content(), message, None, "issues")
 
-    def _issue_request_with_retry(self, method: str, url: str, payload: Dict[str, Any], headers: Dict[str, str]) -> requests.Response:
-        attempt = 0
-        delay = 1.0
-        while True:
-            attempt += 1
-            self._rate_limiter.acquire()
-            resp = getattr(self.session, method)(url, json=payload, headers=headers, timeout=30)
-            self._rate_limiter.update(resp.headers)
-            if resp.status_code in (401, 403):
-                self._disable_runtime(f"GitHub token lacks repo issue access (HTTP {resp.status_code})")
-                raise ProjectsSyncPermissionError("issues sync disabled due to insufficient permissions")
-            if resp.status_code < 500 or attempt >= 3:
-                if resp.status_code >= 500:
-                    logger.warning("issue sync retry #%s failed: %s %s", attempt, resp.status_code, resp.text)
-                return resp
-            logger.warning("issue sync retry #%s due to %s", attempt, resp.status_code)
-            jitter = random.uniform(0, delay)
-            time.sleep(delay + jitter)
-            delay *= 2
+    def _issue_request_with_retry(self, method: str, url: str, payload: Dict[str, Any]) -> requests.Response:
+        self._issues_client.session = self.session
+        try:
+            return self._issues_client.request(method, url, payload)
+        except IssuesPermissionError as exc:
+            self._disable_runtime(f"GitHub token lacks repo issue access ({exc})")
+            raise ProjectsSyncPermissionError("issues sync disabled due to insufficient permissions") from exc
+        except Exception as exc:
+            raise RuntimeError(f"Issue sync failed: {exc}") from exc
 
     # ------------------------------------------------------------------
     # Pull from GitHub → local files
