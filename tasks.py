@@ -625,6 +625,13 @@ class TaskManager:
         synced = self._auto_sync_all()
         if synced:
             self.auto_sync_message = f"Auto-sync: {synced} задач"
+        self.language = get_user_lang() or "en"
+
+    def _t(self, key: str) -> str:
+        base = LANG_PACK.get("en", {})
+        lang = getattr(self, "language", "en")
+        lang_map = LANG_PACK.get(lang, LANG_PACK.get("en", {}))
+        return lang_map.get(key) or base.get(key, key)
 
     @staticmethod
     def sanitize_domain(domain: Optional[str]) -> str:
@@ -791,20 +798,19 @@ class TaskManager:
         # Flagship-проверка перед установкой OK
         if status == "OK":
             if task.subtasks and task.calculate_progress() < 100:
-                return False, {"code": "validation", "message": "Нельзя установить OK: не все подзадачи выполнены"}
+                return False, {"code": "validation", "message": "не все подзадачи выполнены"}
             if not task.success_criteria:
-                return False, {"code": "validation", "message": "Нельзя установить OK: нет критериев успеха/тестов на уровне задачи"}
-            # Проверка что все подзадачи имеют критерии и тесты
+                return False, {"code": "validation", "message": "нет критериев успеха/тестов на уровне задачи"}
             for idx, st in enumerate(task.subtasks, 1):
                 if not st.success_criteria:
                     return False, {
                         "code": "validation",
-                        "message": f"Нельзя установить OK: подзадача {idx} '{st.title}' не имеет критериев выполнения",
+                        "message": f"подзадача {idx} '{st.title}' не имеет критериев выполнения",
                     }
                 if not st.tests:
                     return False, {
                         "code": "validation",
-                        "message": f"Нельзя установить OK: подзадача {idx} '{st.title}' не имеет тестов",
+                        "message": f"подзадача {idx} '{st.title}' не имеет тестов",
                     }
             task.progress = 100
         else:
@@ -852,12 +858,12 @@ class TaskManager:
         if completed and not st.ready_for_completion():
             missing = []
             if not st.criteria_confirmed:
-                missing.append("критерии")
+                missing.append(self._t("CHECKPOINT_CRITERIA"))
             if not st.tests_confirmed:
-                missing.append("тесты")
+                missing.append(self._t("CHECKPOINT_TESTS"))
             if not st.blockers_resolved:
-                missing.append("блокеры")
-            return False, f"Отметь {', '.join(missing)} перед завершением"
+                missing.append(self._t("CHECKPOINT_BLOCKERS"))
+            return False, self._t("ERR_SUBTASK_CHECKPOINTS").format(items=", ".join(missing))
         st.completed = completed
         task.update_status_from_progress()
         self.save_task(task)
@@ -1933,7 +1939,8 @@ class TaskTrackerTUI:
 
     def _t(self, key: str) -> str:
         base = LANG_PACK.get("en", {})
-        lang_map = LANG_PACK.get(getattr(self, "language", "en"), {})
+        lang = getattr(self, "language", "en")
+        lang_map = LANG_PACK.get(lang, LANG_PACK.get("en", {}))
         return lang_map.get(key) or base.get(key, key)
 
     def _cycle_language(self) -> None:
