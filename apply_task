@@ -174,12 +174,50 @@ def run_tasks_py(args, verbose: bool = False):
     return result.returncode
 
 
-def main():
-    if len(sys.argv) < 2:
+FORWARD_COMMANDS = {
+    "list": "list",
+    "create": "create",
+    "guided": "guided",
+    "subtask": "subtask",
+    "sub": "sub",
+    "clean": "clean",
+    "template": "template",
+    "ok": "ok",
+    "note": "note",
+    "bulk": "bulk",
+    "next": "next",
+    "suggest": "suggest",
+    "sg": "suggest",
+    "tui": "tui",
+    "lint": "lint",
+    "quick": "quick",
+    "update": "update",
+    "task": "task",
+    "edit": "edit",
+    "checkpoint": "checkpoint",
+    "projects": "projects",
+    "projects-auth": "projects-auth",
+    "projects-webhook": "projects-webhook",
+    "projects-webhook-serve": "projects-webhook-serve",
+    "move": "move",
+    "automation": "automation",
+}
+
+STATUS_COMMANDS = {"done": "OK", "start": "WARN", "fail": "FAIL"}
+
+KNOWN_COMMANDS = set(FORWARD_COMMANDS) | set(STATUS_COMMANDS) | {"show", "history", "replay", "which", "help"}
+
+
+def _normalize_task_id(arg: str) -> str:
+    return f"TASK-{arg}" if not arg.startswith("TASK-") else arg
+
+
+def main(argv=None):
+    args_list = list(sys.argv[1:] if argv is None else argv)
+    if not args_list:
         return emit_cli("help", status="ERROR", message="Не указана команда", payload={"help": __doc__}, exit_code=1)
 
-    cmd = sys.argv[1]
-    args = sys.argv[2:]
+    cmd, *args = args_list
 
     if os.environ.get(SKIP_HISTORY_ENV) != "1" and cmd not in ("history", "replay"):
         record_history([cmd] + args)
@@ -192,45 +230,7 @@ def main():
         verbose = True
         args = [a for a in args if a != '-v']
 
-    # Определение команды
-    known_commands = [
-        'show',
-        'list',
-        'done',
-        'start',
-        'fail',
-        'next',
-        'suggest',
-        'sg',
-        'tui',
-        'lint',
-        'quick',
-        'which',
-        'help',
-        'create',
-        'guided',
-        'subtask',
-        'sub',
-        'clean',
-        'template',
-        'ok',
-        'note',
-        'bulk',
-        'history',
-        'replay',
-        'update',
-        'task',
-        'edit',
-        'checkpoint',
-        'projects',
-        'projects-auth',
-        'projects-webhook',
-        'projects-webhook-serve',
-        'move',
-        'automation',
-    ]
-
-    if cmd not in known_commands:
+    if cmd not in KNOWN_COMMANDS:
         required = [
             ("--parent", "Нет parent. Пример: --parent TASK-001 или --parent 1"),
             ("--tests", "Нет --tests. Пример: --tests \"unit;acceptance\""),
@@ -250,53 +250,16 @@ def main():
     # Выполнение команды
     if cmd == 'show':
         if args and not args[0].startswith('-'):
-            task_id = f"TASK-{args[0]}" if not args[0].startswith('TASK-') else args[0]
-            return run_tasks_py(['show', task_id] + args[1:], verbose=verbose)
+            return run_tasks_py(['show', _normalize_task_id(args[0])] + args[1:], verbose=verbose)
         return run_tasks_py(['show'] + args, verbose=verbose)
 
-    elif cmd == 'list':
-        return run_tasks_py(['list'] + args, verbose=verbose)
+    if cmd in STATUS_COMMANDS:
+        target_status = STATUS_COMMANDS[cmd]
+        if args and not args[0].startswith('-'):
+            return run_tasks_py(['update', _normalize_task_id(args[0]), target_status] + args[1:], verbose=verbose)
+        return run_tasks_py(['update', target_status] + args, verbose=verbose)
 
-    elif cmd == 'create':
-        return run_tasks_py(['create'] + args, verbose=verbose)
-
-    elif cmd == 'guided':
-        return run_tasks_py(['guided'] + args, verbose=verbose)
-
-    elif cmd == 'subtask':
-        return run_tasks_py(['subtask'] + args, verbose=verbose)
-    elif cmd == 'sub':
-        return run_tasks_py(['sub'] + args, verbose=verbose)
-
-    elif cmd == 'clean':
-        return run_tasks_py(['clean'] + args, verbose=verbose)
-    elif cmd == 'template':
-        return run_tasks_py(['template'] + args, verbose=verbose)
-    elif cmd == 'ok':
-        return run_tasks_py(['ok'] + args, verbose=verbose)
-    elif cmd == 'note':
-        return run_tasks_py(['note'] + args, verbose=verbose)
-    elif cmd == 'bulk':
-        return run_tasks_py(['bulk'] + args, verbose=verbose)
-    elif cmd == 'checkpoint':
-        return run_tasks_py(['checkpoint'] + args, verbose=verbose)
-    elif cmd == 'update':
-        return run_tasks_py(['update'] + args, verbose=verbose)
-    elif cmd == 'projects':
-        return run_tasks_py(['projects'] + args, verbose=verbose)
-    elif cmd == 'projects-auth':
-        return run_tasks_py(['projects-auth'] + args, verbose=verbose)
-    elif cmd == 'projects-webhook':
-        return run_tasks_py(['projects-webhook'] + args, verbose=verbose)
-    elif cmd == 'projects-webhook-serve':
-        return run_tasks_py(['projects-webhook-serve'] + args, verbose=verbose)
-    elif cmd == 'move':
-        return run_tasks_py(['move'] + args, verbose=verbose)
-    elif cmd == 'task':
-        return run_tasks_py(['task'] + args, verbose=verbose)
-    elif cmd == 'edit':
-        return run_tasks_py(['edit'] + args, verbose=verbose)
-    elif cmd == 'history':
+    if cmd == 'history':
         limit = 5
         if args:
             try:
@@ -324,7 +287,7 @@ def main():
             "last_task": {"id": last_task_id, "domain": last_task_domain} if last_task_id else None,
         }
         return emit_cli("history", status="OK", message="История команд", payload=payload, summary=f"{len(picked)} записей")
-    elif cmd == 'replay':
+    if cmd == 'replay':
         if not args:
             return emit_cli("replay", status="ERROR", message="Укажи индекс из history", exit_code=1)
         try:
@@ -345,37 +308,11 @@ def main():
         )
         return proc.returncode
 
-    elif cmd == 'done':
-        if args and not args[0].startswith('-'):
-            task_id = f"TASK-{args[0]}" if not args[0].startswith('TASK-') else args[0]
-            return run_tasks_py(['update', task_id, 'OK'] + args[1:], verbose=verbose)
-        return run_tasks_py(['update', 'OK'] + args, verbose=verbose)
+    if cmd in FORWARD_COMMANDS:
+        target = FORWARD_COMMANDS[cmd]
+        return run_tasks_py([target] + args, verbose=verbose)
 
-    elif cmd == 'start':
-        if args and not args[0].startswith('-'):
-            task_id = f"TASK-{args[0]}" if not args[0].startswith('TASK-') else args[0]
-            return run_tasks_py(['update', task_id, 'WARN'] + args[1:], verbose=verbose)
-        return run_tasks_py(['update', 'WARN'] + args, verbose=verbose)
-
-    elif cmd == 'fail':
-        if args and not args[0].startswith('-'):
-            task_id = f"TASK-{args[0]}" if not args[0].startswith('TASK-') else args[0]
-            return run_tasks_py(['update', task_id, 'FAIL'] + args[1:], verbose=verbose)
-        return run_tasks_py(['update', 'FAIL'] + args, verbose=verbose)
-
-    elif cmd == 'next':
-        return run_tasks_py(['next'] + args, verbose=verbose)
-
-    elif cmd in ('suggest', 'sg'):
-        return run_tasks_py(['suggest'] + args, verbose=verbose)
-
-    elif cmd == 'quick':
-        return run_tasks_py(['quick'] + args, verbose=verbose)
-
-    elif cmd == 'automation':
-        return run_tasks_py(['automation'] + args, verbose=verbose)
-
-    elif cmd == 'which':
+    if cmd == 'which':
         tasks_py, source = find_tasks_py(verbose=verbose)
         git_root = find_git_root()
         if not tasks_py:
@@ -384,13 +321,7 @@ def main():
         payload = {"source": source or 'unknown', "path": str(tasks_py)}
         return emit_cli("which", status="OK", message="Источник tasks.py", payload=payload)
 
-    elif cmd == 'lint':
-        return run_tasks_py(['lint'] + args, verbose=verbose)
-
-    elif cmd == 'tui':
-        return run_tasks_py(['tui'] + args, verbose=verbose)
-
-    elif cmd == 'help':
+    if cmd == 'help':
         help_payload = {
             "overview": "apply_task — флагманский CLI для AI-операторов. Пиши описания задач/подзадач только на русском языке и всегда привязывай их к нужному домену/папке (--domain/-F, см. DOMAIN_STRUCTURE.md).",
             "automation": [
@@ -435,10 +366,10 @@ def main():
         }
         return emit_cli("help", status="OK", message="Справка apply_task", payload=help_payload)
 
-    else:
+    else:  # pragma: no cover - defensive fallback for future commands
         payload = {"command": cmd}
         return emit_cli("apply_task", status="ERROR", message="Неизвестная команда. Используй: apply_task help", payload=payload, exit_code=1)
 
 
-if __name__ == '__main__':
+if __name__ == '__main__':  # pragma: no cover
     sys.exit(main())
