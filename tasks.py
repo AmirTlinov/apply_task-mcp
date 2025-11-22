@@ -2034,6 +2034,7 @@ class TaskTrackerTUI:
         self.style = self.build_style(theme)
 
         kb = KeyBindings()
+        kb.timeout = 0
 
         @kb.add("q")
         @kb.add("й")
