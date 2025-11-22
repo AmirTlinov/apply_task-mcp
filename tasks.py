@@ -30,6 +30,18 @@ import textwrap
 from wcwidth import wcwidth
 from core import Status, SubTask, TaskDetail
 from core.desktop.devtools.interface.constants import AI_HELP, LANG_PACK, TIMESTAMP_FORMAT, GITHUB_GRAPHQL
+from core.desktop.devtools.interface.i18n import translate, effective_lang as _effective_lang
+from core.desktop.devtools.interface.cli_io import structured_response, structured_error, validation_response
+from core.desktop.devtools.application.context import (
+    save_last_task,
+    get_last_task,
+    resolve_task_reference,
+    derive_domain_explicit,
+    derive_folder_explicit,
+    normalize_task_id,
+    parse_smart_title,
+)
+from core.desktop.devtools.application.recommendations import next_recommendations, suggest_tasks, quick_overview
 from application.ports import TaskRepository
 from infrastructure.file_repository import FileTaskRepository
 from infrastructure.task_file_parser import TaskFileParser
@@ -47,25 +59,13 @@ from projects_sync import (
     update_project_workers,
     detect_repo_slug,
 )
-from config import get_user_token, set_user_token, get_user_lang, set_user_lang
+from config import get_user_token, set_user_token, set_user_lang
 
 # Cache for expensive Git Projects metadata lookups, throttled to avoid
 # blocking the TUI render loop on every keypress.
 from core.desktop.devtools.application import projects_status_cache
 
-AI_HELP = """apply_task — hardline rules for AI agents
-
-1) Operate only via apply_task. Never edit .tasks/ directly. Track context via .last (TASK@domain).
-2) Decompose: root task + nested subtasks (any depth). Every subtask: title ≥20 chars; success_criteria; tests; blockers. Checkpoints only through ok/note/bulk --path.
-3) Create tasks: set domain (--domain/-F). Generate subtasks template (apply_task template subtasks --count N > .tmp/subtasks.json), fill criteria/tests/blockers. Create: apply_task create "Title #tags" --domain <d> --description "<what/why/acceptance>" --tests "<proj tests>" --risks "<proj risks>" --subtasks @.tmp/subtasks.json. Add nested: apply_task subtask TASK --add "<title>" --criteria "...;..." --tests "...;..." --blockers "...;..." --parent-path 0.1 (path like 0.1.2).
-4) Maintain subtasks: add via subtask; checkpoints via ok --path X.Y (criteria/tests/blockers with notes); complete via subtask --done --path only if all checkpoints OK; note progress with note --path.
-5) Statuses: start at fail -> warn when working -> ok only when all subtasks done. Commands: apply_task start/done/fail TASK.
-6) Quality gates: diff coverage ≥85%; cyclomatic complexity ≤10; no mocks/stubs in prod; one file = one responsibility; prefer <300 LOC. Before delivery run pytest -q and log executed tests. Always keep explicit blockers/tests/criteria on every node.
-7) GitHub Projects: config .apply_task_projects.yaml; token APPLY_TASK_GITHUB_TOKEN|GITHUB_TOKEN. If no token/remote, sync is off; CLI works offline.
-Language: reply to user in their language unless asked otherwise. Task text/notes follow user language; code/tests/docs stay in English. Explicit blockers/tests/criteria on every node. No checkpoints — no done.
-"""
-
-LANG_PACK = {
+_LEGACY_LANG_PACK = {
     "en": {
         "TITLE": "TITLE",
         "SUBTASKS": "SUBTASKS",
@@ -758,38 +758,7 @@ LANG_PACK = {
     },
 }
 
-
-def _fill_lang_pack_defaults() -> None:
-    base = LANG_PACK.get("en", {})
-    for lang, values in LANG_PACK.items():
-        if lang == "en":
-            continue
-        for key, val in base.items():
-            values.setdefault(key, val)
-
-
-_fill_lang_pack_defaults()
-
-
-def _effective_lang(preferred: Optional[str] = None) -> str:
-    env_lang = os.getenv("APPLY_TASK_LANG")
-    if env_lang:
-        return env_lang
-    if os.getenv("PYTEST_CURRENT_TEST"):
-        return "en"
-    candidate = preferred or get_user_lang()
-    return candidate if candidate in LANG_PACK else "en"
-
-
-def translate(key: str, lang: Optional[str] = None, **kwargs) -> str:
-    base = LANG_PACK.get("en", {})
-    active_lang = _effective_lang(lang)
-    lang_map = LANG_PACK.get(active_lang, base)
-    template = lang_map.get(key) or base.get(key, key)
-    try:
-        return template.format(**kwargs)
-    except Exception:
-        return template
+LANG_PACK.update(_LEGACY_LANG_PACK)
 
 
 def _get_sync_service() -> ProjectsSyncService:
@@ -849,11 +818,6 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 # DATA MODELS
 # ============================================================================
 # Domain entities SubTask/TaskDetail импортируются из core.
-
-
-def _iso_timestamp() -> str:
-    """Возвращает ISO-8601 timestamp с UTC."""
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _load_input_source(raw: str, label: str) -> str:
@@ -970,49 +934,6 @@ def task_to_dict(task: TaskDetail, include_subtasks: bool = False) -> Dict[str, 
     if include_subtasks:
         data["subtasks"] = [subtask_to_dict(st) for st in task.subtasks]
     return data
-
-
-def structured_response(
-    command: str,
-    *,
-    status: str = "OK",
-    message: str = "",
-    payload: Optional[Dict[str, Any]] = None,
-    summary: Optional[str] = None,
-    exit_code: int = 0,
-) -> int:
-    """Единый формат вывода для всех неинтерактивных команд."""
-    body: Dict[str, Any] = {
-        "command": command,
-        "status": status,
-        "message": message,
-        "timestamp": _iso_timestamp(),
-        "payload": payload or {},
-    }
-    if summary:
-        body["summary"] = summary
-    print(json.dumps(body, ensure_ascii=False, indent=2))
-    return exit_code
-
-
-def structured_error(command: str, message: str, *, payload: Optional[Dict[str, Any]] = None, status: str = "ERROR") -> int:
-    """Сокращение для ошибок."""
-    return structured_response(command, status=status, message=message, payload=payload, exit_code=1)
-
-
-def validation_response(command: str, success: bool, message: str, payload: Optional[Dict[str, Any]] = None) -> int:
-    body = payload.copy() if payload else {}
-    body["mode"] = "validate-only"
-    label = f"{command}.validate"
-    status = "OK" if success else "ERROR"
-    return structured_response(
-        label,
-        status=status,
-        message=message,
-        payload=body,
-        summary=message,
-        exit_code=0 if success else 1,
-    )
 
 
 @dataclass
@@ -1373,80 +1294,6 @@ class TaskManager:
 
     def delete_task(self, task_id: str, domain: str = "") -> bool:
         return self.repo.delete(task_id, domain)
-
-
-def save_last_task(task_id: str, domain: str = "") -> None:
-    Path(".last").write_text(f"{task_id}@{domain}", encoding="utf-8")
-
-
-def get_last_task() -> Tuple[Optional[str], Optional[str]]:
-    last = Path(".last")
-    if not last.exists():
-        return None, None
-    raw = last.read_text(encoding="utf-8").strip()
-    if "@" in raw:
-        tid, domain = raw.split("@", 1)
-        return tid or None, domain or None
-    return raw or None, None
-
-
-def resolve_task_reference(
-    raw_task_id: Optional[str],
-    domain: Optional[str],
-    phase: Optional[str],
-    component: Optional[str],
-) -> Tuple[str, str]:
-    """
-    Возвращает (task_id, domain) с поддержкой шорткатов:
-    '.' / 'last' / '@last' / пустое значение → последняя задача из .last.
-    """
-    sentinel = (raw_task_id or "").strip()
-    use_last = not sentinel or sentinel in (".", "last", "@last")
-    if use_last:
-        last_id, last_domain = get_last_task()
-        if not last_id:
-            raise ValueError(translate("ERR_NO_LAST_TASK"))
-        resolved_domain = derive_domain_explicit(domain, phase, component) or (last_domain or "")
-        return normalize_task_id(last_id), resolved_domain or ""
-    resolved_domain = derive_domain_explicit(domain, phase, component)
-    return normalize_task_id(sentinel), resolved_domain
-
-
-def normalize_task_id(raw: str) -> str:
-    value = raw.strip().upper()
-    if re.match(r"^TASK-\d+$", value):
-        num = int(value.split("-")[1])
-        return f"TASK-{num:03d}"
-    if value.isdigit():
-        return f"TASK-{int(value):03d}"
-    return value
-
-
-def derive_domain_explicit(domain: Optional[str], phase: Optional[str], component: Optional[str]) -> str:
-    """При отсутствии явного domain строит путь из phase/component."""
-    if domain:
-        return TaskManager.sanitize_domain(domain)
-    parts = []
-    if phase:
-        parts.append(phase.strip("/"))
-    if component:
-        parts.append(component.strip("/"))
-    if not parts:
-        return ""
-    return TaskManager.sanitize_domain("/".join(parts))
-
-
-def derive_folder_explicit(domain: Optional[str], phase: Optional[str], component: Optional[str]) -> str:
-    """Совместимость: alias для derive_domain_explicit (используется в старых тестах)."""
-    return derive_domain_explicit(domain, phase, component)
-
-
-def parse_smart_title(title: str) -> Tuple[str, List[str], List[str]]:
-    tags = re.findall(r"#(\w+)", title)
-    deps = re.findall(r"@(TASK-\d+)", title.upper())
-    clean = re.sub(r"#\w+", "", title)
-    clean = re.sub(r"@TASK-\d+", "", clean, flags=re.IGNORECASE).strip()
-    return clean, [t.lower() for t in tags], deps
 
 
 CHECKLIST_SECTIONS = [
@@ -5348,14 +5195,15 @@ def cmd_analyze(args) -> int:
 def cmd_next(args) -> int:
     manager = TaskManager()
     domain = derive_domain_explicit(getattr(args, "domain", ""), getattr(args, "phase", None), getattr(args, "component", None))
+    filters = {
+        "domain": domain or "",
+        "phase": getattr(args, "phase", None) or "",
+        "component": getattr(args, "component", None) or "",
+    }
     tasks = manager.list_tasks(domain, skip_sync=True)
-    candidates = [t for t in tasks if t.status != "OK" and t.calculate_progress() < 100]
-    filter_hint = f" (domain='{domain or '-'}', phase='{args.phase or '-'}', component='{args.component or '-'}')"
-    if not candidates:
-        payload = {
-            "filters": {"domain": domain or "", "phase": args.phase or "", "component": args.component or ""},
-            "candidates": [],
-        }
+    payload, selected = next_recommendations(tasks, filters, remember=save_last_task, serializer=task_to_dict)
+    filter_hint = f" (domain='{filters['domain'] or '-'}', phase='{filters['phase'] or '-'}', component='{filters['component'] or '-'}')"
+    if not payload["candidates"]:
         return structured_response(
             "next",
             status="OK",
@@ -5363,26 +5211,13 @@ def cmd_next(args) -> int:
             payload=payload,
             summary="Нет незавершённых задач",
         )
-    priority_map = {"HIGH": 3, "MEDIUM": 2, "LOW": 1}
-
-    def score(t: TaskDetail):
-        blocked = -100 if t.blocked else 0
-        return (blocked, -priority_map.get(t.priority, 0), t.calculate_progress())
-
-    candidates.sort(key=score)
-    top = candidates[:3]
-    save_last_task(candidates[0].id, candidates[0].domain)
-    payload = {
-        "filters": {"domain": domain or "", "phase": args.phase or "", "component": args.component or ""},
-        "candidates": [task_to_dict(t) for t in top],
-        "selected": task_to_dict(candidates[0]),
-    }
+    primary = selected or tasks[0]
     return structured_response(
         "next",
         status="OK",
         message="Рекомендации обновлены" + filter_hint,
         payload=payload,
-        summary=f"Выбрано {candidates[0].id}",
+        summary=f"Выбрано {primary.id}",
     )
 
 
@@ -6262,14 +6097,16 @@ def cmd_suggest(args) -> int:
     manager = TaskManager()
     folder = getattr(args, "folder", "") or ""
     domain = derive_domain_explicit(getattr(args, "domain", "") or folder, getattr(args, "phase", None), getattr(args, "component", None))
+    filters = {
+        "folder": folder or "",
+        "domain": domain or "",
+        "phase": getattr(args, "phase", None) or "",
+        "component": getattr(args, "component", None) or "",
+    }
     tasks = manager.list_tasks(domain, skip_sync=True)
-    active = [t for t in tasks if t.status != "OK"]
-    filter_hint = f" (folder='{folder or domain or '-'}', phase='{getattr(args, 'phase', None) or '-'}', component='{getattr(args, 'component', None) or '-'}')"
-    if not active:
-        payload = {
-            "filters": {"folder": folder or "", "domain": domain or "", "phase": getattr(args, "phase", None) or "", "component": getattr(args, "component", None) or ""},
-            "suggestions": [],
-        }
+    payload, _ranked = suggest_tasks(tasks, filters, remember=save_last_task, serializer=task_to_dict)
+    filter_hint = f" (folder='{folder or domain or '-'}', phase='{filters['phase'] or '-'}', component='{filters['component'] or '-'}')"
+    if not payload["suggestions"]:
         return structured_response(
             "suggest",
             status="OK",
@@ -6277,18 +6114,6 @@ def cmd_suggest(args) -> int:
             payload=payload,
             summary="Нет задач для рекомендации",
         )
-    priority_map = {"HIGH": 3, "MEDIUM": 2, "LOW": 1}
-
-    def score(t: TaskDetail):
-        prog = t.calculate_progress()
-        return (-priority_map.get(t.priority, 0), prog, len(t.dependencies))
-
-    sorted_tasks = sorted(active, key=score)
-    save_last_task(sorted_tasks[0].id, sorted_tasks[0].domain)
-    payload = {
-        "filters": {"folder": folder or "", "domain": domain or "", "phase": getattr(args, "phase", None) or "", "component": getattr(args, "component", None) or ""},
-        "suggestions": [task_to_dict(task) for task in sorted_tasks[:5]],
-    }
     return structured_response(
         "suggest",
         status="OK",
@@ -6303,14 +6128,16 @@ def cmd_quick(args) -> int:
     manager = TaskManager()
     folder = getattr(args, "folder", "") or ""
     domain = derive_domain_explicit(getattr(args, "domain", "") or folder, getattr(args, "phase", None), getattr(args, "component", None))
-    tasks = [t for t in manager.list_tasks(domain, skip_sync=True) if t.status != "OK"]
-    tasks.sort(key=lambda t: (t.priority, t.calculate_progress()))
-    filter_hint = f" (folder='{folder or domain or '-'}', phase='{getattr(args, 'phase', None) or '-'}', component='{getattr(args, 'component', None) or '-'}')"
-    if not tasks:
-        payload = {
-            "filters": {"folder": folder or "", "domain": domain or "", "phase": getattr(args, "phase", None) or "", "component": getattr(args, "component", None) or ""},
-            "top": [],
-        }
+    filters = {
+        "folder": folder or "",
+        "domain": domain or "",
+        "phase": getattr(args, "phase", None) or "",
+        "component": getattr(args, "component", None) or "",
+    }
+    tasks = manager.list_tasks(domain, skip_sync=True)
+    payload, top = quick_overview(tasks, filters, remember=save_last_task, serializer=task_to_dict)
+    filter_hint = f" (folder='{folder or domain or '-'}', phase='{filters['phase'] or '-'}', component='{filters['component'] or '-'}')"
+    if not payload["top"]:
         return structured_response(
             "quick",
             status="OK",
@@ -6318,12 +6145,6 @@ def cmd_quick(args) -> int:
             payload=payload,
             summary="Нет задач",
         )
-    top = tasks[:3]
-    save_last_task(tasks[0].id, tasks[0].domain)
-    payload = {
-        "filters": {"folder": folder or "", "domain": domain or "", "phase": getattr(args, "phase", None) or "", "component": getattr(args, "component", None) or ""},
-        "top": [task_to_dict(task) for task in top],
-    }
     return structured_response(
         "quick",
         status="OK",
