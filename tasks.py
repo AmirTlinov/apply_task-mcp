@@ -3378,8 +3378,28 @@ class TaskTrackerTUI:
 
         flash = bool(self._sync_flash_until and now < self._sync_flash_until)
         fragments = sync_status_fragments(snapshot, enabled, flash, filter_flash)
-        fragments.append(("class:text.dim", " | "))
-        return fragments
+
+        tooltip = None
+        if snapshot.get("status_reason"):
+            tooltip = f"ПИЗДЕЦ ПЛОХО: {snapshot['status_reason']}"
+
+        def _tooltip_handler(message: str):
+            def handler(event: MouseEvent):
+                if event.event_type == MouseEventType.MOUSE_MOVE:
+                    self.set_status_message(message, ttl=3)
+                    return None
+                return NotImplemented
+            return handler
+
+        enriched: List[Tuple[str, str]] = []
+        for style, text, *rest in fragments:
+            if tooltip:
+                enriched.append((style, text, _tooltip_handler(tooltip)))
+            else:
+                enriched.append((style, text))
+
+        enriched.append(("class:text.dim", " | "))
+        return enriched
 
     @staticmethod
     def _sync_target_label(cfg) -> str:
