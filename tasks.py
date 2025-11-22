@@ -81,6 +81,11 @@ LANG_PACK = {
         "BLOCKERS": "Blockers",
         "DESCRIPTION": "Description",
         "BLOCKERS_HEADER": "Blockers",
+        "DOMAIN": "Domain",
+        "PHASE": "Phase",
+        "COMPONENT": "Component",
+        "PARENT": "Parent",
+        "DESCRIPTION_MISSING": "No description",
     },
     "ru": {
         "TITLE": "ЗАГОЛОВОК",
@@ -91,6 +96,11 @@ LANG_PACK = {
         "BLOCKERS": "Блокеры",
         "DESCRIPTION": "Описание",
         "BLOCKERS_HEADER": "Блокеры",
+        "DOMAIN": "Папка",
+        "PHASE": "Фаза",
+        "COMPONENT": "Компонент",
+        "PARENT": "Родитель",
+        "DESCRIPTION_MISSING": "Описание отсутствует",
     },
     "uk": {
         "TITLE": "ЗАГОЛОВОК",
@@ -3777,7 +3787,7 @@ class TaskTrackerTUI:
             return FormattedText([
                 ("class:text.dimmer", " Enter: сохранить | Esc: отменить"),
             ])
-        desc = self._current_description_snippet() or "Описание отсутствует"
+        desc = self._current_description_snippet() or self._t("DESCRIPTION_MISSING")
         detail = self._current_task_detail_obj()
         segments: List[str] = []
         seen: set[str] = set()
