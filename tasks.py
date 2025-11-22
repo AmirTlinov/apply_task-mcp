@@ -109,6 +109,11 @@ LANG_PACK = {
         "LANGUAGE_HINT": "Enter — cycle language (en, ru, uk, es, fr, zh, hi, ar)",
         "CLIPBOARD_EMPTY": "Clipboard is empty or unavailable",
         "OPTION_DISABLED": "Option unavailable",
+        "ERR_TASK_NOT_COMPLETE": "Not all subtasks are done",
+        "ERR_TASK_NO_CRITERIA_TESTS": "No success criteria/tests at task level",
+        "ERR_SUBTASK_NO_CRITERIA": "Subtask {idx} '{title}' has no success criteria",
+        "ERR_SUBTASK_NO_TESTS": "Subtask {idx} '{title}' has no tests",
+        "ERR_SUBTASK_CHECKPOINTS": "Confirm {items} before completing",
     },
     "ru": {
         "TITLE": "ЗАГОЛОВОК",
@@ -148,6 +153,11 @@ LANG_PACK = {
         "LANGUAGE_HINT": "Enter — переключить язык (en, ru, uk, es, fr, zh, hi, ar)",
         "CLIPBOARD_EMPTY": "Клипборд пуст или недоступен",
         "OPTION_DISABLED": "Опция недоступна",
+        "ERR_TASK_NOT_COMPLETE": "не все подзадачи выполнены",
+        "ERR_TASK_NO_CRITERIA_TESTS": "нет критериев успеха/тестов на уровне задачи",
+        "ERR_SUBTASK_NO_CRITERIA": "подзадача {idx} '{title}' не имеет критериев выполнения",
+        "ERR_SUBTASK_NO_TESTS": "подзадача {idx} '{title}' не имеет тестов",
+        "ERR_SUBTASK_CHECKPOINTS": "Отметь {items} перед завершением",
     },
     "uk": {
         "TITLE": "ЗАГОЛОВОК",
@@ -625,7 +635,9 @@ class TaskManager:
         synced = self._auto_sync_all()
         if synced:
             self.auto_sync_message = f"Auto-sync: {synced} задач"
-        self.language = get_user_lang() or "en"
+        self.language = get_user_lang() or "ru"
+        if self.language not in LANG_PACK:
+            self.language = "ru"
 
     def _t(self, key: str) -> str:
         base = LANG_PACK.get("en", {})
@@ -798,19 +810,19 @@ class TaskManager:
         # Flagship-проверка перед установкой OK
         if status == "OK":
             if task.subtasks and task.calculate_progress() < 100:
-                return False, {"code": "validation", "message": "не все подзадачи выполнены"}
+                return False, {"code": "validation", "message": self._t("ERR_TASK_NOT_COMPLETE")}
             if not task.success_criteria:
-                return False, {"code": "validation", "message": "нет критериев успеха/тестов на уровне задачи"}
+                return False, {"code": "validation", "message": self._t("ERR_TASK_NO_CRITERIA_TESTS")}
             for idx, st in enumerate(task.subtasks, 1):
                 if not st.success_criteria:
                     return False, {
                         "code": "validation",
-                        "message": f"подзадача {idx} '{st.title}' не имеет критериев выполнения",
+                        "message": self._t("ERR_SUBTASK_NO_CRITERIA").format(idx=idx, title=st.title),
                     }
                 if not st.tests:
                     return False, {
                         "code": "validation",
-                        "message": f"подзадача {idx} '{st.title}' не имеет тестов",
+                        "message": self._t("ERR_SUBTASK_NO_TESTS").format(idx=idx, title=st.title),
                     }
             task.progress = 100
         else:
