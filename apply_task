@@ -19,54 +19,33 @@ Rules:
 import sys
 import os
 import json
-from datetime import datetime, timezone
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
+try:
+    ROOT = Path(__file__).resolve().parent
+except NameError:
+    ROOT = Path.cwd()
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-def _iso_timestamp():
-    return datetime.now(timezone.utc).isoformat()
+from core.desktop.devtools.interface import cli_runtime
 
-
-HISTORY_PATH = Path(os.environ.get("APPLY_TASK_HISTORY") or Path.home() / ".cache" / "apply_task" / "history.jsonl")
-SKIP_HISTORY_ENV = "APPLY_TASK_SKIP_HISTORY"
-LAST_POINTER = Path(".last")
+HISTORY_PATH = cli_runtime.HISTORY_PATH
+SKIP_HISTORY_ENV = cli_runtime.SKIP_HISTORY_ENV
+LAST_POINTER = cli_runtime.LAST_POINTER
 
 
 def record_history(argv) -> None:
-    HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
-    entry = {"timestamp": _iso_timestamp(), "args": argv}
-    with HISTORY_PATH.open("a", encoding="utf-8") as fp:
-        fp.write(json.dumps(entry, ensure_ascii=False))
-        fp.write("\n")
+    cli_runtime.record_history(argv, history_path=HISTORY_PATH)
 
 
 def load_history():
-    if not HISTORY_PATH.exists():
-        return []
-    entries = []
-    with HISTORY_PATH.open("r", encoding="utf-8") as fp:
-        for line in fp:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entries.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-    return entries
+    return cli_runtime.load_history(history_path=HISTORY_PATH)
 
 
 def read_last_pointer():
-    if not LAST_POINTER.exists():
-        return None, None
-    raw = LAST_POINTER.read_text(encoding="utf-8").strip()
-    if not raw:
-        return None, None
-    if "@" in raw:
-        tid, domain = raw.split("@", 1)
-        return tid or None, domain or ""
-    return raw, ""
+    return cli_runtime.read_last_pointer(pointer_path=LAST_POINTER)
 
 
 def emit_cli(command: str, *, status: str = "OK", message: str = "", payload=None, summary: str = None, exit_code: int = 0):
@@ -74,7 +53,7 @@ def emit_cli(command: str, *, status: str = "OK", message: str = "", payload=Non
         "command": command,
         "status": status,
         "message": message,
-        "timestamp": _iso_timestamp(),
+        "timestamp": cli_runtime._iso_timestamp(),
         "payload": payload or {},
     }
     if summary:
@@ -84,73 +63,58 @@ def emit_cli(command: str, *, status: str = "OK", message: str = "", payload=Non
 
 
 def find_git_root():
-    """Находит корень git проекта"""
     try:
         result = subprocess.run(
-            ['git', 'rev-parse', '--show-toplevel'],
+            ["git", "rev-parse", "--show-toplevel"],
             capture_output=True,
             text=True,
-            check=True
+            check=True,
         )
-        return Path(result.stdout.strip())
+        root = Path(result.stdout.strip())
+        return root if root.exists() else None
     except (subprocess.CalledProcessError, FileNotFoundError):
         return None
 
 
 def find_tasks_py(verbose: bool = False):
-    """
-    Находит tasks.py с приоритетом на git проект.
-
-    Возвращает (path, source), где source ∈ {"env", "git", "cwd", "parent", "script"}.
-
-    Логика поиска:
-    1. Если внутри git проекта → ищет tasks.py в корне git
-    2. Если не git или нет tasks.py в корне → ищет вверх по дереву
-    3. Если не найдено → использует tasks.py рядом со скриптом
-    """
     current = Path.cwd()
 
-    # Явный override через переменную окружения
     env_override = os.environ.get("APPLY_TASKS_PY")
     if env_override:
         candidate = Path(env_override).expanduser().resolve()
         if candidate.exists():
             return candidate, "env"
 
-    # Приоритет 1: Корень git проекта
     git_root = find_git_root()
     if git_root:
-        tasks_in_git = git_root / 'tasks.py'
+        tasks_in_git = git_root / "tasks.py"
         if tasks_in_git.exists():
             return tasks_in_git.resolve(), "git"
 
-    # Приоритет 2: Текущая директория
-    if (current / 'tasks.py').exists():
-        return (current / 'tasks.py'), "cwd"
+    if (current / "tasks.py").exists():
+        return (current / "tasks.py"), "cwd"
 
-    # Приоритет 3: Родительские директории (до корня git или файловой системы)
     search_limit = git_root if git_root else None
     for parent in current.parents:
         if search_limit and parent == search_limit.parent:
             break
-        if (parent / 'tasks.py').exists():
-            return (parent / 'tasks.py').resolve(), "parent"
+        candidate = parent / "tasks.py"
+        if candidate.exists():
+            return candidate.resolve(), "parent"
 
-    # Приоритет 4: Директория скрипта (fallback)
     script_dir = Path(__file__).resolve().parent
-    if (script_dir / 'tasks.py').exists():
-        return (script_dir / 'tasks.py').resolve(), "script"
+    fallback = script_dir / "tasks.py"
+    if fallback.exists():
+        return fallback.resolve(), "script"
 
     return None, None
 
 
 def explain_source(source: str, path: Path):
-    """Пояснение, откуда взят tasks.py (для --verbose)."""
-    return f"[apply_task] using {source}: {path}"
+    return cli_runtime.explain_source(source, path)
 
 
 def run_tasks_py(args, verbose: bool = False):
-    """Выполняет tasks.py с аргументами"""
     tasks_py, source = find_tasks_py(verbose=verbose)
     git_root = find_git_root()
 
