@@ -109,11 +109,80 @@ LANG_PACK = {
         "LANGUAGE_HINT": "Enter — cycle language (en, ru, uk, es, fr, zh, hi, ar)",
         "CLIPBOARD_EMPTY": "Clipboard is empty or unavailable",
         "OPTION_DISABLED": "Option unavailable",
+        "VALUE_NOT_AVAILABLE": "n/a",
         "ERR_TASK_NOT_COMPLETE": "Not all subtasks are done",
         "ERR_TASK_NO_CRITERIA_TESTS": "No success criteria/tests at task level",
         "ERR_SUBTASK_NO_CRITERIA": "Subtask {idx} '{title}' has no success criteria",
         "ERR_SUBTASK_NO_TESTS": "Subtask {idx} '{title}' has no tests",
         "ERR_SUBTASK_CHECKPOINTS": "Confirm {items} before completing",
+        "STATUS_MESSAGE_PUSH_OK": "Git push completed",
+        "STATUS_MESSAGE_PUSH_FAIL": "Push failed: {error}",
+        "STATUS_MESSAGE_BOOTSTRAP_ERROR": "Git bootstrap error: {error}",
+        "STATUS_MESSAGE_BOOTSTRAP_FAILED": "Git bootstrap failed: {error}",
+        "STATUS_MESSAGE_REFRESHED": "Projects cache refreshed",
+        "STATUS_MESSAGE_OPTION_DISABLED": "Option unavailable",
+        "STATUS_MESSAGE_PAT_MISSING": "PAT missing",
+        "STATUS_MESSAGE_PROMPT_PAT": "Enter PAT for validation",
+        "STATUS_MESSAGE_RATE_LIMIT": "Rate limit: remaining {remaining}; wait {seconds}s",
+        "STATUS_MESSAGE_CLI_UPDATED": "↻ CLI: tasks updated (external change)",
+        "STATUS_MESSAGE_AUTO_SYNC": "Auto-sync: {count} tasks",
+        "STATUS_MESSAGE_LANG_SET": "Language set to {lang}",
+        "STATUS_MESSAGE_PAT_SAVED": "PAT saved",
+        "STATUS_MESSAGE_PAT_CLEARED": "PAT cleared",
+        "STATUS_MESSAGE_PROJECT_NUMBER_REQUIRED": "Project number must be a positive integer",
+        "STATUS_MESSAGE_PROJECT_NUMBER_UPDATED": "Project number updated",
+        "STATUS_MESSAGE_POOL_INTEGER": "Pool must be an integer (0=auto)",
+        "STATUS_MESSAGE_POOL_UPDATED": "Pool size updated",
+        "STATUS_MESSAGE_CHECKPOINTS_REQUIRED": "Checkpoints are not confirmed",
+        "STATUS_MESSAGE_PROJECT_OPEN": "Opening GitHub Project → {url}",
+        "STATUS_MESSAGE_OPEN_FAILED": "Could not open link: {error}",
+        "STATUS_MESSAGE_PROJECT_URL_UNAVAILABLE": "Project URL unavailable",
+        "STATUS_MESSAGE_PASTE_PAT": "Paste PAT (leave empty to clear)",
+        "STATUS_MESSAGE_SYNC_ON": "Sync enabled",
+        "STATUS_MESSAGE_SYNC_OFF": "Sync disabled",
+        "STATUS_MESSAGE_VALIDATING": "Validating...",
+        "STATUS_MESSAGE_VALIDATE_LABEL": "Validating {label}",
+        "ERR_TASK_NOT_FOUND": "Task {task_id} not found",
+        "SETTINGS_NAV_HINT": "Up/Down — select, Enter — action, Esc — close",
+        "SETTINGS_STATUS_LABEL": "Sync status",
+        "SETTINGS_STATUS_HINT": "Current sync availability",
+        "SETTINGS_STATUS_ON": "Sync ON",
+        "SETTINGS_STATUS_OFF": "Sync OFF ({reason})",
+        "SETTINGS_PAT_LABEL": "GitHub PAT",
+        "SETTINGS_PAT_SAVED": "Saved (…{preview})",
+        "SETTINGS_PAT_ENV": "ENV {env}",
+        "SETTINGS_PAT_NOT_SET": "Not set",
+        "SETTINGS_PAT_HINT": "Enter — paste new PAT or leave empty to clear",
+        "SETTINGS_SYNC_LABEL": "Sync",
+        "SETTINGS_SYNC_HINT": "Enter — toggle auto-sync",
+        "SETTINGS_SYNC_NO_REMOTE": "Unavailable (no git remote)",
+        "SETTINGS_SYNC_DISABLED": "Disabled",
+        "SETTINGS_SYNC_NO_PAT": "Unavailable (no PAT)",
+        "SETTINGS_SYNC_ENABLED": "Enabled",
+        "SETTINGS_PROJECT_LABEL": "GitHub Project",
+        "SETTINGS_PROJECT_UNAVAILABLE": "unavailable",
+        "SETTINGS_BOOTSTRAP_LABEL": "Initialize git + origin",
+        "SETTINGS_BOOTSTRAP_VALUE": "Create repo and push",
+        "SETTINGS_BOOTSTRAP_HINT": "Enter — provide URL (https://github.com/owner/repo.git); will run git init/add/push",
+        "SETTINGS_PROJECT_URL_LABEL": "Project URL",
+        "SETTINGS_PROJECT_URL_HINT": "g — open in browser",
+        "SETTINGS_PROJECT_NUMBER_LABEL": "Project number",
+        "SETTINGS_PROJECT_NUMBER_HINT": "Enter — update Project v2 number",
+        "SETTINGS_POOL_LABEL": "Sync pool",
+        "SETTINGS_POOL_HINT": "Enter — set sync pool size (0=auto). Limits API budget.",
+        "SETTINGS_LAST_PULL_LABEL": "Last pull/push",
+        "SETTINGS_LAST_PULL_HINT": "Updated after successful sync",
+        "SETTINGS_RATE_LABEL": "Rate limit",
+        "SETTINGS_RATE_HINT": "GitHub remaining/reset (updates after requests)",
+        "SETTINGS_REMOTE_LABEL": "Git remote",
+        "SETTINGS_REMOTE_HINT": "Used to auto-detect Projects; change via git remote set-url origin",
+        "SETTINGS_REFRESH_LABEL": "Reload fields",
+        "SETTINGS_REFRESH_VALUE": "Refresh GraphQL cache",
+        "SETTINGS_REFRESH_HINT": "Enter — reset Projects fields cache before sync",
+        "SETTINGS_REFRESH_DISABLED": "Need selected project and PAT",
+        "SETTINGS_VALIDATE_PAT_LABEL": "Validate PAT",
+        "SETTINGS_VALIDATE_PAT_HINT": "Enter — validate token via GitHub GraphQL",
+        "SETTINGS_VALIDATE_PAT_DISABLED": "Save PAT first",
     },
     "ru": {
         "TITLE": "ЗАГОЛОВОК",
@@ -153,11 +222,80 @@ LANG_PACK = {
         "LANGUAGE_HINT": "Enter — переключить язык (en, ru, uk, es, fr, zh, hi, ar)",
         "CLIPBOARD_EMPTY": "Клипборд пуст или недоступен",
         "OPTION_DISABLED": "Опция недоступна",
+        "VALUE_NOT_AVAILABLE": "н/д",
         "ERR_TASK_NOT_COMPLETE": "не все подзадачи выполнены",
         "ERR_TASK_NO_CRITERIA_TESTS": "нет критериев успеха/тестов на уровне задачи",
         "ERR_SUBTASK_NO_CRITERIA": "подзадача {idx} '{title}' не имеет критериев выполнения",
         "ERR_SUBTASK_NO_TESTS": "подзадача {idx} '{title}' не имеет тестов",
         "ERR_SUBTASK_CHECKPOINTS": "Отметь {items} перед завершением",
+        "STATUS_MESSAGE_PUSH_OK": "Git пуш завершён",
+        "STATUS_MESSAGE_PUSH_FAIL": "Push не удался: {error}",
+        "STATUS_MESSAGE_BOOTSTRAP_ERROR": "Git bootstrap ошибка: {error}",
+        "STATUS_MESSAGE_BOOTSTRAP_FAILED": "Git bootstrap не удался: {error}",
+        "STATUS_MESSAGE_REFRESHED": "Кеш Projects обновлён",
+        "STATUS_MESSAGE_OPTION_DISABLED": "Опция недоступна",
+        "STATUS_MESSAGE_PAT_MISSING": "PAT отсутствует",
+        "STATUS_MESSAGE_PROMPT_PAT": "Введи PAT для проверки",
+        "STATUS_MESSAGE_RATE_LIMIT": "Rate limit: осталось {remaining}; ждать {seconds}с",
+        "STATUS_MESSAGE_CLI_UPDATED": "↻ CLI: задачи обновлены (внешнее изменение)",
+        "STATUS_MESSAGE_AUTO_SYNC": "Auto-sync: {count} задач",
+        "STATUS_MESSAGE_LANG_SET": "Язык установлен: {lang}",
+        "STATUS_MESSAGE_PAT_SAVED": "PAT сохранён",
+        "STATUS_MESSAGE_PAT_CLEARED": "PAT очищен",
+        "STATUS_MESSAGE_PROJECT_NUMBER_REQUIRED": "Номер проекта должен быть положительным целым",
+        "STATUS_MESSAGE_PROJECT_NUMBER_UPDATED": "Номер проекта обновлён",
+        "STATUS_MESSAGE_POOL_INTEGER": "Пул должен быть целым (0=auto)",
+        "STATUS_MESSAGE_POOL_UPDATED": "Размер пула обновлён",
+        "STATUS_MESSAGE_CHECKPOINTS_REQUIRED": "Чекпоинты не подтверждены",
+        "STATUS_MESSAGE_PROJECT_OPEN": "Открываю GitHub Project → {url}",
+        "STATUS_MESSAGE_OPEN_FAILED": "Не удалось открыть ссылку: {error}",
+        "STATUS_MESSAGE_PROJECT_URL_UNAVAILABLE": "Project URL недоступен",
+        "STATUS_MESSAGE_PASTE_PAT": "Вставь PAT (оставь пустым чтобы очистить)",
+        "STATUS_MESSAGE_SYNC_ON": "Синхронизация включена",
+        "STATUS_MESSAGE_SYNC_OFF": "Синхронизация выключена",
+        "STATUS_MESSAGE_VALIDATING": "Проверка...",
+        "STATUS_MESSAGE_VALIDATE_LABEL": "Проверка {label}",
+        "ERR_TASK_NOT_FOUND": "Задача {task_id} не найдена",
+        "SETTINGS_NAV_HINT": "Вверх/вниз — выбор, Enter — действие, Esc — закрыть",
+        "SETTINGS_STATUS_LABEL": "Статус sync",
+        "SETTINGS_STATUS_HINT": "Текущая доступность синхронизации",
+        "SETTINGS_STATUS_ON": "Sync ON",
+        "SETTINGS_STATUS_OFF": "Sync OFF ({reason})",
+        "SETTINGS_PAT_LABEL": "GitHub PAT",
+        "SETTINGS_PAT_SAVED": "Сохранён (…{preview})",
+        "SETTINGS_PAT_ENV": "ENV {env}",
+        "SETTINGS_PAT_NOT_SET": "Не задан",
+        "SETTINGS_PAT_HINT": "Enter — вставь новый PAT или оставь пустым, чтобы очистить",
+        "SETTINGS_SYNC_LABEL": "Синхронизация",
+        "SETTINGS_SYNC_HINT": "Enter — включить или выключить автоматическую синхронизацию",
+        "SETTINGS_SYNC_NO_REMOTE": "Недоступна (нет git remote)",
+        "SETTINGS_SYNC_DISABLED": "Выключена",
+        "SETTINGS_SYNC_NO_PAT": "Недоступна (нет PAT)",
+        "SETTINGS_SYNC_ENABLED": "Включена",
+        "SETTINGS_PROJECT_LABEL": "Проект GitHub",
+        "SETTINGS_PROJECT_UNAVAILABLE": "недоступно",
+        "SETTINGS_BOOTSTRAP_LABEL": "Инициализировать git + origin",
+        "SETTINGS_BOOTSTRAP_VALUE": "Создать репо и push",
+        "SETTINGS_BOOTSTRAP_HINT": "Enter — ввести URL (https://github.com/owner/repo.git), будет git init/add/push",
+        "SETTINGS_PROJECT_URL_LABEL": "Project URL",
+        "SETTINGS_PROJECT_URL_HINT": "g — открыть в браузере",
+        "SETTINGS_PROJECT_NUMBER_LABEL": "Номер проекта",
+        "SETTINGS_PROJECT_NUMBER_HINT": "Enter — обновить номер Project v2",
+        "SETTINGS_POOL_LABEL": "Пул потоков",
+        "SETTINGS_POOL_HINT": "Enter — задать размер пула sync (0=auto). Ограничивает API бюджет.",
+        "SETTINGS_LAST_PULL_LABEL": "Последний pull/push",
+        "SETTINGS_LAST_PULL_HINT": "Обновляется после успешной синхронизации",
+        "SETTINGS_RATE_LABEL": "Rate limit",
+        "SETTINGS_RATE_HINT": "GitHub remaining/reset (обновляется после запросов)",
+        "SETTINGS_REMOTE_LABEL": "Git remote",
+        "SETTINGS_REMOTE_HINT": "Используется для автоопределения Projects; меняется через git remote set-url origin",
+        "SETTINGS_REFRESH_LABEL": "Перечитать поля",
+        "SETTINGS_REFRESH_VALUE": "Обновить кеш GraphQL",
+        "SETTINGS_REFRESH_HINT": "Enter — сбросить кеш полей Projects перед синхронизацией",
+        "SETTINGS_REFRESH_DISABLED": "Нужен выбранный проект и PAT",
+        "SETTINGS_VALIDATE_PAT_LABEL": "Проверить PAT",
+        "SETTINGS_VALIDATE_PAT_HINT": "Enter — проверить токен через GitHub GraphQL",
+        "SETTINGS_VALIDATE_PAT_DISABLED": "Сначала сохрани PAT",
     },
     "uk": {
         "TITLE": "ЗАГОЛОВОК",
@@ -374,6 +512,29 @@ LANG_PACK = {
         "OPTION_DISABLED": "الخيار غير متاح",
     },
 }
+
+
+def _fill_lang_pack_defaults() -> None:
+    base = LANG_PACK.get("en", {})
+    for lang, values in LANG_PACK.items():
+        if lang == "en":
+            continue
+        for key, val in base.items():
+            values.setdefault(key, val)
+
+
+_fill_lang_pack_defaults()
+
+
+def translate(key: str, lang: Optional[str] = None, **kwargs) -> str:
+    base = LANG_PACK.get("en", {})
+    active_lang = lang or get_user_lang() or "en"
+    lang_map = LANG_PACK.get(active_lang, base)
+    template = lang_map.get(key) or base.get(key, key)
+    try:
+        return template.format(**kwargs)
+    except Exception:
+        return template
 
 
 def _get_sync_service() -> ProjectsSyncService:
@@ -630,20 +791,16 @@ class TaskManager:
         base_sync = sync_service or (ProjectsSyncService(sync_provider()) if sync_provider else ProjectsSyncService(get_projects_sync()))
         self.sync_service: SyncService = base_sync
         self.config = self.load_config()
+        lang = get_user_lang() or "en"
+        self.language = lang if lang in LANG_PACK else "en"
         self.auto_sync_message = ""
         self.last_sync_error = ""
         synced = self._auto_sync_all()
         if synced:
-            self.auto_sync_message = f"Auto-sync: {synced} задач"
-        self.language = get_user_lang() or "ru"
-        if self.language not in LANG_PACK:
-            self.language = "ru"
+            self.auto_sync_message = translate("STATUS_MESSAGE_AUTO_SYNC", lang=self.language, count=synced)
 
-    def _t(self, key: str) -> str:
-        base = LANG_PACK.get("en", {})
-        lang = getattr(self, "language", "en")
-        lang_map = LANG_PACK.get(lang, LANG_PACK.get("en", {}))
-        return lang_map.get(key) or base.get(key, key)
+    def _t(self, key: str, **kwargs) -> str:
+        return translate(key, lang=getattr(self, "language", "en"), **kwargs)
 
     @staticmethod
     def sanitize_domain(domain: Optional[str]) -> str:
@@ -806,7 +963,7 @@ class TaskManager:
     def update_task_status(self, task_id: str, status: str, domain: str = "") -> Tuple[bool, Optional[Dict[str, str]]]:
         task = self.load_task(task_id, domain)
         if not task:
-            return False, {"code": "not_found", "message": f"Задача {task_id} не найдена"}
+            return False, {"code": "not_found", "message": self._t("ERR_TASK_NOT_FOUND", task_id=task_id)}
         # Flagship-проверка перед установкой OK
         if status == "OK":
             if task.subtasks and task.calculate_progress() < 100:
@@ -1847,13 +2004,14 @@ class TaskTrackerTUI:
             # push
             push = subprocess.run(["git", "push", "-u", "origin", "main"], cwd=repo_root, capture_output=True, text=True)
             if push.returncode == 0:
-                self.set_status_message("Git пуш завершён", ttl=4)
+                self.set_status_message(self._t("STATUS_MESSAGE_PUSH_OK"), ttl=4)
             else:
-                self.set_status_message(f"Push не удался: {push.stderr[:80]}", ttl=6)
+                self.set_status_message(self._t("STATUS_MESSAGE_PUSH_FAIL", error=push.stderr[:80]), ttl=6)
         except subprocess.CalledProcessError as exc:
-            self.set_status_message(f"Git bootstrap ошибка: {exc.stderr.decode()[:80] if exc.stderr else exc}", ttl=6)
+            err_text = exc.stderr.decode()[:80] if exc.stderr else str(exc)
+            self.set_status_message(self._t("STATUS_MESSAGE_BOOTSTRAP_ERROR", error=err_text), ttl=6)
         except Exception as exc:  # pragma: no cover - best effort
-            self.set_status_message(f"Git bootstrap не удался: {exc}", ttl=6)
+            self.set_status_message(self._t("STATUS_MESSAGE_BOOTSTRAP_FAILED", error=exc), ttl=6)
 
     def force_render(self) -> None:
         app = getattr(self, "app", None)
@@ -1949,11 +2107,8 @@ class TaskTrackerTUI:
             return extra
         return f"{base} {extra}"
 
-    def _t(self, key: str) -> str:
-        base = LANG_PACK.get("en", {})
-        lang = getattr(self, "language", "en")
-        lang_map = LANG_PACK.get(lang, LANG_PACK.get("en", {}))
-        return lang_map.get(key) or base.get(key, key)
+    def _t(self, key: str, **kwargs) -> str:
+        return translate(key, lang=getattr(self, "language", "en"), **kwargs)
 
     def _cycle_language(self) -> None:
         order = list(LANG_PACK.keys())
@@ -1965,7 +2120,7 @@ class TaskTrackerTUI:
         next_lang = order[(idx + 1) % len(order)]
         self.language = next_lang
         set_user_lang(next_lang)
-        self.set_status_message(f"Language set to {next_lang}")
+        self.set_status_message(self._t("STATUS_MESSAGE_LANG_SET", lang=next_lang))
         self.force_render()
 
     def _flatten_detail_subtasks(self, subtasks: List[SubTask], prefix: str = "", level: int = 0) -> List[Tuple[str, SubTask, int, bool, bool]]:
@@ -2696,7 +2851,7 @@ class TaskTrackerTUI:
 
             self.load_tasks(preserve_selection=True, selected_task_file=selected_task_file, skip_sync=True)
             self._last_signature = sig
-            self.set_status_message("↻ CLI: задачи обновлены (внешнее изменение)", ttl=3)
+            self.set_status_message(self._t("STATUS_MESSAGE_CLI_UPDATED"), ttl=3)
 
             if prev_detail:
                 for t in self.tasks:
@@ -2722,7 +2877,7 @@ class TaskTrackerTUI:
         wait = snapshot.get("rate_wait") or 0
         remaining = snapshot.get("rate_remaining")
         if wait > 0 and wait != self._last_rate_wait:
-            message = f"Rate limit: осталось {remaining if remaining is not None else '?'}; ждать {int(wait)}с"
+            message = self._t("STATUS_MESSAGE_RATE_LIMIT", remaining=remaining if remaining is not None else "?", seconds=int(wait))
             self.set_status_message(message, ttl=5)
             self._last_rate_wait = wait
         if self.phase_filter:
@@ -3753,7 +3908,7 @@ class TaskTrackerTUI:
                 domain = self.current_task_detail.domain
                 ok, msg = self.manager.set_subtask(self.current_task_detail.id, 0, desired, domain, path=path)
                 if not ok:
-                    self.set_status_message(msg or "Чекпоинты не подтверждены")
+                    self.set_status_message(msg or self._t("STATUS_MESSAGE_CHECKPOINTS_REQUIRED"))
                     return
                 updated = self.manager.load_task(self.current_task_detail.id, domain)
                 if updated:
@@ -3785,9 +3940,9 @@ class TaskTrackerTUI:
         if context == 'token':
             set_user_token(new_value)
             if new_value:
-                self.set_status_message("PAT сохранён")
+                self.set_status_message(self._t("STATUS_MESSAGE_PAT_SAVED"))
             else:
-                self.set_status_message("PAT очищен")
+                self.set_status_message(self._t("STATUS_MESSAGE_PAT_CLEARED"))
             self.cancel_edit()
             if self.settings_mode:
                 self.force_render()
@@ -3799,10 +3954,10 @@ class TaskTrackerTUI:
                 if number_value <= 0:
                     raise ValueError
             except ValueError:
-                self.set_status_message("Номер проекта должен быть положительным целым")
+                self.set_status_message(self._t("STATUS_MESSAGE_PROJECT_NUMBER_REQUIRED"))
             else:
                 self._set_project_number(number_value)
-                self.set_status_message("Номер проекта обновлён")
+                self.set_status_message(self._t("STATUS_MESSAGE_PROJECT_NUMBER_UPDATED"))
             self.cancel_edit()
             if self.settings_mode:
                 self.force_render()
@@ -3813,11 +3968,11 @@ class TaskTrackerTUI:
                 if workers_value < 0:
                     raise ValueError
             except ValueError:
-                self.set_status_message("Пул должен быть целым (0=auto)")
+                self.set_status_message(self._t("STATUS_MESSAGE_POOL_INTEGER"))
             else:
                 update_project_workers(None if workers_value == 0 else workers_value)
                 reload_projects_sync()
-                self.set_status_message("Размер пула обновлён")
+                self.set_status_message(self._t("STATUS_MESSAGE_POOL_UPDATED"))
             self.cancel_edit()
             if self.settings_mode:
                 self.force_render()
@@ -4209,7 +4364,7 @@ class TaskTrackerTUI:
             lines.append(('class:border', ' |\n'))
 
         lines.append(('class:border', '+' + '-'*width + '+\n'))
-        hint = "Вверх/вниз — выбор, Enter — действие, Esc — закрыть"
+        hint = self._t("SETTINGS_NAV_HINT")
         lines.append(('class:border', '| '))
         lines.append(('class:text.dim', hint[:width - 2].ljust(width - 2)))
         lines.append(('class:border', ' |\n'))
@@ -4219,38 +4374,39 @@ class TaskTrackerTUI:
     def _settings_options(self) -> List[Dict[str, Any]]:
         snapshot = self._project_config_snapshot()
         options: List[Dict[str, Any]] = []
-        status_line = "Sync ON" if snapshot.get("runtime_enabled") else f"Sync OFF ({snapshot.get('status_reason')})"
+        status_reason = snapshot.get("status_reason") or "n/a"
+        status_line = self._t("SETTINGS_STATUS_ON") if snapshot.get("runtime_enabled") else self._t("SETTINGS_STATUS_OFF").format(reason=status_reason)
         options.append({
-            "label": "Статус sync",
+            "label": self._t("SETTINGS_STATUS_LABEL"),
             "value": status_line,
-            "hint": snapshot.get("status_reason") or "Текущая доступность синхронизации",
+            "hint": snapshot.get("status_reason") or self._t("SETTINGS_STATUS_HINT"),
             "action": None,
         })
         if snapshot['token_saved']:
-            pat_value = f"Сохранён (…{snapshot['token_preview']})"
+            pat_value = self._t("SETTINGS_PAT_SAVED").format(preview=snapshot['token_preview'])
         elif snapshot['token_env']:
-            pat_value = f"ENV {snapshot['token_env']}"
+            pat_value = self._t("SETTINGS_PAT_ENV").format(env=snapshot['token_env'])
         else:
-            pat_value = "Не задан"
+            pat_value = self._t("SETTINGS_PAT_NOT_SET")
         options.append({
-            "label": "GitHub PAT",
+            "label": self._t("SETTINGS_PAT_LABEL"),
             "value": pat_value,
-            "hint": "Enter — вставь новый PAT или оставь пустым, чтобы очистить",
+            "hint": self._t("SETTINGS_PAT_HINT"),
             "action": "edit_pat",
         })
 
         if not snapshot['config_exists']:
-            sync_value = "Недоступна (нет git remote)"
+            sync_value = self._t("SETTINGS_SYNC_NO_REMOTE")
         elif not snapshot['config_enabled']:
-            sync_value = "Выключена"
+            sync_value = self._t("SETTINGS_SYNC_DISABLED")
         elif not snapshot['token_active']:
-            sync_value = "Недоступна (нет PAT)"
+            sync_value = self._t("SETTINGS_SYNC_NO_PAT")
         else:
-            sync_value = "Включена"
+            sync_value = self._t("SETTINGS_SYNC_ENABLED")
         options.append({
-            "label": "Синхронизация",
+            "label": self._t("SETTINGS_SYNC_LABEL"),
             "value": sync_value,
-            "hint": "Enter — включить или выключить автоматическую синхронизацию",
+            "hint": self._t("SETTINGS_SYNC_HINT"),
             "action": "toggle_sync",
             "disabled": not snapshot['config_exists'],
             "disabled_msg": snapshot['status_reason'] if not snapshot['config_exists'] else "",
@@ -4259,12 +4415,12 @@ class TaskTrackerTUI:
         target_value = snapshot['target_label']
         target_hint = snapshot['target_hint']
         if not snapshot['config_exists']:
-            target_value = "недоступно"
-            target_hint = snapshot['status_reason'] or "нет git remote"
+            target_value = self._t("SETTINGS_PROJECT_UNAVAILABLE")
+            target_hint = snapshot['status_reason'] or self._t("STATUS_MESSAGE_PROJECT_URL_UNAVAILABLE")
         elif snapshot['status_reason'] and not snapshot['config_enabled']:
             target_hint = snapshot['status_reason']
         options.append({
-            "label": "Проект GitHub",
+            "label": self._t("SETTINGS_PROJECT_LABEL"),
             "value": target_value,
             "hint": snapshot['target_hint'],
             "action": None,
@@ -4272,75 +4428,75 @@ class TaskTrackerTUI:
 
         if not snapshot['config_exists'] or snapshot['status_reason'].lower().startswith("нет конфигурации") or "remote origin" in snapshot['status_reason']:
             options.append({
-                "label": "Инициализировать git + origin",
-                "value": "Создать репо и push",
-                "hint": "Enter — ввести URL (https://github.com/owner/repo.git), будет git init/add/push",
+                "label": self._t("SETTINGS_BOOTSTRAP_LABEL"),
+                "value": self._t("SETTINGS_BOOTSTRAP_VALUE"),
+                "hint": self._t("SETTINGS_BOOTSTRAP_HINT"),
                 "action": "bootstrap_git",
             })
 
         options.append({
-            "label": "Project URL",
-            "value": snapshot.get("project_url") or "недоступно",
-            "hint": "g — открыть в браузере",
+            "label": self._t("SETTINGS_PROJECT_URL_LABEL"),
+            "value": snapshot.get("project_url") or self._t("SETTINGS_PROJECT_UNAVAILABLE"),
+            "hint": self._t("SETTINGS_PROJECT_URL_HINT"),
             "action": None,
         })
 
         options.append({
-            "label": "Номер проекта",
+            "label": self._t("SETTINGS_PROJECT_NUMBER_LABEL"),
             "value": str(snapshot['number']) if snapshot['number'] else '—',
-            "hint": "Enter — обновить номер Project v2",
+            "hint": self._t("SETTINGS_PROJECT_NUMBER_HINT"),
             "action": "edit_number",
         })
 
         options.append({
-            "label": "Пул потоков",
+            "label": self._t("SETTINGS_POOL_LABEL"),
             "value": str(snapshot.get("workers")) if snapshot.get("workers") else "auto",
-            "hint": "Enter — задать размер пула sync (0=auto). Ограничивает API бюджет.",
+            "hint": self._t("SETTINGS_POOL_HINT"),
             "action": "edit_workers",
         })
 
         options.append({
-            "label": "Последний pull/push",
+            "label": self._t("SETTINGS_LAST_PULL_LABEL"),
             "value": f"{snapshot.get('last_pull') or '—'} / {snapshot.get('last_push') or '—'}",
-            "hint": "Обновляется после успешной синхронизации",
+            "hint": self._t("SETTINGS_LAST_PULL_HINT"),
             "action": None,
         })
-        rate_value = "н/д"
+        rate_value = self._t("VALUE_NOT_AVAILABLE")
         if snapshot.get("rate_remaining") is not None:
             rate_value = f"{snapshot['rate_remaining']} @ {snapshot.get('rate_reset_human') or '—'}"
             if snapshot.get("rate_wait"):
                 rate_value = f"{rate_value} wait={int(snapshot['rate_wait'])}s"
         options.append({
-            "label": "Rate limit",
+            "label": self._t("SETTINGS_RATE_LABEL"),
             "value": rate_value,
-            "hint": "GitHub remaining/reset (обновляется после запросов)",
+            "hint": self._t("SETTINGS_RATE_HINT"),
             "action": None,
         })
         options.append({
-            "label": "Git remote",
-            "value": snapshot.get("origin_url") or "не задан",
-            "hint": "Используется для автоопределения Projects; меняется через git remote set-url origin",
+            "label": self._t("SETTINGS_REMOTE_LABEL"),
+            "value": snapshot.get("origin_url") or self._t("SETTINGS_PAT_NOT_SET"),
+            "hint": self._t("SETTINGS_REMOTE_HINT"),
             "action": None,
         })
 
         options.append({
-            "label": "Перечитать поля",
-            "value": "Обновить кеш GraphQL",
-            "hint": "Enter — сбросить кеш полей Projects перед синхронизацией",
+            "label": self._t("SETTINGS_REFRESH_LABEL"),
+            "value": self._t("SETTINGS_REFRESH_VALUE"),
+            "hint": self._t("SETTINGS_REFRESH_HINT"),
             "action": "refresh_metadata",
             "disabled": not (snapshot['config_exists'] and snapshot['token_active']),
-            "disabled_msg": "Нужен выбранный проект и PAT",
+            "disabled_msg": self._t("SETTINGS_REFRESH_DISABLED"),
         })
         options.append({
-            "label": "Проверить PAT",
+            "label": self._t("SETTINGS_VALIDATE_PAT_LABEL"),
             "value": self.pat_validation_result or "GitHub viewer",
-            "hint": "Enter — проверить токен через GitHub GraphQL",
+            "hint": self._t("SETTINGS_VALIDATE_PAT_HINT"),
             "action": "validate_pat",
             "disabled": not (snapshot['token_saved'] or snapshot['token_env']),
-            "disabled_msg": "Сначала сохрани PAT",
+            "disabled_msg": self._t("SETTINGS_VALIDATE_PAT_DISABLED"),
         })
         options.append({
-            "label": "Language / Язык",
+            "label": f"{self._t('LANGUAGE_LABEL')} / Language",
             "value": self.language,
             "hint": self._t("LANGUAGE_HINT"),
             "action": "cycle_lang",
@@ -4407,11 +4563,11 @@ class TaskTrackerTUI:
         if url:
             try:
                 webbrowser.open(url)
-                self.set_status_message(f"Открываю GitHub Project → {url}", ttl=3)
+                self.set_status_message(self._t("STATUS_MESSAGE_PROJECT_OPEN", url=url), ttl=3)
             except Exception as exc:  # pragma: no cover - platform dependent
-                self.set_status_message(f"Не удалось открыть ссылку: {exc}", ttl=4)
+                self.set_status_message(self._t("STATUS_MESSAGE_OPEN_FAILED", error=exc), ttl=4)
         else:
-            self.set_status_message("Project URL недоступен")
+            self.set_status_message(self._t("STATUS_MESSAGE_PROJECT_URL_UNAVAILABLE"))
 
     @staticmethod
     def _origin_url() -> str:
@@ -4451,15 +4607,15 @@ class TaskTrackerTUI:
         if not action:
             return
         if action == "edit_pat":
-            self.set_status_message("Вставь PAT (оставь пустым чтобы очистить)")
+            self.set_status_message(self._t("STATUS_MESSAGE_PASTE_PAT"))
             self.start_editing('token', '', None)
             self.edit_buffer.cursor_position = 0
         elif action == "toggle_sync":
             snapshot = self._project_config_snapshot()
             desired = not snapshot['config_enabled']
             update_projects_enabled(desired)
-            state = "включена" if desired else "выключена"
-            self.set_status_message(f"Синхронизация {state}")
+            state = self._t("STATUS_MESSAGE_SYNC_ON") if desired else self._t("STATUS_MESSAGE_SYNC_OFF")
+            self.set_status_message(state)
             self.force_render()
         elif action == "edit_number":
             snapshot = self._project_config_snapshot()
@@ -4475,14 +4631,14 @@ class TaskTrackerTUI:
             self.edit_buffer.cursor_position = 0
         elif action == "refresh_metadata":
             reload_projects_sync()
-            self.set_status_message("Кеш Projects обновлён")
+            self.set_status_message(self._t("STATUS_MESSAGE_REFRESHED"))
             self.force_render()
         elif action == "validate_pat":
             self._start_pat_validation()
         elif action == "cycle_lang":
             self._cycle_language()
         else:
-            self.set_status_message("Опция недоступна")
+            self.set_status_message(self._t("STATUS_MESSAGE_OPTION_DISABLED"))
 
     def open_settings_dialog(self):
         self.settings_mode = True
@@ -4494,12 +4650,12 @@ class TaskTrackerTUI:
     def _start_pat_validation(self, token: Optional[str] = None, label: str = "PAT", cache_result: bool = True):
         source_token = token or get_user_token() or os.getenv("APPLY_TASK_GITHUB_TOKEN") or os.getenv("GITHUB_TOKEN")
         if not source_token:
-            self.set_status_message("PAT отсутствует")
+            self.set_status_message(self._t("STATUS_MESSAGE_PAT_MISSING"))
             return
 
         if cache_result:
-            self.pat_validation_result = "Проверка..."
-        spinner_label = f"Проверка {label}"
+            self.pat_validation_result = self._t("STATUS_MESSAGE_VALIDATING")
+        spinner_label = self._t("STATUS_MESSAGE_VALIDATE_LABEL", label=label)
         self._start_spinner(spinner_label)
 
         def worker():
@@ -4517,7 +4673,7 @@ class TaskTrackerTUI:
     def _validate_edit_buffer_pat(self):
         value = self.edit_buffer.text.strip()
         if not value:
-            self.set_status_message("Введи PAT для проверки", ttl=4)
+            self.set_status_message(self._t("STATUS_MESSAGE_PROMPT_PAT"), ttl=4)
             return
         self._start_pat_validation(token=value, label="PAT (ввод)", cache_result=False)
 

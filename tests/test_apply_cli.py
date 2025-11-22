@@ -436,15 +436,15 @@ class ApplyTaskResolveTests(unittest.TestCase):
         ok_res = self._run_apply(["done"])
         self.assertNotEqual(ok_res.returncode, 0)
         body = _json_body(ok_res)
-        self.assertIn("не все подзадачи", body["message"])
+        self.assertIn("Not all subtasks", body["message"])
         self.assertEqual(body["status"], "ERROR")
-        self.assertNotIn("не найдена", body["message"])
+        self.assertNotIn("not found", body["message"])
 
     def test_done_unknown_task_reports_not_found_only(self):
         res = self._run_apply(["done", "999"])
         self.assertNotEqual(res.returncode, 0)
         body = _json_body(res)
-        self.assertIn("не найдена", body["message"])
+        self.assertIn("not found", body["message"])
         self.assertEqual(body["status"], "ERROR")
 
     def test_invalid_subtasks_format_is_rejected(self):

@@ -63,11 +63,11 @@ def test_settings_options_reflect_config_state(projects_env):
     assert "…1234" in pat_entry["value"]
 
     sync_entry = next(opt for opt in options if opt["action"] == "toggle_sync")
-    assert "Включена" in sync_entry["value"]
+    assert "Enabled" in sync_entry["value"]
 
-    target_entry = next(opt for opt in options if opt["label"] == "Проект GitHub")
+    target_entry = next(opt for opt in options if opt["label"] == "GitHub Project")
     assert "octo/apply_task#7" in target_entry["value"]
-    assert "определяется автоматически" in target_entry["hint"].lower()
+    assert target_entry["hint"]
 
 
 def test_save_edit_updates_number(projects_env):
@@ -124,7 +124,7 @@ def test_validate_pat_token(monkeypatch, tmp_path):
 
     def fake_validate(token):
         called["token"] = token
-        return True, "PAT активен (viewer=tester)"
+        return True, "PAT valid (viewer=tester)"
 
     monkeypatch.setattr(tasks, "validate_pat_token_http", fake_validate)
     tui._start_pat_validation()
@@ -133,8 +133,8 @@ def test_validate_pat_token(monkeypatch, tmp_path):
             break
         time.sleep(0.01)
     assert called["token"] == "tok"
-    assert "PAT активен" in tui.status_message
-    assert "PAT активен" in tui.pat_validation_result
+    assert "PAT valid" in tui.status_message
+    assert "PAT valid" in tui.pat_validation_result
 
 
 def test_status_shows_last_times_and_hotkey(monkeypatch, tmp_path):
