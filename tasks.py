@@ -49,6 +49,7 @@ from infrastructure.projects_sync_service import ProjectsSyncService
 from application.sync_service import SyncService
 from util.sync_status import sync_status_fragments
 from util.responsive import ColumnLayout, ResponsiveLayoutManager, detail_content_width
+from core.desktop.devtools.interface.cli_commands import CliDeps, cmd_list as _cmd_list, cmd_show as _cmd_show, cmd_analyze as _cmd_analyze, cmd_next as _cmd_next, cmd_suggest as _cmd_suggest, cmd_quick as _cmd_quick
 
 import projects_sync
 from projects_sync import (
@@ -1295,6 +1296,16 @@ class TaskManager:
     def delete_task(self, task_id: str, domain: str = "") -> bool:
         return self.repo.delete(task_id, domain)
 
+
+CLI_DEPS = CliDeps(
+    manager_factory=lambda: TaskManager(),
+    translate=translate,
+    derive_domain_explicit=derive_domain_explicit,
+    resolve_task_reference=resolve_task_reference,
+    save_last_task=save_last_task,
+    normalize_task_id=normalize_task_id,
+    task_to_dict=task_to_dict,
+)
 
 CHECKLIST_SECTIONS = [
     (
@@ -4771,59 +4782,11 @@ def cmd_tui(args) -> int:
 
 
 def cmd_list(args) -> int:
-    manager = TaskManager()
-    domain = derive_domain_explicit(getattr(args, "domain", ""), getattr(args, "phase", None), getattr(args, "component", None))
-    tasks = manager.list_tasks(domain)
-    if args.status:
-        tasks = [t for t in tasks if t.status == args.status]
-    if args.component:
-        tasks = [t for t in tasks if t.component == args.component]
-    if args.phase:
-        tasks = [t for t in tasks if t.phase == args.phase]
-    payload = {
-        "total": len(tasks),
-        "filters": {
-            "domain": domain or "",
-            "phase": args.phase or "",
-            "component": args.component or "",
-            "status": args.status or "",
-            "progress_details": bool(args.progress),
-        },
-        "tasks": [
-            task_to_dict(t, include_subtasks=bool(args.progress))
-            for t in tasks
-        ],
-    }
-    return structured_response(
-        "list",
-        status="OK",
-        message=translate("MSG_LIST_BUILT"),
-        payload=payload,
-        summary=translate("SUMMARY_TASKS", count=len(tasks)),
-    )
+    return _cmd_list(args, CLI_DEPS)
 
 
 def cmd_show(args) -> int:
-    last_id, last_domain = get_last_task()
-    task_id = normalize_task_id(args.task_id) if args.task_id else last_id
-    if not task_id:
-        return structured_error("show", translate("ERR_SHOW_NO_TASK"))
-    manager = TaskManager()
-    domain = derive_domain_explicit(getattr(args, "domain", ""), getattr(args, "phase", None), getattr(args, "component", None)) or last_domain or ""
-    task = manager.load_task(task_id, domain)
-    if not task:
-        return structured_error("show", translate("ERR_TASK_NOT_FOUND", task_id=task_id))
-    save_last_task(task.id, task.domain)
-    payload = {"task": task_to_dict(task, include_subtasks=True)}
-    if task.subtasks:
-        payload["subtasks_completed"] = sum(1 for st in task.subtasks if st.completed)
-    return structured_response(
-        "show",
-        status=task.status,
-        message=translate("MSG_TASK_DETAILS"),
-        payload=payload,
-        summary=f"{task.id}: {task.title}",
-    )
+    return _cmd_show(args, CLI_DEPS)
 
 
 def cmd_create(args) -> int:
@@ -5171,25 +5134,7 @@ def cmd_status_set(args) -> int:
 
 
 def cmd_analyze(args) -> int:
-    manager = TaskManager()
-    domain = derive_domain_explicit(getattr(args, "domain", ""), getattr(args, "phase", None), getattr(args, "component", None))
-    task = manager.load_task(normalize_task_id(args.task_id), domain)
-    if not task:
-        return structured_error("analyze", f"Задача {args.task_id} не найдена")
-    payload = {
-        "task": task_to_dict(task, include_subtasks=True),
-        "progress": task.calculate_progress(),
-        "subtasks_completed": sum(1 for st in task.subtasks if st.completed),
-    }
-    if not task.subtasks:
-        payload["tip"] = "Добавь подзадачи через apply_task subtask TASK --add ..."
-    return structured_response(
-        "analyze",
-        status=task.status,
-        message="Анализ завершён",
-        payload=payload,
-        summary=f"{task.id}: {task.title}",
-    )
+    return _cmd_analyze(args, CLI_DEPS)
 
 
 def cmd_next(args) -> int:
