@@ -1,15 +1,15 @@
-# AGENTS playbook
+# AGENTS playbook (English, strict)
 
-- **Workflow**: веди работу только через `apply_task`; задачи атомарные (<1 день), все чекпоинты фиксируй нотами; `pytest -q` перед сдачей.
-- **Коммуникация**: пользователям отвечай по-русски, код/доки — по-английски и по делу (без воды).
-- **Архитектура**: hexagonal монолит с вертикальными слайсами; домен = папка `domain/feature`; код раскладывай по слоям `application/domain/infrastructure/interface`. См. `DOMAIN_STRUCTURE.md`.
-- **Качество**: покрытие диффа ≥85%, цикломатическая сложность ≤10, без моков/заглушек в проде; один файл — одна ответственность; коммиты в формате Conventional Commits.
-- **GitHub Projects**: конфиг `.apply_task_projects.yaml`, токен `APPLY_TASK_GITHUB_TOKEN|GITHUB_TOKEN`; без токена sync отключён, CLI работает оффлайн.
-- **Devtools automation** (`automation`): `task-template` → `.tmp/subtasks.template.json`, `task-create` (validate-only по умолчанию, автоген шаблона), `checkpoint` (ноты/ок через лог), `health` (pytest → `.tmp/health.log`), `projects-health` (короткий статус sync).
+- **Workflow**: use `apply_task` only; keep tasks atomic (<1 day); log checkpoints with notes; run `pytest -q` before delivery.
+- **Communication**: answer users in their language; code/docs in English, concise.
+- **Architecture**: hexagonal monolith, vertical slices; domain = folder `domain/feature`; layers `application/domain/infrastructure/interface` (see `DOMAIN_STRUCTURE.md`).
+- **Quality**: diff coverage ≥85%, cyclomatic complexity ≤10, no mocks/stubs in prod, one file = one responsibility, Conventional Commits.
+- **GitHub Projects**: config `.apply_task_projects.yaml`, token `APPLY_TASK_GITHUB_TOKEN|GITHUB_TOKEN`; without token sync is off, CLI works offline.
+- **Devtools automation** (`automation`): `task-template` → `.tmp/subtasks.template.json`, `task-create` (validate-only default, auto-template), `checkpoint` (notes/ok from log), `health` (pytest → `.tmp/health.log`), `projects-health` (short sync status).
 
 ## Aliases
-- `README.md` — что за инструмент и как стартовать.
-- `DOMAIN_STRUCTURE.md` — схема доменов и слоёв.
-- `SYNTAX.md` — форматы CLI/JSON, обязательные поля.
-- `CHANGES.md` — история UX/фич-сдвигов.
-- `apply_task help` — правила работы с CLI и чекпоинтами (для ИИ-агентов).
+- `README.md` — what the tool is and how to start.
+- `DOMAIN_STRUCTURE.md` — domain/layer layout.
+- `SYNTAX.md` — CLI/JSON formats, required fields.
+- `CHANGES.md` — UX/features history.
+- `apply_task help` — mandatory CLI rules (for AI agents).
