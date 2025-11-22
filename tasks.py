@@ -29,6 +29,7 @@ import yaml
 import textwrap
 from wcwidth import wcwidth
 from core import Status, SubTask, TaskDetail
+from core.desktop.devtools.interface.constants import AI_HELP, LANG_PACK, TIMESTAMP_FORMAT, GITHUB_GRAPHQL
 from application.ports import TaskRepository
 from infrastructure.file_repository import FileTaskRepository
 from infrastructure.task_file_parser import TaskFileParser
@@ -47,9 +48,6 @@ from projects_sync import (
     detect_repo_slug,
 )
 from config import get_user_token, set_user_token, get_user_lang, set_user_lang
-
-TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M"
-GITHUB_GRAPHQL = "https://api.github.com/graphql"
 
 # Cache for expensive Git Projects metadata lookups, throttled to avoid
 # blocking the TUI render loop on every keypress.
