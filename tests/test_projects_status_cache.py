@@ -1,7 +1,7 @@
 import time
 from types import SimpleNamespace
 
-import tasks
+from core.desktop.devtools.application import projects_status_cache as cache
 
 
 class DummySync:
@@ -35,11 +35,11 @@ class DummySync:
 
 def test_projects_status_payload_cached(monkeypatch):
     sync = DummySync()
-    monkeypatch.setattr(tasks, "_get_sync_service", lambda: sync)
-    tasks._invalidate_projects_status_cache()
+    monkeypatch.setattr(cache, "CACHE_TTL", 1.0)
+    cache.invalidate_cache()
 
-    first = tasks._projects_status_payload()
-    second = tasks._projects_status_payload()
+    first = cache.projects_status_payload(lambda: sync)
+    second = cache.projects_status_payload(lambda: sync)
 
     assert sync.ensure_calls == 1
     assert second == first
@@ -47,22 +47,20 @@ def test_projects_status_payload_cached(monkeypatch):
 
 def test_projects_status_payload_cache_expires(monkeypatch):
     sync = DummySync()
-    monkeypatch.setattr(tasks, "_get_sync_service", lambda: sync)
-    tasks._invalidate_projects_status_cache()
+    cache.invalidate_cache()
 
-    tasks._projects_status_payload()
-    tasks._PROJECT_STATUS_CACHE_TS = time.time() - (tasks._PROJECT_STATUS_TTL + 0.1)
-    tasks._projects_status_payload()
+    cache.projects_status_payload(lambda: sync)
+    cache.CACHE_TS = time.time() - (cache.CACHE_TTL + 0.1)
+    cache.projects_status_payload(lambda: sync)
 
     assert sync.ensure_calls == 2
 
 
 def test_projects_status_payload_force_refresh(monkeypatch):
     sync = DummySync()
-    monkeypatch.setattr(tasks, "_get_sync_service", lambda: sync)
-    tasks._invalidate_projects_status_cache()
+    cache.invalidate_cache()
 
-    tasks._projects_status_payload()
-    tasks._projects_status_payload(force_refresh=True)
+    cache.projects_status_payload(lambda: sync)
+    cache.projects_status_payload(lambda: sync, force_refresh=True)
 
     assert sync.ensure_calls == 2

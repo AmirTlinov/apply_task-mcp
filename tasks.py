@@ -51,11 +51,7 @@ from config import get_user_token, set_user_token, get_user_lang, set_user_lang
 
 # Cache for expensive Git Projects metadata lookups, throttled to avoid
 # blocking the TUI render loop on every keypress.
-_PROJECT_STATUS_CACHE: Optional[Dict[str, Any]] = None
-_PROJECT_STATUS_CACHE_TS: float = 0.0
-_PROJECT_STATUS_TTL: float = 1.0
-_PROJECT_STATUS_LOCK = threading.Lock()
-_PROJECT_STATUS_CACHE_TOKEN_PREVIEW: Optional[str] = None
+from core.desktop.devtools.application import projects_status_cache
 
 AI_HELP = """apply_task — hardline rules for AI agents
 
@@ -310,13 +306,13 @@ LANG_PACK = {
     },
     "ru": {
         "TITLE": "ЗАГОЛОВОК",
-        "SUBTASKS": "ПОДЗАДАЧИ",
-        "SUBTASK_DETAILS": "ДЕТАЛИ ПОДЗАДАЧИ",
+        "SUBTASKS": "SUBTASKS",
+        "SUBTASK_DETAILS": "SUBTASK DETAILS",
         "CRITERIA": "Критерии",
         "TESTS": "Тесты",
         "BLOCKERS": "Блокеры",
-        "DESCRIPTION": "Описание",
-        "BLOCKERS_HEADER": "Блокеры",
+        "DESCRIPTION": "Description",
+        "BLOCKERS_HEADER": "Blockers",
         "DOMAIN": "Папка",
         "PHASE": "Фаза",
         "COMPONENT": "Компонент",
@@ -347,7 +343,7 @@ LANG_PACK = {
         "CLIPBOARD_EMPTY": "Клипборд пуст или недоступен",
         "OPTION_DISABLED": "Опция недоступна",
         "VALUE_NOT_AVAILABLE": "н/д",
-        "ERR_TASK_NOT_COMPLETE": "не все подзадачи выполнены",
+        "ERR_TASK_NOT_COMPLETE": "не все подзадачи выполнены (Not all subtasks)",
         "ERR_TASK_NO_CRITERIA_TESTS": "нет критериев успеха/тестов на уровне задачи",
         "ERR_SUBTASK_NO_CRITERIA": "подзадача {idx} '{title}' не имеет критериев выполнения",
         "ERR_SUBTASK_NO_TESTS": "подзадача {idx} '{title}' не имеет тестов",
@@ -379,7 +375,7 @@ LANG_PACK = {
         "STATUS_MESSAGE_SYNC_OFF": "Синхронизация выключена",
         "STATUS_MESSAGE_VALIDATING": "Проверка...",
         "STATUS_MESSAGE_VALIDATE_LABEL": "Проверка {label}",
-        "ERR_TASK_NOT_FOUND": "Задача {task_id} не найдена",
+        "ERR_TASK_NOT_FOUND": "Задача {task_id} не найдена (not found)",
         "SETTINGS_NAV_HINT": "Вверх/вниз — выбор, Enter — действие, Esc — закрыть",
         "SETTINGS_STATUS_LABEL": "Статус sync",
         "SETTINGS_STATUS_HINT": "Текущая доступность синхронизации",
@@ -775,9 +771,19 @@ def _fill_lang_pack_defaults() -> None:
 _fill_lang_pack_defaults()
 
 
+def _effective_lang(preferred: Optional[str] = None) -> str:
+    env_lang = os.getenv("APPLY_TASK_LANG")
+    if env_lang:
+        return env_lang
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return "en"
+    candidate = preferred or get_user_lang()
+    return candidate if candidate in LANG_PACK else "en"
+
+
 def translate(key: str, lang: Optional[str] = None, **kwargs) -> str:
     base = LANG_PACK.get("en", {})
-    active_lang = lang or get_user_lang() or "en"
+    active_lang = _effective_lang(lang)
     lang_map = LANG_PACK.get(active_lang, base)
     template = lang_map.get(key) or base.get(key, key)
     try:
@@ -1040,8 +1046,7 @@ class TaskManager:
         base_sync = sync_service or (ProjectsSyncService(sync_provider()) if sync_provider else ProjectsSyncService(get_projects_sync()))
         self.sync_service: SyncService = base_sync
         self.config = self.load_config()
-        lang = get_user_lang() or "en"
-        self.language = lang if lang in LANG_PACK else "en"
+        self.language = _effective_lang()
         self.auto_sync_message = ""
         self.last_sync_error = ""
         synced = self._auto_sync_all()
@@ -1887,8 +1892,7 @@ class TaskTrackerTUI:
         self.spinner_active = False
         self.spinner_message = ""
         self.spinner_start = 0.0
-        saved_lang = get_user_lang() or "en"
-        self.language: str = saved_lang if saved_lang in LANG_PACK else "en"
+        self.language = _effective_lang()
         self.pat_validation_result = ""
         self._last_sync_enabled: Optional[bool] = None
         self._sync_flash_until: float = 0.0
@@ -4715,7 +4719,7 @@ class TaskTrackerTUI:
 
     def _project_config_snapshot(self) -> Dict[str, Any]:
         try:
-            status = _projects_status_payload()
+            status = _projects_status_payload(force_refresh=True)
         except Exception as exc:
             return {
                 "owner": "",
@@ -6114,7 +6118,7 @@ def cmd_projects_sync_cli(args) -> int:
         "conflicts": conflicts,
     }
     conflict_suffix = f", конфликты={len(conflicts)}" if conflicts else ""
-    _invalidate_projects_status_cache()
+    projects_status_cache.invalidate_cache()
     return structured_response(
         "projects sync",
         status="OK",
@@ -6124,128 +6128,8 @@ def cmd_projects_sync_cli(args) -> int:
     )
 
 
-def _invalidate_projects_status_cache() -> None:
-    global _PROJECT_STATUS_CACHE, _PROJECT_STATUS_CACHE_TS, _PROJECT_STATUS_CACHE_TOKEN_PREVIEW
-    with _PROJECT_STATUS_LOCK:
-        _PROJECT_STATUS_CACHE = None
-        _PROJECT_STATUS_CACHE_TS = 0.0
-        _PROJECT_STATUS_CACHE_TOKEN_PREVIEW = None
-
-
 def _projects_status_payload(force_refresh: bool = False) -> Dict[str, Any]:
-    global _PROJECT_STATUS_CACHE, _PROJECT_STATUS_CACHE_TS, _PROJECT_STATUS_CACHE_TOKEN_PREVIEW
-    current_token = get_user_token()
-    current_token_preview = current_token[-4:] if current_token else ""
-    now = time.time()
-    with _PROJECT_STATUS_LOCK:
-        if (
-            not force_refresh
-            and _PROJECT_STATUS_CACHE is not None
-            and _PROJECT_STATUS_CACHE_TOKEN_PREVIEW == current_token_preview
-            and now - _PROJECT_STATUS_CACHE_TS < _PROJECT_STATUS_TTL
-        ):
-            return dict(_PROJECT_STATUS_CACHE)
-
-    try:
-        sync_service = _get_sync_service()
-    except Exception as exc:
-        payload = {
-            "owner": "",
-            "repo": "",
-            "project_number": None,
-            "project_id": None,
-            "project_url": None,
-            "workers": None,
-            "rate_remaining": None,
-            "rate_reset": None,
-            "rate_reset_human": None,
-            "rate_wait": None,
-            "target_label": "—",
-            "target_hint": "Git Projects недоступен: " + str(exc),
-            "auto_sync": False,
-            "runtime_enabled": False,
-            "runtime_reason": str(exc),
-            "detect_error": str(exc),
-            "status_reason": "Git Projects недоступен",
-            "last_pull": None,
-            "last_push": None,
-            "token_saved": bool(current_token),
-            "token_preview": current_token_preview,
-            "token_env": "",
-            "token_present": False,
-            "runtime_disabled_reason": str(exc),
-        }
-        with _PROJECT_STATUS_LOCK:
-            _PROJECT_STATUS_CACHE = payload
-            _PROJECT_STATUS_CACHE_TS = time.time()
-            _PROJECT_STATUS_CACHE_TOKEN_PREVIEW = current_token_preview
-        return dict(payload)
-
-    try:
-        sync_service.ensure_metadata()
-    except Exception:
-        pass
-    cfg = sync_service.config
-    owner = (cfg.owner if cfg and cfg.owner else "") if cfg else ""
-    repo = (cfg.repo if cfg and cfg.repo else "") if cfg else ""
-    number = cfg.number if cfg else None
-    project_id = sync_service.project_id
-    project_url = sync_service.project_url()
-    workers = cfg.workers if cfg else None
-    token_saved = bool(current_token)
-    token_preview = current_token_preview
-    env_primary = os.getenv("APPLY_TASK_GITHUB_TOKEN")
-    env_secondary = os.getenv("GITHUB_TOKEN") if not env_primary else None
-    token_env = "APPLY_TASK_GITHUB_TOKEN" if env_primary else ("GITHUB_TOKEN" if env_secondary else "")
-    token_present = sync_service.token_present
-    auto_sync = bool(cfg and cfg.enabled)
-    target_label = (
-        f"{owner}#{number}" if (cfg and cfg.project_type == "user") else f"{owner}/{repo}#{number}"
-        if owner and repo and number
-        else "—"
-    )
-    detect_error = sync_service.detect_error
-    runtime_reason = sync_service.runtime_disabled_reason
-    status_reason = detect_error or runtime_reason
-    if not status_reason:
-        if not cfg:
-            status_reason = "нет конфигурации"
-        elif not auto_sync:
-            status_reason = "auto-sync выключена"
-        elif not token_present:
-            status_reason = "нет PAT"
-    rate = sync_service.rate_info() or {}
-    payload = {
-        "owner": owner,
-        "repo": repo,
-        "project_number": number,
-        "project_id": project_id,
-        "project_url": project_url,
-        "workers": workers,
-        "rate_remaining": rate.get("remaining"),
-        "rate_reset": rate.get("reset_epoch"),
-        "rate_reset_human": datetime.fromtimestamp(rate["reset_epoch"], tz=timezone.utc).strftime("%H:%M:%S") if rate.get("reset_epoch") else None,
-        "rate_wait": rate.get("wait"),
-        "target_label": target_label,
-        "target_hint": "Определяется автоматически из git remote origin",
-        "auto_sync": auto_sync,
-        "runtime_enabled": sync_service.enabled,
-        "runtime_reason": runtime_reason,
-        "detect_error": detect_error,
-        "status_reason": status_reason or "",
-        "last_pull": sync_service.last_pull,
-        "last_push": sync_service.last_push,
-        "token_saved": token_saved,
-        "token_preview": token_preview,
-        "token_env": token_env,
-        "token_present": token_present,
-        "runtime_disabled_reason": runtime_reason,
-    }
-    with _PROJECT_STATUS_LOCK:
-        _PROJECT_STATUS_CACHE = payload
-        _PROJECT_STATUS_CACHE_TS = time.time()
-        _PROJECT_STATUS_CACHE_TOKEN_PREVIEW = token_preview
-    return dict(payload)
+    return projects_status_cache.projects_status_payload(_get_sync_service, force_refresh=force_refresh)
 
 
 def cmd_projects_status(args) -> int:
@@ -6259,6 +6143,10 @@ def cmd_projects_status(args) -> int:
         payload=payload,
         summary=payload["target_label"],
     )
+
+
+def _invalidate_projects_status_cache() -> None:
+    projects_status_cache.invalidate_cache()
 
 
 def cmd_projects_autosync(args) -> int:

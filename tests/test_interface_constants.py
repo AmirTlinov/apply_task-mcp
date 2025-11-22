@@ -7,3 +7,4 @@ def test_constants_values_present():
     assert LANG_PACK["en"]["TITLE"] == "TITLE"
     assert TIMESTAMP_FORMAT == "%Y-%m-%d %H:%M"
     assert GITHUB_GRAPHQL.endswith("/graphql")
+    assert "not found" in LANG_PACK["ru"]["ERR_TASK_NOT_FOUND"]
