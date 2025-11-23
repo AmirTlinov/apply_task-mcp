@@ -38,6 +38,7 @@ from core.desktop.devtools.interface.tui_render import (
     render_task_list_text_impl,
     render_subtask_details,
     render_subtask_details_impl,
+    render_single_subtask_view,
 )
 from core.desktop.devtools.interface.constants import AI_HELP, LANG_PACK, TIMESTAMP_FORMAT, GITHUB_GRAPHQL
 from core.desktop.devtools.interface.i18n import translate, effective_lang as _effective_lang
@@ -1731,79 +1732,7 @@ class TaskTrackerTUI:
         return offset, visible_content, indicator_top, indicator_bottom, remaining_below
 
     def _render_single_subtask_view(self, content_width: int) -> None:
-        """Применяет вертикальный скролл к карточке подзадачи."""
-        if not getattr(self, "_subtask_detail_buffer", None):
-            return
-        lines = self._formatted_lines(self._subtask_detail_buffer)
-        total = len(lines)
-        pinned = min(total, getattr(self, "_subtask_header_lines_count", 0))
-        scrollable = lines[pinned:]
-        focusables = self._focusable_line_indices(lines)
-        if total:
-            self.subtask_detail_cursor = self._snap_cursor(self.subtask_detail_cursor, focusables)
-        offset, visible_content, indicator_top, indicator_bottom, remaining_below = self._calculate_subtask_viewport(
-            total=len(lines),
-            pinned=pinned,
-        )
-
-        visible_lines = scrollable[offset : offset + visible_content]
-
-        rendered: List[Tuple[str, str]] = []
-        # закреплённая шапка всегда сверху
-        for idx, line in enumerate(lines[:pinned]):
-            global_idx = idx
-            highlight = global_idx == self.subtask_detail_cursor and global_idx in focusables
-            style_prefix = 'class:selected' if highlight else None
-            for frag_style, frag_text in line:
-                is_border = frag_style and 'border' in frag_style
-                style = self._merge_styles(style_prefix, frag_style) if (highlight and not is_border) else frag_style
-                rendered.append((style, frag_text))
-            if pinned and idx < pinned - 1:
-                rendered.append(('', '\n'))
-
-        if pinned and (indicator_top or visible_lines):
-            rendered.append(('', '\n'))
-
-        if indicator_top:
-            rendered.extend([
-                ('class:border', '| '),
-                ('class:text.dim', self._pad_display(f"↑ +{offset}", content_width - 2)),
-                ('class:border', ' |\n'),
-            ])
-
-        for idx, line in enumerate(visible_lines):
-            global_idx = pinned + offset + idx
-        # Второй проход: определяем выбранную группу
-        visible_meta: List[Tuple[List[Tuple[str, str]], int, Optional[int], bool]] = []
-        selected_group: Optional[int] = None
-        for idx, line in enumerate(visible_lines):
-            global_idx = pinned + offset + idx
-            group = self._extract_group(line)
-            is_cursor = global_idx == self.subtask_detail_cursor and global_idx in focusables
-            if is_cursor:
-                selected_group = group
-            visible_meta.append((line, global_idx, group, is_cursor))
-
-        for idx, (line, global_idx, group, is_cursor) in enumerate(visible_meta):
-            highlight = is_cursor or (selected_group is not None and group == selected_group and group is not None)
-            style_prefix = 'class:selected' if highlight else None
-            for frag_style, frag_text in line:
-                is_border = frag_style and 'border' in frag_style
-                style = self._merge_styles(style_prefix, frag_style) if (highlight and not is_border) else frag_style
-                rendered.append((style, frag_text))
-            if idx < len(visible_meta) - 1:
-                rendered.append(('', '\n'))
-
-        if indicator_bottom:
-            if rendered and not rendered[-1][1].endswith('\n'):
-                rendered.append(('', '\n'))
-            rendered.extend([
-                ('class:border', '| '),
-                ('class:text.dim', self._pad_display(f"↓ +{remaining_below}", content_width - 2)),
-                ('class:border', ' |\n'),
-            ])
-
-        self.single_subtask_view = FormattedText(rendered)
+        render_single_subtask_view(self, content_width)
 
     @property
     def filtered_tasks(self) -> List[Task]:

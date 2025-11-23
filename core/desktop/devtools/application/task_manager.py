@@ -408,31 +408,31 @@ class TaskManager:
         return self.repo.move_glob(pattern, target_domain)
 
     def clean_tasks(self, tag: Optional[str] = None, status: Optional[str] = None, phase: Optional[str] = None, dry_run: bool = False) -> Tuple[List[str], int]:
+        norm_tag = (tag or "").strip().lower()
+        norm_status = (status or "").strip().upper()
+        norm_phase = (phase or "").strip().lower()
+
+        def _matches(detail: TaskDetail) -> bool:
+            tags = [t.strip().lower() for t in (detail.tags or [])]
+            if norm_tag and norm_tag not in tags:
+                return False
+            if norm_status and (detail.status or "").upper() != norm_status:
+                return False
+            if norm_phase and (detail.phase or "").strip().lower() != norm_phase:
+                return False
+            return True
+
         if dry_run:
-            matched = [
-                d.id
-                for d in self.repo.list("", skip_sync=True)
-                if (not tag or tag.strip().lower() in [t.lower() for t in d.tags])
-                and (not status or (d.status or "").upper() == status.strip().upper())
-                and (not phase or (d.phase or "").strip().lower() == phase.strip().lower())
-            ]
+            matched = [d.id for d in self.repo.list("", skip_sync=True) if _matches(d)]
             return matched, 0
+
         try:
-            return self.repo.clean_filtered(tag or "", status or "", phase or "")
+            return self.repo.clean_filtered(norm_tag, norm_status, norm_phase)
         except NotImplementedError:
             matched: List[str] = []
             removed = 0
-            norm_tag = (tag or "").strip().lower()
-            norm_status = (status or "").strip().upper()
-            norm_phase = (phase or "").strip().lower()
-
             for detail in self.repo.list("", skip_sync=True):
-                tags = [t.strip().lower() for t in (detail.tags or [])]
-                if norm_tag and norm_tag not in tags:
-                    continue
-                if norm_status and (detail.status or "").upper() != norm_status:
-                    continue
-                if norm_phase and (detail.phase or "").strip().lower() != norm_phase:
+                if not _matches(detail):
                     continue
                 matched.append(detail.id)
                 if self.repo.delete(detail.id, detail.domain):

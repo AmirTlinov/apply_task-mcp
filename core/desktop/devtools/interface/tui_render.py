@@ -600,3 +600,76 @@ def _trim_to_height(fragments: List[Tuple[str, str]], max_lines: int) -> Formatt
     lines = text.split("\n")[:max_lines]
     clamped = "\n".join(lines)
     return FormattedText([("", clamped)])
+
+
+def render_single_subtask_view(tui, content_width: int) -> None:
+    """Apply vertical scroll to a single-subtask card, keeping header pinned."""
+    if not getattr(tui, "_subtask_detail_buffer", None):
+        return
+    lines = tui._formatted_lines(tui._subtask_detail_buffer)
+    total = len(lines)
+    pinned = min(total, getattr(tui, "_subtask_header_lines_count", 0))
+    scrollable = lines[pinned:]
+    focusables = tui._focusable_line_indices(lines)
+    if total:
+        tui.subtask_detail_cursor = tui._snap_cursor(tui.subtask_detail_cursor, focusables)
+
+    offset, visible_content, indicator_top, indicator_bottom, remaining_below = tui._calculate_subtask_viewport(
+        total=len(lines),
+        pinned=pinned,
+    )
+
+    visible_lines = scrollable[offset: offset + visible_content]
+
+    rendered: List[Tuple[str, str]] = []
+    for idx, line in enumerate(lines[:pinned]):
+        global_idx = idx
+        highlight = global_idx == tui.subtask_detail_cursor and global_idx in focusables
+        style_prefix = 'class:selected' if highlight else None
+        for frag_style, frag_text in line:
+            is_border = frag_style and 'border' in frag_style
+            style = tui._merge_styles(style_prefix, frag_style) if (highlight and not is_border) else frag_style
+            rendered.append((style, frag_text))
+        if pinned and idx < pinned - 1:
+            rendered.append(('', '\n'))
+
+    if pinned and (indicator_top or visible_lines):
+        rendered.append(('', '\n'))
+
+    if indicator_top:
+        rendered.extend([
+            ('class:border', '| '),
+            ('class:text.dim', tui._pad_display(f"↑ +{offset}", content_width - 2)),
+            ('class:border', ' |\n'),
+        ])
+
+    visible_meta: List[Tuple[List[Tuple[str, str]], int, int, bool]] = []
+    selected_group: int | None = None
+    for idx, line in enumerate(visible_lines):
+        global_idx = pinned + offset + idx
+        group = tui._extract_group(line)
+        is_cursor = global_idx == tui.subtask_detail_cursor and global_idx in focusables
+        if is_cursor:
+            selected_group = group
+        visible_meta.append((line, global_idx, group, is_cursor))
+
+    for idx, (line, global_idx, group, is_cursor) in enumerate(visible_meta):
+        highlight = is_cursor or (selected_group is not None and group == selected_group and group is not None)
+        style_prefix = 'class:selected' if highlight else None
+        for frag_style, frag_text in line:
+            is_border = frag_style and 'border' in frag_style
+            style = tui._merge_styles(style_prefix, frag_style) if (highlight and not is_border) else frag_style
+            rendered.append((style, frag_text))
+        if idx < len(visible_meta) - 1:
+            rendered.append(('', '\n'))
+
+    if indicator_bottom:
+        if rendered and not rendered[-1][1].endswith('\n'):
+            rendered.append(('', '\n'))
+        rendered.extend([
+            ('class:border', '| '),
+            ('class:text.dim', tui._pad_display(f"↓ +{remaining_below}", content_width - 2)),
+            ('class:border', ' |\n'),
+        ])
+
+    tui.single_subtask_view = FormattedText(rendered)
