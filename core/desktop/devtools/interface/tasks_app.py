@@ -81,6 +81,7 @@ from core.desktop.devtools.interface.cli_interactive import (
     subtask_flags,
 )
 from core.desktop.devtools.interface.tui_mouse import handle_body_mouse
+from core.desktop.devtools.interface.tui_settings import build_settings_options
 from core.desktop.devtools.interface.serializers import subtask_to_dict, task_to_dict
 from core.desktop.devtools.interface.subtask_loader import (
     parse_subtasks_flexible,
@@ -2259,136 +2260,7 @@ class TaskTrackerTUI:
         return FormattedText(lines)
 
     def _settings_options(self) -> List[Dict[str, Any]]:
-        snapshot = self._project_config_snapshot()
-        options: List[Dict[str, Any]] = []
-        status_reason = snapshot.get("status_reason") or "n/a"
-        status_line = self._t("SETTINGS_STATUS_ON") if snapshot.get("runtime_enabled") else self._t("SETTINGS_STATUS_OFF").format(reason=status_reason)
-        options.append({
-            "label": self._t("SETTINGS_STATUS_LABEL"),
-            "value": status_line,
-            "hint": snapshot.get("status_reason") or self._t("SETTINGS_STATUS_HINT"),
-            "action": None,
-        })
-        if snapshot['token_saved']:
-            pat_value = self._t("SETTINGS_PAT_SAVED").format(preview=snapshot['token_preview'])
-        elif snapshot['token_env']:
-            pat_value = self._t("SETTINGS_PAT_ENV").format(env=snapshot['token_env'])
-        else:
-            pat_value = self._t("SETTINGS_PAT_NOT_SET")
-        options.append({
-            "label": self._t("SETTINGS_PAT_LABEL"),
-            "value": pat_value,
-            "hint": self._t("SETTINGS_PAT_HINT"),
-            "action": "edit_pat",
-        })
-
-        if not snapshot['config_exists']:
-            sync_value = self._t("SETTINGS_SYNC_NO_REMOTE")
-        elif not snapshot['config_enabled']:
-            sync_value = self._t("SETTINGS_SYNC_DISABLED")
-        elif not snapshot['token_active']:
-            sync_value = self._t("SETTINGS_SYNC_NO_PAT")
-        else:
-            sync_value = self._t("SETTINGS_SYNC_ENABLED")
-        options.append({
-            "label": self._t("SETTINGS_SYNC_LABEL"),
-            "value": sync_value,
-            "hint": self._t("SETTINGS_SYNC_HINT"),
-            "action": "toggle_sync",
-            "disabled": not snapshot['config_exists'],
-            "disabled_msg": snapshot['status_reason'] if not snapshot['config_exists'] else "",
-        })
-
-        target_value = snapshot['target_label']
-        target_hint = snapshot['target_hint']
-        if not snapshot['config_exists']:
-            target_value = self._t("SETTINGS_PROJECT_UNAVAILABLE")
-            target_hint = snapshot['status_reason'] or self._t("STATUS_MESSAGE_PROJECT_URL_UNAVAILABLE")
-        elif snapshot['status_reason'] and not snapshot['config_enabled']:
-            target_hint = snapshot['status_reason']
-        options.append({
-            "label": self._t("SETTINGS_PROJECT_LABEL"),
-            "value": target_value,
-            "hint": snapshot['target_hint'],
-            "action": None,
-        })
-
-        if not snapshot['config_exists'] or snapshot['status_reason'].lower().startswith("нет конфигурации") or "remote origin" in snapshot['status_reason']:
-            options.append({
-                "label": self._t("SETTINGS_BOOTSTRAP_LABEL"),
-                "value": self._t("SETTINGS_BOOTSTRAP_VALUE"),
-                "hint": self._t("SETTINGS_BOOTSTRAP_HINT"),
-                "action": "bootstrap_git",
-            })
-
-        options.append({
-            "label": self._t("SETTINGS_PROJECT_URL_LABEL"),
-            "value": snapshot.get("project_url") or self._t("SETTINGS_PROJECT_UNAVAILABLE"),
-            "hint": self._t("SETTINGS_PROJECT_URL_HINT"),
-            "action": None,
-        })
-
-        options.append({
-            "label": self._t("SETTINGS_PROJECT_NUMBER_LABEL"),
-            "value": str(snapshot['number']) if snapshot['number'] else '—',
-            "hint": self._t("SETTINGS_PROJECT_NUMBER_HINT"),
-            "action": "edit_number",
-        })
-
-        options.append({
-            "label": self._t("SETTINGS_POOL_LABEL"),
-            "value": str(snapshot.get("workers")) if snapshot.get("workers") else "auto",
-            "hint": self._t("SETTINGS_POOL_HINT"),
-            "action": "edit_workers",
-        })
-
-        options.append({
-            "label": self._t("SETTINGS_LAST_PULL_LABEL"),
-            "value": f"{snapshot.get('last_pull') or '—'} / {snapshot.get('last_push') or '—'}",
-            "hint": self._t("SETTINGS_LAST_PULL_HINT"),
-            "action": None,
-        })
-        rate_value = self._t("VALUE_NOT_AVAILABLE")
-        if snapshot.get("rate_remaining") is not None:
-            rate_value = f"{snapshot['rate_remaining']} @ {snapshot.get('rate_reset_human') or '—'}"
-            if snapshot.get("rate_wait"):
-                rate_value = f"{rate_value} wait={int(snapshot['rate_wait'])}s"
-        options.append({
-            "label": self._t("SETTINGS_RATE_LABEL"),
-            "value": rate_value,
-            "hint": self._t("SETTINGS_RATE_HINT"),
-            "action": None,
-        })
-        options.append({
-            "label": self._t("SETTINGS_REMOTE_LABEL"),
-            "value": snapshot.get("origin_url") or self._t("SETTINGS_PAT_NOT_SET"),
-            "hint": self._t("SETTINGS_REMOTE_HINT"),
-            "action": None,
-        })
-
-        options.append({
-            "label": self._t("SETTINGS_REFRESH_LABEL"),
-            "value": self._t("SETTINGS_REFRESH_VALUE"),
-            "hint": self._t("SETTINGS_REFRESH_HINT"),
-            "action": "refresh_metadata",
-            "disabled": not (snapshot['config_exists'] and snapshot['token_active']),
-            "disabled_msg": self._t("SETTINGS_REFRESH_DISABLED"),
-        })
-        options.append({
-            "label": self._t("SETTINGS_VALIDATE_PAT_LABEL"),
-            "value": self.pat_validation_result or "GitHub viewer",
-            "hint": self._t("SETTINGS_VALIDATE_PAT_HINT"),
-            "action": "validate_pat",
-            "disabled": not (snapshot['token_saved'] or snapshot['token_env']),
-            "disabled_msg": self._t("SETTINGS_VALIDATE_PAT_DISABLED"),
-        })
-        options.append({
-            "label": f"{self._t('LANGUAGE_LABEL')} / Language",
-            "value": self.language,
-            "hint": self._t("LANGUAGE_HINT"),
-            "action": "cycle_lang",
-        })
-        return options
+        return build_settings_options(self)
 
     def _project_config_snapshot(self) -> Dict[str, Any]:
         try:
