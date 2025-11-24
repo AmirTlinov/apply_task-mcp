@@ -40,6 +40,13 @@ from core.desktop.devtools.interface.tui_render import (
     render_subtask_details_impl,
     render_single_subtask_view,
 )
+from core.desktop.devtools.interface.edit_handlers import (
+    handle_token,
+    handle_project_number,
+    handle_project_workers,
+    handle_bootstrap_remote,
+    handle_task_edit,
+)
 from core.desktop.devtools.interface.constants import AI_HELP, LANG_PACK, TIMESTAMP_FORMAT, GITHUB_GRAPHQL
 from core.desktop.devtools.interface.i18n import translate, effective_lang as _effective_lang
 from core.desktop.devtools.interface.cli_io import structured_response, structured_error, validation_response
@@ -2266,93 +2273,22 @@ class TaskTrackerTUI:
         raw_value = self.edit_buffer.text
         new_value = raw_value.strip()
 
-        if context == 'token':
-            set_user_token(new_value)
-            if new_value:
-                self.set_status_message(self._t("STATUS_MESSAGE_PAT_SAVED"))
-            else:
-                self.set_status_message(self._t("STATUS_MESSAGE_PAT_CLEARED"))
-            self.cancel_edit()
-            if self.settings_mode:
-                self.force_render()
+        if handle_token(self, new_value):
             return
-
-        if context == 'project_number':
-            try:
-                number_value = int(new_value)
-                if number_value <= 0:
-                    raise ValueError
-            except ValueError:
-                self.set_status_message(self._t("STATUS_MESSAGE_PROJECT_NUMBER_REQUIRED"))
-            else:
-                self._set_project_number(number_value)
-                self.set_status_message(self._t("STATUS_MESSAGE_PROJECT_NUMBER_UPDATED"))
-            self.cancel_edit()
-            if self.settings_mode:
-                self.force_render()
+        if handle_project_number(self, new_value):
             return
-        if context == 'project_workers':
-            try:
-                workers_value = int(new_value)
-                if workers_value < 0:
-                    raise ValueError
-            except ValueError:
-                self.set_status_message(self._t("STATUS_MESSAGE_POOL_INTEGER"))
-            else:
-                update_project_workers(None if workers_value == 0 else workers_value)
-                reload_projects_sync()
-                self.set_status_message(self._t("STATUS_MESSAGE_POOL_UPDATED"))
-            self.cancel_edit()
-            if self.settings_mode:
-                self.force_render()
+        if handle_project_workers(self, new_value):
             return
-        if context == 'bootstrap_remote':
-            self._bootstrap_git(new_value)
-            self.cancel_edit()
+        if handle_bootstrap_remote(self, new_value):
             return
 
         if not new_value:
             self.cancel_edit()
             return
 
-        if context == 'task_title' and task:
-            task.title = new_value
-            self.manager.save_task(task)
-        elif context == 'task_description' and task:
-            task.description = new_value
-            self.manager.save_task(task)
-        elif context == 'subtask_title' and task and self.edit_index is not None:
-            path = self.detail_selected_path
-            if not path and self.edit_index < len(self.detail_flat_subtasks):
-                path = self.detail_flat_subtasks[self.edit_index][0]
-            st = self._get_subtask_by_path(path) if path else None
-            if st:
-                st.title = new_value
-                self.manager.save_task(task)
-        elif context == 'criterion' and task and self.edit_index is not None:
-            path = self.detail_selected_path or (self.detail_flat_subtasks[self.detail_selected_index][0] if self.detail_flat_subtasks else "")
-            st = self._get_subtask_by_path(path) if path else None
-            if st and self.edit_index < len(st.success_criteria):
-                st.success_criteria[self.edit_index] = new_value
-                self.manager.save_task(task)
-        elif context == 'test' and task and self.edit_index is not None:
-            path = self.detail_selected_path or (self.detail_flat_subtasks[self.detail_selected_index][0] if self.detail_flat_subtasks else "")
-            st = self._get_subtask_by_path(path) if path else None
-            if st and self.edit_index < len(st.tests):
-                st.tests[self.edit_index] = new_value
-                self.manager.save_task(task)
-        elif context == 'blocker' and task and self.edit_index is not None:
-            path = self.detail_selected_path or (self.detail_flat_subtasks[self.detail_selected_index][0] if self.detail_flat_subtasks else "")
-            st = self._get_subtask_by_path(path) if path else None
-            if st and self.edit_index < len(st.blockers):
-                st.blockers[self.edit_index] = new_value
-                self.manager.save_task(task)
+        if handle_task_edit(self, context or "", new_value, self.edit_index):
+            return
 
-        # Обновляем кеш
-        if task and task.id in self.task_details_cache:
-            self.task_details_cache[task.id] = task
-
-        self.load_tasks(preserve_selection=True)
         self.cancel_edit()
 
     def cancel_edit(self):
