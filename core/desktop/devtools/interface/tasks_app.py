@@ -80,6 +80,7 @@ from core.desktop.devtools.interface.cli_interactive import (
     prompt_subtask_interactive,
     subtask_flags,
 )
+from core.desktop.devtools.interface.tui_mouse import handle_body_mouse
 from core.desktop.devtools.interface.serializers import subtask_to_dict, task_to_dict
 from core.desktop.devtools.interface.subtask_loader import (
     parse_subtasks_flexible,
@@ -1007,74 +1008,7 @@ class TaskTrackerTUI:
             self._last_subtask_click_time = now
 
     def _handle_body_mouse(self, mouse_event: MouseEvent):
-        if (
-            mouse_event.event_type == MouseEventType.MOUSE_UP
-            and mouse_event.button == MouseButton.MIDDLE
-            and self.editing_mode
-            and self.edit_context == 'token'
-        ):
-            self._paste_from_clipboard()
-            return None
-        if getattr(self, "single_subtask_view", None):
-            if mouse_event.event_type == MouseEventType.SCROLL_DOWN:
-                self.move_vertical_selection(1)
-                return None
-            if mouse_event.event_type == MouseEventType.SCROLL_UP:
-                self.move_vertical_selection(-1)
-                return None
-            return NotImplemented
-        if self.editing_mode:
-            return NotImplemented
-        if self.settings_mode and not self.editing_mode:
-            if mouse_event.event_type == MouseEventType.SCROLL_DOWN:
-                self.move_settings_selection(1)
-                return None
-            if mouse_event.event_type == MouseEventType.SCROLL_UP:
-                self.move_settings_selection(-1)
-                return None
-            if mouse_event.event_type == MouseEventType.MOUSE_UP and mouse_event.button == MouseButton.LEFT:
-                self.activate_settings_option()
-                return None
-            return None
-        shift = MouseModifier.SHIFT in mouse_event.modifiers
-        vertical_step = 1  # перемещаемся по 1 строке
-        horizontal_step = 5
-        if mouse_event.event_type == MouseEventType.SCROLL_DOWN:
-            if shift:
-                self.horizontal_offset = min(200, self.horizontal_offset + horizontal_step)
-            else:
-                # Скролл колёсиком двигает выделение по одной строке
-                self.move_vertical_selection(vertical_step)
-            return None
-        if mouse_event.event_type == MouseEventType.SCROLL_UP:
-            if shift:
-                self.horizontal_offset = max(0, self.horizontal_offset - horizontal_step)
-            else:
-                # Скролл колёсиком двигает выделение по одной строке
-                self.move_vertical_selection(-vertical_step)
-            return None
-        if mouse_event.event_type == MouseEventType.MOUSE_UP and mouse_event.button == MouseButton.LEFT:
-            if self.detail_mode and self.current_task_detail and not getattr(self, "single_subtask_view", None):
-                idx = self._subtask_index_from_y(mouse_event.position.y)
-                if idx is not None and self.detail_flat_subtasks:
-                    idx = max(0, min(idx, len(self.detail_flat_subtasks) - 1))
-                    path = self.detail_flat_subtasks[idx][0]
-                    if self.detail_selected_index == idx:
-                        self.show_subtask_details(path)
-                    else:
-                        self.detail_selected_index = idx
-                        self._selected_subtask_entry()
-                    return None
-            elif not self.detail_mode:
-                idx = self._task_index_from_y(mouse_event.position.y)
-                if idx is not None:
-                    if self.selected_index == idx:
-                        self.show_task_details(self.filtered_tasks[idx])
-                    else:
-                        self.selected_index = idx
-                        self._ensure_selection_visible()
-                    return None
-        return NotImplemented
+        return handle_body_mouse(self, mouse_event)
 
     def move_vertical_selection(self, delta: int) -> None:
         """
