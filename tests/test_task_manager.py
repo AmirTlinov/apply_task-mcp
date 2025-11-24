@@ -328,6 +328,15 @@ def test_set_subtask_path_invalid(tmp_path):
     assert ok is False and err == "index"
 
 
+def test_set_subtask_index_out_of_bounds(tmp_path):
+    manager = TaskManager(tasks_dir=tmp_path / ".tasks", sync_service=DummySync(enabled=False))
+    task = TaskDetail(id="TASK-024", title="Task", status="FAIL", created="2025", updated="2025")
+    task.subtasks.append(SubTask(False, "child", ["c"], ["t"], ["b"], criteria_confirmed=True, tests_confirmed=True, blockers_resolved=True))
+    manager.repo.save(task)
+    ok, err = manager.set_subtask("TASK-024", 5, True)
+    assert ok is False and err == "index"
+
+
 def test_update_subtask_checkpoint_unknown(tmp_path):
     manager = TaskManager(tasks_dir=tmp_path / ".tasks", sync_service=DummySync(enabled=False))
     task = TaskDetail(

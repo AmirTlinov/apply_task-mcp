@@ -73,3 +73,37 @@ def test_sync_indicator_fallback_snapshot_and_flash(monkeypatch):
     handler = res[0][2] if len(res[0]) > 2 else None
     if handler:
         assert handler(SimpleNamespace(event_type=MouseEventType.MOUSE_UP)) is NotImplemented
+
+
+def test_sync_indicator_tooltip_notimplemented(monkeypatch):
+    class Sync:
+        enabled = True
+        config = SimpleNamespace(enabled=True, owner="o", repo="r", number=1, project_type="repository")
+
+    tui = SimpleNamespace(manager=SimpleNamespace(sync_service=Sync()))
+    tui.set_status_message = lambda msg, ttl=0: None
+    tui._project_config_snapshot = lambda: {
+        "auto_sync": True,
+        "status_reason": "warn",
+        "last_pull": None,
+        "last_push": None,
+    }
+
+    res = build_sync_indicator(tui)
+    handler = res[0][2]
+    assert handler(SimpleNamespace(event_type=MouseEventType.MOUSE_UP)) is NotImplemented
+
+
+def test_sync_indicator_handles_snapshot_error(monkeypatch):
+    class Sync:
+        enabled = True
+        config = SimpleNamespace(enabled=True, owner="o", repo="r", number=1, project_type="repository")
+
+    monkeypatch.setattr(
+        "core.desktop.devtools.interface.tui_sync_indicator.projects_status_cache.projects_status_payload",
+        lambda factory, force_refresh=False: (_ for _ in ()).throw(RuntimeError("fail")),
+    )
+
+    tui = SimpleNamespace(manager=SimpleNamespace(sync_service=Sync()))
+    tui.set_status_message = lambda msg, ttl=0: None
+    assert build_sync_indicator(tui) == []

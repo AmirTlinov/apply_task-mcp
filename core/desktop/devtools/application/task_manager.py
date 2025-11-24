@@ -146,6 +146,15 @@ def _clean_tasks_fallback(repo, matcher) -> Tuple[List[str], int]:
     return matched, removed
 
 
+def _locate_subtask(task: TaskDetail, index: int, path: Optional[str]):
+    if path:
+        st, _, _ = _find_subtask_by_path(task.subtasks, path)
+        return st, None if st else "index"
+    if index < 0 or index >= len(task.subtasks):
+        return None, "index"
+    return task.subtasks[index], None
+
+
 class TaskManager:
     def __init__(
         self,
@@ -381,14 +390,9 @@ class TaskManager:
         task = self.load_task(task_id, domain)
         if not task:
             return False, "not_found"
-        if path:
-            st, _, _ = _find_subtask_by_path(task.subtasks, path)
-            if not st:
-                return False, "index"
-        else:
-            if index < 0 or index >= len(task.subtasks):
-                return False, "index"
-            st = task.subtasks[index]
+        st, error = _locate_subtask(task, index, path)
+        if error:
+            return False, error
         if completed and not st.ready_for_completion():
             missing = []
             if not st.criteria_confirmed:

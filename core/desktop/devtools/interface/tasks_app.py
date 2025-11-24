@@ -95,6 +95,7 @@ from core.desktop.devtools.interface.tui_loader import (
 from core.desktop.devtools.interface.tui_preview import build_side_preview_text
 from core.desktop.devtools.interface.tui_actions import activate_settings_option, delete_current_item
 from core.desktop.devtools.interface.tui_sync_indicator import build_sync_indicator
+from core.desktop.devtools.interface.tui_scroll import apply_scroll_to_formatted as scroll_formatted_helper, scroll_line_preserve_borders as scroll_line_helper
 from core.desktop.devtools.interface.serializers import subtask_to_dict, task_to_dict
 from core.desktop.devtools.interface.subtask_loader import (
     parse_subtasks_flexible,
@@ -1037,65 +1038,10 @@ class TaskTrackerTUI:
         return text[self.horizontal_offset:]
 
     def scroll_line_preserve_borders(self, line: str) -> str:
-        """Scroll a single line of text, preserving leading border."""
-        if not line or self.horizontal_offset == 0:
-            return line
-
-        # Check if line has table borders (starts with + or |)
-        if line.startswith(('+', '|')):
-            # Keep first character (left border)
-            border_char = line[0]
-            content = line[1:]
-
-            # Apply offset to content
-            if len(content) > self.horizontal_offset:
-                scrolled_content = content[self.horizontal_offset:]
-            else:
-                scrolled_content = ""
-
-            return border_char + scrolled_content
-        else:
-            # No border, apply offset normally
-            return self.apply_horizontal_scroll(line)
+        return scroll_line_helper(self, line)
 
     def apply_scroll_to_formatted(self, formatted_items: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
-        """Apply horizontal scroll to formatted text line by line, preserving table structure."""
-        if self.horizontal_offset == 0:
-            return formatted_items
-
-        result = []
-        current_line = []
-
-        for style, text in formatted_items:
-            # Split text by newlines
-            parts = text.split('\n')
-
-            for i, part in enumerate(parts):
-                if i > 0:
-                    # We hit a newline - process accumulated line
-                    if current_line:
-                        # Convert line to plain text
-                        line_text = ''.join(t for _, t in current_line)
-                        # Scroll it
-                        scrolled = self.scroll_line_preserve_borders(line_text)
-                        # Add scrolled line
-                        if scrolled:
-                            result.append(('class:text', scrolled))
-                        result.append(('', '\n'))
-                        current_line = []
-
-                # Add part to current line (if not empty)
-                if part:
-                    current_line.append((style, part))
-
-        # Process last line if exists
-        if current_line:
-            line_text = ''.join(t for _, t in current_line)
-            scrolled = self.scroll_line_preserve_borders(line_text)
-            if scrolled:
-                result.append(('class:text', scrolled))
-
-        return result
+        return scroll_formatted_helper(self, formatted_items)
 
     @staticmethod
     def _formatted_lines(items: List[Tuple[str, str]]) -> List[List[Tuple[str, str]]]:

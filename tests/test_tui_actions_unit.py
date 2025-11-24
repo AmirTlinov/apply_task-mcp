@@ -23,6 +23,43 @@ def test_activate_settings_option_disabled(monkeypatch):
     assert messages == ["nope"]
 
 
+def test_activate_settings_option_no_options():
+    class TUI(SimpleNamespace):
+        def _settings_options(self):
+            return []
+
+    assert tui_actions.activate_settings_option(TUI()) is None
+
+
+def test_activate_settings_option_missing_action():
+    class TUI(SimpleNamespace):
+        def _settings_options(self):
+            return [{"label": "opt", "value": ""}]
+
+        settings_selected_index = 0
+
+    assert tui_actions.activate_settings_option(TUI()) is None
+
+
+def test_activate_settings_option_unknown_action():
+    class TUI(SimpleNamespace):
+        def __init__(self):
+            super().__init__(settings_selected_index=0)
+
+        def _settings_options(self):
+            return [{"label": "opt", "value": "", "action": "unknown"}]
+
+        def _t(self, key, **kwargs):
+            return key
+
+        def set_status_message(self, msg, ttl=0):
+            self.msg = msg
+
+    tui = TUI()
+    tui_actions.activate_settings_option(tui)
+    assert getattr(tui, "msg", "") == "STATUS_MESSAGE_OPTION_DISABLED"
+
+
 def test_activate_settings_option_toggle_sync(monkeypatch):
     state = {}
     monkeypatch.setattr(tui_actions, "update_projects_enabled", lambda desired: state.setdefault("desired", desired))
@@ -105,6 +142,96 @@ def test_delete_current_item_detail():
     tui_actions.delete_current_item(tui)
     assert tui.manager.saved is detail
     assert tui.loaded == (True, True)
+
+
+def test_delete_current_item_detail_parent_none_updates_cache():
+    cache = {}
+
+    class Manager:
+        def save_task(self, task):
+            cache["saved"] = True
+
+    sub = SimpleNamespace(children=[], title="solo")
+    detail = SimpleNamespace(id="T1", subtasks=[sub])
+
+    class TUI(SimpleNamespace):
+        def __init__(self):
+            super().__init__(
+                detail_mode=True,
+                current_task_detail=detail,
+                detail_selected_index=0,
+                detail_flat_subtasks=[("0", sub)],
+                manager=Manager(),
+                task_details_cache=cache,
+            )
+
+        def _selected_subtask_entry(self):
+            return ("0", sub, None, None, None)
+
+        def _rebuild_detail_flat(self):
+            self.detail_flat_subtasks = []
+
+        def load_tasks(self, preserve_selection=False, skip_sync=False):
+            cache["loaded"] = (preserve_selection, skip_sync)
+
+    tui_actions.delete_current_item(TUI())
+    assert cache["saved"] and cache["loaded"] == (True, True)
+
+
+def test_delete_current_item_detail_missing_target(monkeypatch):
+    class TUI(SimpleNamespace):
+        def __init__(self):
+            super().__init__(detail_mode=True, current_task_detail=SimpleNamespace(subtasks=[]))
+
+        def _selected_subtask_entry(self):
+            return ("bad", None, None, None, None)
+
+    assert tui_actions.delete_current_item(TUI()) is None
+
+
+def test_delete_current_item_detail_updates_cache_entry():
+    cache = {"ID": "old"}
+
+    class Manager:
+        def save_task(self, task):
+            pass
+
+    st = SimpleNamespace(children=[], title="solo")
+    detail = SimpleNamespace(id="ID", subtasks=[st])
+
+    class TUI(SimpleNamespace):
+        def __init__(self):
+            super().__init__(
+                detail_mode=True,
+                current_task_detail=detail,
+                detail_selected_index=0,
+                detail_flat_subtasks=[("0", st)],
+                manager=Manager(),
+                task_details_cache=cache,
+            )
+
+        def _selected_subtask_entry(self):
+            return ("0", st, None, None, None)
+
+        def _rebuild_detail_flat(self):
+            self.detail_flat_subtasks = []
+
+        def load_tasks(self, preserve_selection=False, skip_sync=False):
+            pass
+
+    tui_actions.delete_current_item(TUI())
+    assert cache["ID"] is detail
+
+
+def test_delete_current_item_detail_missing_entry():
+    class TUI(SimpleNamespace):
+        def __init__(self):
+            super().__init__(detail_mode=True, current_task_detail=True)
+
+        def _selected_subtask_entry(self):
+            return None
+
+    assert tui_actions.delete_current_item(TUI()) is None
 
 
 def test_activate_settings_option_edit_paths(monkeypatch):
