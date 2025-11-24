@@ -97,3 +97,47 @@ def test_settings_panel_adjusts_offset_when_selected_before_view():
     tui = Dummy()
     render_settings_panel(tui)
     assert tui.settings_view_offset == 0
+
+
+def test_settings_panel_truncates_value_on_small_width():
+    class Dummy(SimpleNamespace):
+        def __init__(self):
+            super().__init__(settings_selected_index=0, settings_view_offset=0, footer_height=2)
+
+        def _t(self, key, **kwargs):
+            return key
+
+        def _settings_options(self):
+            return [{"label": "Opt", "value": "v" * 80}]
+
+        def get_terminal_width(self):
+            return 50
+
+        def get_terminal_height(self):
+            return 20
+
+    tui = Dummy()
+    text = "".join(part[1] for part in render_settings_panel(tui))
+    assert "…" in text
+
+
+def test_settings_panel_resets_view_offset_when_too_high():
+    class Dummy(SimpleNamespace):
+        def __init__(self):
+            super().__init__(settings_selected_index=1, settings_view_offset=5, footer_height=2)
+
+        def _t(self, key, **kwargs):
+            return key
+
+        def _settings_options(self):
+            return [{"label": f"Opt{i}", "value": "v"} for i in range(10)]
+
+        def get_terminal_width(self):
+            return 80
+
+        def get_terminal_height(self):
+            return 12  # small to force offset logic
+
+    tui = Dummy()
+    render_settings_panel(tui)
+    assert tui.settings_view_offset == tui.settings_selected_index

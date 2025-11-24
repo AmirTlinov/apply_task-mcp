@@ -257,3 +257,85 @@ def test_status_message_displayed_when_not_expired():
     tui = DummyTUI()
     text = "".join(part[1] for part in build_status_text(tui))
     assert "msg" in text
+
+
+def test_status_message_expired_clears():
+    class Dummy(SimpleNamespace):
+        def __init__(self):
+            super().__init__(
+                filtered_tasks=[],
+                domain_filter="",
+                phase_filter=None,
+                component_filter=None,
+                current_filter=None,
+                _filter_flash_until=0,
+                spinner_message="",
+                status_message="old",
+                status_message_expires=time.time() - 1,
+                detail_mode=False,
+                single_subtask_view=False,
+            )
+
+        def _t(self, key, **kwargs):
+            return key
+
+        def _sync_indicator_fragments(self, flash=False):
+            return []
+
+        def _spinner_frame(self):
+            return None
+
+        def get_terminal_width(self):
+            return 50
+
+        def exit_detail_view(self):
+            pass
+
+        def open_settings_dialog(self):
+            pass
+
+    tui = Dummy()
+    build_status_text(tui)
+    assert tui.status_message == ""
+
+
+def test_status_filter_flash_sets_flag():
+    class Dummy(SimpleNamespace):
+        def __init__(self):
+            super().__init__(
+                filtered_tasks=[],
+                domain_filter="",
+                phase_filter=None,
+                component_filter=None,
+                current_filter=SimpleNamespace(value=["WARN"]),
+                _filter_flash_until=0,
+                spinner_message="",
+                status_message="",
+                status_message_expires=0,
+                detail_mode=False,
+                single_subtask_view=True,
+                _last_filter_value="ALL",
+            )
+
+        def _t(self, key, **kwargs):
+            return key
+
+        def _sync_indicator_fragments(self, flash=False):
+            return []
+
+        def _spinner_frame(self):
+            return None
+
+        def get_terminal_width(self):
+            return 80
+
+        def exit_detail_view(self):
+            self.exited = True
+
+        def open_settings_dialog(self):
+            self.opened = True
+
+    tui = Dummy()
+    res = build_status_text(tui)
+    assert tui._filter_flash_until > time.time()
+    assert res[0][1] == "[BACK] "

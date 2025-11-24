@@ -115,6 +115,37 @@ def _update_progress_for_status(task: TaskDetail, status: str) -> None:
         task.progress = task.calculate_progress()
 
 
+def _auto_sync_allowed(sync_service, config) -> bool:
+    if not config.get("auto_sync", True):
+        return False
+    if not getattr(sync_service, "enabled", False) or getattr(sync_service, "_full_sync_done", False):
+        return False
+    return True
+
+
+def _matches_clean(detail: TaskDetail, norm_tag: str, norm_status: str, norm_phase: str) -> bool:
+    tags = [t.strip().lower() for t in (detail.tags or [])]
+    status_value = (detail.status or "").upper()
+    phase_value = (detail.phase or "").strip().lower()
+    return (
+        (not norm_tag or norm_tag in tags)
+        and (not norm_status or status_value == norm_status)
+        and (not norm_phase or phase_value == norm_phase)
+    )
+
+
+def _clean_tasks_fallback(repo, matcher) -> Tuple[List[str], int]:
+    matched: List[str] = []
+    removed = 0
+    for detail in repo.list("", skip_sync=True):
+        if not matcher(detail):
+            continue
+        matched.append(detail.id)
+        if repo.delete(detail.id, detail.domain):
+            removed += 1
+    return matched, removed
+
+
 class TaskManager:
     def __init__(
         self,
@@ -255,10 +286,8 @@ class TaskManager:
         return sorted(tasks, key=lambda t: t.id)
 
     def _auto_sync_all(self) -> int:
-        if not self.config.get("auto_sync", True):
-            return 0
         base_sync = self.sync_service
-        if not base_sync.enabled or getattr(base_sync, "_full_sync_done", False):
+        if not _auto_sync_allowed(base_sync, self.config):
             return 0
         setattr(base_sync, "_full_sync_done", True)
         tasks_to_sync: List[Tuple[TaskDetail, Path]] = [(t, Path(t.filepath)) for t in self.repo.list("", skip_sync=True)]
@@ -435,32 +464,15 @@ class TaskManager:
         norm_status = (status or "").strip().upper()
         norm_phase = (phase or "").strip().lower()
 
-        def _matches(detail: TaskDetail) -> bool:
-            tags = [t.strip().lower() for t in (detail.tags or [])]
-            if norm_tag and norm_tag not in tags:
-                return False
-            if norm_status and (detail.status or "").upper() != norm_status:
-                return False
-            if norm_phase and (detail.phase or "").strip().lower() != norm_phase:
-                return False
-            return True
-
         if dry_run:
-            matched = [d.id for d in self.repo.list("", skip_sync=True) if _matches(d)]
+            matched = [d.id for d in self.repo.list("", skip_sync=True) if _matches_clean(d, norm_tag, norm_status, norm_phase)]
             return matched, 0
 
         try:
             return self.repo.clean_filtered(norm_tag, norm_status, norm_phase)
         except NotImplementedError:
-            matched: List[str] = []
-            removed = 0
-            for detail in self.repo.list("", skip_sync=True):
-                if not _matches(detail):
-                    continue
-                matched.append(detail.id)
-                if self.repo.delete(detail.id, detail.domain):
-                    removed += 1
-            return matched, removed
+            matcher = lambda d: _matches_clean(d, norm_tag, norm_status, norm_phase)
+            return _clean_tasks_fallback(self.repo, matcher)
 
     def delete_task(self, task_id: str, domain: str = "") -> bool:
         return self.repo.delete(task_id, domain)

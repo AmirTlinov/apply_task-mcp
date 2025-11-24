@@ -93,6 +93,8 @@ from core.desktop.devtools.interface.tui_loader import (
     select_index_after_load,
 )
 from core.desktop.devtools.interface.tui_preview import build_side_preview_text
+from core.desktop.devtools.interface.tui_actions import activate_settings_option, delete_current_item
+from core.desktop.devtools.interface.tui_sync_indicator import build_sync_indicator
 from core.desktop.devtools.interface.serializers import subtask_to_dict, task_to_dict
 from core.desktop.devtools.interface.subtask_loader import (
     parse_subtasks_flexible,
@@ -1424,44 +1426,7 @@ class TaskTrackerTUI:
 
 
     def _sync_indicator_fragments(self, filter_flash: bool = False) -> List[Tuple[str, str]]:
-        sync = self.manager.sync_service if hasattr(self, "manager") else _get_sync_service()
-        try:
-            cfg = getattr(sync, "config", None)
-            snapshot = self._project_config_snapshot()
-        except Exception:
-            return []
-        enabled = bool(sync and sync.enabled and cfg and snapshot["config_enabled"])
-        now = time.time()
-        if self._last_sync_enabled is None:
-            self._last_sync_enabled = enabled
-        elif self._last_sync_enabled and not enabled:
-            self._sync_flash_until = now + 1.0
-        self._last_sync_enabled = enabled
-
-        flash = bool(self._sync_flash_until and now < self._sync_flash_until)
-        fragments = sync_status_fragments(snapshot, enabled, flash, filter_flash)
-
-        tooltip = None
-        if snapshot.get("status_reason"):
-            tooltip = f"ПИЗДЕЦ ПЛОХО: {snapshot['status_reason']}"
-
-        def _tooltip_handler(message: str):
-            def handler(event: MouseEvent):
-                if event.event_type == MouseEventType.MOUSE_MOVE:
-                    self.set_status_message(message, ttl=3)
-                    return None
-                return NotImplemented
-            return handler
-
-        enriched: List[Tuple[str, str]] = []
-        for style, text, *rest in fragments:
-            if tooltip:
-                enriched.append((style, text, _tooltip_handler(tooltip)))
-            else:
-                enriched.append((style, text))
-
-        enriched.append(("class:text.dim", " | "))
-        return enriched
+        return build_sync_indicator(self, filter_flash)
 
     @staticmethod
     def _sync_target_label(cfg) -> str:
@@ -1570,40 +1535,7 @@ class TaskTrackerTUI:
 
     def delete_current_item(self):
         """Удалить текущий выбранный элемент (задачу или подзадачу)"""
-        if self.detail_mode and self.current_task_detail:
-            # В режиме деталей - удаляем подзадачу
-            entry = self._selected_subtask_entry()
-            if entry:
-                path, _, _, _, _ = entry
-                target, parent, idx = _find_subtask_by_path(self.current_task_detail.subtasks, path)
-                if target is None or idx is None:
-                    return
-                # Подтверждение не требуется в TUI - просто удаляем
-                if parent is None:
-                    del self.current_task_detail.subtasks[idx]
-                else:
-                    del parent.children[idx]
-                self.manager.save_task(self.current_task_detail)
-                self._rebuild_detail_flat()
-                if self.detail_selected_index >= len(self.detail_flat_subtasks):
-                    self.detail_selected_index = max(0, len(self.detail_flat_subtasks) - 1)
-                if self.detail_flat_subtasks:
-                    self.detail_selected_path = self.detail_flat_subtasks[self.detail_selected_index][0]
-                else:
-                    self.detail_selected_path = ""
-                # Обновляем кеш
-                if self.current_task_detail.id in self.task_details_cache:
-                    self.task_details_cache[self.current_task_detail.id] = self.current_task_detail
-                self.load_tasks(preserve_selection=True, skip_sync=True)
-        else:
-            # В списке задач - удаляем задачу
-            if self.filtered_tasks:
-                task = self.filtered_tasks[self.selected_index]
-                self.manager.delete_task(task.id, task.domain)
-                # Корректируем индекс
-                if self.selected_index >= len(self.filtered_tasks) - 1:
-                    self.selected_index = max(0, len(self.filtered_tasks) - 2)
-                self.load_tasks(preserve_selection=False, skip_sync=True)
+        delete_current_item(self)
 
     def toggle_subtask_completion(self):
         """Переключить состояние выполнения подзадачи"""
@@ -1964,50 +1896,7 @@ class TaskTrackerTUI:
         self.force_render()
 
     def activate_settings_option(self):
-        options = self._settings_options()
-        if not options:
-            return
-        idx = self.settings_selected_index
-        option = options[idx]
-        if option.get("disabled"):
-            self.set_status_message(option.get("disabled_msg") or self._t("OPTION_DISABLED"))
-            return
-        action = option.get("action")
-        if not action:
-            return
-        if action == "edit_pat":
-            self.set_status_message(self._t("STATUS_MESSAGE_PASTE_PAT"))
-            self.start_editing('token', '', None)
-            self.edit_buffer.cursor_position = 0
-        elif action == "toggle_sync":
-            snapshot = self._project_config_snapshot()
-            desired = not snapshot['config_enabled']
-            update_projects_enabled(desired)
-            state = self._t("STATUS_MESSAGE_SYNC_ON") if desired else self._t("STATUS_MESSAGE_SYNC_OFF")
-            self.set_status_message(state)
-            self.force_render()
-        elif action == "edit_number":
-            snapshot = self._project_config_snapshot()
-            self.start_editing('project_number', str(snapshot['number']), None)
-            self.edit_buffer.cursor_position = len(self.edit_buffer.text)
-        elif action == "edit_workers":
-            snapshot = self._project_config_snapshot()
-            current = snapshot.get("workers")
-            self.start_editing('project_workers', str(current) if current else "0", None)
-            self.edit_buffer.cursor_position = len(self.edit_buffer.text)
-        elif action == "bootstrap_git":
-            self.start_editing('bootstrap_remote', "https://github.com/owner/repo.git", None)
-            self.edit_buffer.cursor_position = 0
-        elif action == "refresh_metadata":
-            reload_projects_sync()
-            self.set_status_message(self._t("STATUS_MESSAGE_REFRESHED"))
-            self.force_render()
-        elif action == "validate_pat":
-            self._start_pat_validation()
-        elif action == "cycle_lang":
-            self._cycle_language()
-        else:
-            self.set_status_message(self._t("STATUS_MESSAGE_OPTION_DISABLED"))
+        activate_settings_option(self)
 
     def open_settings_dialog(self):
         self.settings_mode = True
