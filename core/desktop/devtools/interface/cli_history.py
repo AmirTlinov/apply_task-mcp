@@ -346,7 +346,13 @@ def migrate_to_global(project_dir: Optional[Path] = None) -> Tuple[bool, str]:
     if not local_tasks.exists():
         return False, "Локальная директория .tasks не найдена"
 
-    global_tasks = get_project_tasks_dir(project_dir, use_global=True)
+    # Use mocked global root if provided via get_global_storage_dir
+    global_root = get_global_storage_dir()
+    if not global_root.exists():
+        global_root.mkdir(parents=True, exist_ok=True)
+    namespace = get_project_namespace(project_dir)
+    global_tasks = (global_root / namespace).resolve()
+    global_tasks.parent.mkdir(parents=True, exist_ok=True)
 
     if global_tasks.exists():
         # Merge strategy: keep both, rename conflicts
