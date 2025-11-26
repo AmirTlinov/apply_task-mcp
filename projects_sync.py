@@ -554,6 +554,19 @@ class ProjectsSync:
                 except RuntimeError as exc:
                     message = str(exc).lower()
                     not_found = "could not resolve to a projectv2" in message
+                    if not_found and cfg.number:
+                        # очистить неверный номер и попробовать авто-подбор/создание
+                        _update_project_entry(type="repository", owner=cfg.owner, repo=cfg.repo, number=None)
+                        self.project_id = None
+                        self.config = self._load_config()
+                        if self._auto_set_project_number() or self._auto_create_repo_project():
+                            cfg = self.config
+                            variables["number"] = cfg.number
+                            retry = True
+                            continue
+                        self._disable_runtime(message)
+                        self._project_lookup_failed = True
+                        raise ProjectsSyncPermissionError("project lookup failed")
                     if not retry and self._auto_set_project_number():
                         cfg = self.config
                         if not cfg or not cfg.repo:
