@@ -564,6 +564,14 @@ class ProjectsSync:
                             variables["number"] = cfg.number
                             retry = True
                             continue
+                        # fallback: try user projects and switch config
+                        login = self._fetch_viewer_login() or cfg.owner
+                        nodes = self._list_user_projects(login) if login else []
+                        if nodes:
+                            number = nodes[0].get("number")
+                            _update_project_entry(type="user", owner=login, repo="", number=number)
+                            self.config = self._load_config()
+                            return self._ensure_project_metadata()
                         self._disable_runtime(message)
                         self._project_lookup_failed = True
                         raise ProjectsSyncPermissionError("project lookup failed")
