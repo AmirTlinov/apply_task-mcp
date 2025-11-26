@@ -307,6 +307,8 @@ class TaskTrackerTUI:
                 self.exit_checkpoint_mode()
             elif self.detail_mode:
                 self.exit_detail_view()
+            elif not self.project_mode:
+                self.return_to_projects()
 
         @kb.add("delete")
         @kb.add("c-d")
@@ -401,7 +403,10 @@ class TaskTrackerTUI:
                         return
                 self.exit_detail_view()
                 return
-            # в списке задач: поведение как backspace недоступно — оставляем без действия
+            if not self.project_mode:
+                self.return_to_projects()
+                return
+            # в списке проектов/задач без project_mode: оставляем без действия
 
         @kb.add("right")
         def _(event):
