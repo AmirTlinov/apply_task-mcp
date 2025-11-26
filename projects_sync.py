@@ -515,7 +515,7 @@ class ProjectsSync:
         if self._runtime_disabled_reason:
             raise ProjectsSyncPermissionError(self._runtime_disabled_reason)
         if self._project_lookup_failed:
-            raise ProjectsSyncPermissionError(self._runtime_disabled_reason or "project lookup failed")
+            self._project_lookup_failed = False  # allow retry
         if self.project_id:
             return
         cfg = self.config
@@ -696,8 +696,19 @@ class ProjectsSync:
         login = self._fetch_viewer_login() or cfg.owner
         if not login:
             return False
-        if login:
-            nodes = self._list_user_projects(login)
+        nodes = self._list_user_projects(login)
+        if nodes:
+            number = nodes[0].get("number")
+            if number:
+                _update_project_entry(type="user", repo="", number=int(number), owner=login)
+                self.config = self._load_config()
+                return True
+        # 3) если для repoProjects пусто, но viewerProjects есть — создаём репо-проект и линкуем
+        if cfg.project_type == "repository" and cfg.repo:
+            if self._auto_create_repo_project():
+                self.config = self._load_config()
+                return True
+            # fallback: привязываем user project к репозиторию, если нашли user projects
             if nodes:
                 number = nodes[0].get("number")
                 if number:
