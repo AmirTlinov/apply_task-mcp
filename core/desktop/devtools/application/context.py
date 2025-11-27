@@ -30,7 +30,11 @@ def get_last_task() -> Tuple[Optional[str], Optional[str]]:
 
 
 def normalize_task_id(raw: str) -> str:
+    """Normalize task ID with path traversal protection."""
     value = raw.strip().upper()
+    # SEC: Prevent path traversal attacks
+    if ".." in value or "/" in value or "\\" in value:
+        raise ValueError(f"Invalid task_id: contains forbidden characters: {raw}")
     if re.match(r"^TASK-\d+$", value):
         num = int(value.split("-")[1])
         return f"TASK-{num:03d}"

@@ -19,8 +19,17 @@ class FileTaskRepository(TaskRepository):
     def _resolve_path(self, task_id: str, domain: str = "") -> Path:
         if self.tasks_dir is None:
             raise ValueError("tasks_dir is not set for FileTaskRepository")
+        # SEC: Validate task_id against path traversal
+        if ".." in task_id or "/" in task_id or "\\" in task_id:
+            raise ValueError(f"Invalid task_id: contains path traversal characters: {task_id}")
+        if domain and (".." in domain or domain.startswith("/") or "\\" in domain):
+            raise ValueError(f"Invalid domain: contains path traversal characters: {domain}")
         base = self.tasks_dir / domain if domain else self.tasks_dir
-        return (base / f"{task_id}.task").resolve()
+        resolved = (base / f"{task_id}.task").resolve()
+        # SEC: Ensure resolved path is within tasks_dir
+        if not resolved.is_relative_to(self.tasks_dir.resolve()):
+            raise ValueError(f"Path traversal detected: {resolved} is outside {self.tasks_dir}")
+        return resolved
 
     def _assign_domain(self, task: TaskDetail, path: Path) -> None:
         if not task.domain:
