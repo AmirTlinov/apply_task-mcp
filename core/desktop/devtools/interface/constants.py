@@ -1,6 +1,6 @@
 """Interface-level constants for tasks CLI/TUI."""
 
-from core.desktop.devtools.interface.constants_i18n import LANG_PACK
+from core.desktop.devtools.interface.constants_i18n import LANG_PACK  # noqa: F401
 
 TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M"
 GITHUB_GRAPHQL = "https://api.github.com/graphql"

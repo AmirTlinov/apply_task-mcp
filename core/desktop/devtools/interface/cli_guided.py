@@ -1,20 +1,14 @@
 """Guided creation flows extracted from tasks_app for lower complexity."""
 
+import json
 from pathlib import Path
 from typing import List
 
 from core.desktop.devtools.application.context import derive_domain_explicit, normalize_task_id, parse_smart_title, save_last_task
 from core.desktop.devtools.application.task_manager import TaskManager
-from core.desktop.devtools.interface.edit_handlers import (
-    handle_bootstrap_remote,
-    handle_project_number,
-    handle_project_workers,
-    handle_task_edit,
-    handle_token,
-)
 from core.desktop.devtools.interface.serializers import task_to_dict
 from core.desktop.devtools.interface.i18n import translate
-from core.desktop.devtools.interface.subtask_loader import parse_subtasks_flexible, validate_flagship_subtasks
+from core.desktop.devtools.interface.subtask_loader import validate_flagship_subtasks
 from core.desktop.devtools.interface.cli_interactive import (
     confirm,
     is_interactive,
