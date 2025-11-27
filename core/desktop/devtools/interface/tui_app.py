@@ -41,11 +41,9 @@ from core.desktop.devtools.interface.tui_state import maybe_reload as _maybe_rel
 from core.desktop.devtools.interface.tui_settings_panel import render_settings_panel
 from core.desktop.devtools.interface.tui_status import build_status_text
 from core.desktop.devtools.interface.tui_footer import build_footer_text
-from core.desktop.devtools.interface.cli_history import get_project_tasks_dir, resolve_project_root
 from core.desktop.devtools.interface.tasks_dir_resolver import get_tasks_dir_for_project
 from infrastructure.file_repository import FileTaskRepository
 from core.desktop.devtools.interface.tui_loader import (
-    load_tasks_with_state,
     apply_context_filters,
     build_task_models,
     select_index_after_load,
@@ -82,9 +80,13 @@ except Exception:  # pragma: no cover
 from .tui_models import Task, InteractiveFormattedTextControl
 from .tui_themes import DEFAULT_THEME, build_style
 from .projects_integration import _get_sync_service, _projects_status_payload, validate_pat_token_http
+from .tui_clipboard import ClipboardMixin
+from .tui_checkpoint import CheckpointMixin
+from .tui_editing import EditingMixin
+from .tui_display import DisplayMixin
 
 
-class TaskTrackerTUI:
+class TaskTrackerTUI(ClipboardMixin, CheckpointMixin, EditingMixin, DisplayMixin):
     SELECTION_STYLE_BY_STATUS: Dict[Status, str] = {
         Status.OK: "selected.ok",
         Status.WARN: "selected.warn",
@@ -745,7 +747,6 @@ class TaskTrackerTUI:
         return root_task_id, root_domain, path_prefix
 
     def _toggle_collapse_selected(self, expand: bool) -> None:
-        from core.desktop.devtools.interface.tui_state import toggle_subtask_collapse
 
         toggle_subtask_collapse(self, expand)
         if self.current_task_detail:
