@@ -28,16 +28,16 @@ from __future__ import annotations
 import json
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 import re
 from core.desktop.devtools.interface.tasks_dir_resolver import resolve_project_root
 
 from core.desktop.devtools.application.task_manager import TaskManager, current_timestamp
 from core.desktop.devtools.interface.cli_activity import write_activity_marker
-from core.desktop.devtools.interface.serializers import subtask_to_dict, task_to_dict
+from core.desktop.devtools.interface.serializers import task_to_dict
 from core.desktop.devtools.interface.cli_history import (
     OperationHistory,
     get_project_tasks_dir,
@@ -304,7 +304,7 @@ def generate_action_hints(manager: TaskManager, task_id: Optional[str] = None) -
             hints.append(ActionHint(
                 tool="tasks_context",
                 args={"task": fail_tasks[0].id},
-                reason=f"Focus on incomplete task"
+                reason="Focus on incomplete task"
             ))
         return hints[:3]
 
@@ -464,7 +464,7 @@ class AIResponse:
             "success": self.success,
             "intent": self.intent,
             "result": self.result,
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z"),
         }
         # Include optional fields only if non-empty
         if self.summary:
@@ -2214,7 +2214,7 @@ def _record_operation(
     )
 
 
-def _get_subtask_by_path(subtasks: List, path: str):
+def _get_subtask_by_path(subtasks: List, path: str) -> Optional["SubTask"]:
     """Получить подзадачу по пути (например "0.1.2")."""
     parts = [int(p) for p in path.split(".") if p.isdigit()]
     current_list = subtasks
