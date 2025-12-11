@@ -18,6 +18,7 @@ from core import Status, SubTask, TaskDetail
 from core.desktop.devtools.application.task_manager import TaskManager, _find_subtask_by_path
 from core.desktop.devtools.application.context import derive_domain_explicit, save_last_task
 from core.desktop.devtools.interface.constants import LANG_PACK
+from core.desktop.devtools.interface.cli_runtime import read_last_pointer
 from core.desktop.devtools.interface.i18n import translate, effective_lang as _effective_lang
 from core.desktop.devtools.interface.tui_render import (
     render_detail_text,
@@ -104,7 +105,7 @@ class TaskTrackerTUI(ClipboardMixin, CheckpointMixin, EditingMixin, DisplayMixin
     def build_style(cls, theme: str) -> Style:
         return build_style(theme)
 
-    def __init__(self, tasks_dir: Optional[Path] = None, domain: str = "", phase: str = "", component: str = "", theme: str = DEFAULT_THEME, mono_select: bool = False):
+    def __init__(self, tasks_dir: Optional[Path] = None, domain: str = "", phase: str = "", component: str = "", theme: str = DEFAULT_THEME, mono_select: bool = False, projects_root: Optional[Path] = None):
         # Single-mode storage: always use global namespace directory for this project.
         if tasks_dir:
             resolved_dir = Path(tasks_dir).expanduser()
@@ -113,15 +114,20 @@ class TaskTrackerTUI(ClipboardMixin, CheckpointMixin, EditingMixin, DisplayMixin
         resolved_dir.mkdir(parents=True, exist_ok=True)
         self.tasks_dir = resolved_dir
         self.global_storage_used = True
+
         # Project picker state
         self.project_mode: bool = True
-        self.projects_root: Path = Path.home() / ".tasks"
+        self.projects_root: Path = (Path(projects_root).expanduser().resolve() if projects_root else Path.home() / ".tasks")
         self.current_project_path: Optional[Path] = None
+        self.last_project_index: int = 0
+        self.last_project_name: Optional[str] = None
 
-        self.manager = TaskManager(self.tasks_dir)
-        self.domain_filter = domain
+        # Respect last pointer for default context when explicit filters absent
+        last_task, last_domain = read_last_pointer()
+        self.domain_filter = domain or (last_domain or "")
         self.phase_filter = phase
         self.component_filter = component
+        self.manager = TaskManager(self.tasks_dir)
         self.tasks: List[Task] = []
         self.selected_index = 0
         self.current_filter: Optional[Status] = None
@@ -194,8 +200,8 @@ class TaskTrackerTUI(ClipboardMixin, CheckpointMixin, EditingMixin, DisplayMixin
         self.checkpoint_mode = False
         self.checkpoint_selected_index = 0
 
-        # Initial screen: project picker
-        self.load_projects()
+        # Initial screen: auto-enter current project if possible, otherwise project picker
+        self._auto_enter_default_project()
 
         self.style = self.build_style(theme)
 
@@ -215,6 +221,13 @@ class TaskTrackerTUI(ClipboardMixin, CheckpointMixin, EditingMixin, DisplayMixin
                 self.load_projects()
             else:
                 self.load_tasks(preserve_selection=True)
+
+        @kb.add("c")
+        def _(event):
+            # Quick create in empty state
+            if not self.filtered_tasks:
+                self._run_guided_creation()
+                return
 
         @kb.add("p")
         @kb.add("з")
@@ -760,6 +773,27 @@ class TaskTrackerTUI(ClipboardMixin, CheckpointMixin, EditingMixin, DisplayMixin
             self.settings_view_offset = 0
             return
 
+    def _auto_enter_default_project(self) -> None:
+        """Always start with project picker; preselect current project namespace."""
+        default_dir = self.tasks_dir.resolve()
+        self.manager = TaskManager(default_dir)
+        self.project_mode = True
+        self.detail_mode = False
+        self.current_task_detail = None
+        self.current_task = None
+        self.navigation_stack = []
+        self.load_projects()
+
+        for idx, project in enumerate(self.tasks):
+            path_raw = getattr(project, "task_file", None)
+            if path_raw and Path(path_raw).resolve() == default_dir:
+                self.selected_index = idx
+                break
+        self._ensure_selection_visible()
+        if not self.tasks:
+            self.set_status_message(self._t("STATUS_MESSAGE_NO_TASKS", fallback="Нет проектов в хранилище ~/.tasks"), ttl=4)
+        self.force_render()
+
     # ---------- Project selection ----------
 
     def load_projects(self) -> None:
@@ -776,14 +810,15 @@ class TaskTrackerTUI(ClipboardMixin, CheckpointMixin, EditingMixin, DisplayMixin
             for path in sorted([p for p in root.iterdir() if p.is_dir() and not p.name.startswith(".")]):
                 repo = FileTaskRepository(path)
                 tasks = repo.list("", skip_sync=True)
-                if not tasks:
-                    continue
                 total = len(tasks)
                 ok_count = sum(1 for t in tasks if str(t.status).upper() == "OK")
                 warn_count = sum(1 for t in tasks if str(t.status).upper() == "WARN")
                 fail_count = total - ok_count - warn_count
                 avg_progress = int(sum(t.calculate_progress() for t in tasks) / total) if total else 0
-                status = Status.FAIL if fail_count else (Status.WARN if warn_count else Status.OK)
+                if total == 0:
+                    status = Status.UNKNOWN
+                else:
+                    status = Status.FAIL if fail_count else (Status.WARN if warn_count else Status.OK)
                 projects.append(
                     Task(
                         id=path.name,
@@ -812,6 +847,8 @@ class TaskTrackerTUI(ClipboardMixin, CheckpointMixin, EditingMixin, DisplayMixin
 
     def _enter_project(self, project_task: Task) -> None:
         """Switch from project picker to tasks of the selected project."""
+        self.last_project_index = self.selected_index
+        self.last_project_name = project_task.name
         path_raw = getattr(project_task, "task_file", None)
         if not path_raw:
             # skip if no path (e.g., dummy tasks in tests)
@@ -823,6 +860,11 @@ class TaskTrackerTUI(ClipboardMixin, CheckpointMixin, EditingMixin, DisplayMixin
         self.current_project_path = path
         self.tasks_dir = path
         self.manager = TaskManager(self.tasks_dir)
+        # Reset filters when entering new project - old filters may not exist in this project
+        self.domain_filter = ""
+        self.phase_filter = ""
+        self.component_filter = ""
+        self.current_filter = None
         self.project_mode = False
         self.load_tasks(skip_sync=True)
         self.set_status_message(f"Проект: {project_task.name}", ttl=2)
@@ -830,8 +872,18 @@ class TaskTrackerTUI(ClipboardMixin, CheckpointMixin, EditingMixin, DisplayMixin
     def return_to_projects(self):
         """Return to project picker view."""
         self.load_projects()
+        target_idx = 0
+        if self.tasks:
+            if self.last_project_name:
+                for idx, proj in enumerate(self.tasks):
+                    if proj.name == self.last_project_name:
+                        target_idx = idx
+                        break
+            else:
+                target_idx = min(self.last_project_index, len(self.tasks) - 1)
+        self.selected_index = target_idx
         self.list_view_offset = 0
-        self.selected_index = 0
+        self._ensure_selection_visible()
         self.force_render()
 
     @staticmethod
@@ -1149,8 +1201,46 @@ class TaskTrackerTUI(ClipboardMixin, CheckpointMixin, EditingMixin, DisplayMixin
 
     def maybe_reload(self):
         if getattr(self, "project_mode", False) and not self.detail_mode:
+            # In project mode, check if projects changed and reload
+            self._maybe_reload_projects()
             return
         _maybe_reload_helper(self)
+
+    def _compute_projects_signature(self) -> int:
+        """Compute signature for all projects in ~/.tasks/"""
+        sig = 0
+        if self.projects_root.exists():
+            for path in self.projects_root.iterdir():
+                if path.is_dir() and not path.name.startswith("."):
+                    for f in path.rglob("TASK-*.task"):
+                        if ".snapshots" in f.parts:
+                            continue
+                        try:
+                            sig ^= int(f.stat().st_mtime_ns)
+                        except OSError:
+                            continue
+        return sig if sig else int(time.time_ns())
+
+    def _maybe_reload_projects(self) -> None:
+        """Reload projects list if any task file changed."""
+        from time import time
+        ts = time()
+        if ts - self._last_check < 0.5:  # Check every 0.5s for projects
+            return
+        self._last_check = ts
+        sig = self._compute_projects_signature()
+        if sig == self._last_signature:
+            return
+        self._last_signature = sig
+        prev_selected = self.tasks[self.selected_index].name if self.tasks else None
+        self.load_projects()
+        # Restore selection
+        if prev_selected:
+            for idx, proj in enumerate(self.tasks):
+                if proj.name == prev_selected:
+                    self.selected_index = idx
+                    break
+        self.set_status_message(self._t("STATUS_MESSAGE_CLI_UPDATED"), ttl=3)
 
     def load_tasks(self, preserve_selection: bool = False, selected_task_file: Optional[str] = None, skip_sync: bool = False):
         with self._spinner(self._t("SPINNER_REFRESH_TASKS")):
@@ -1679,9 +1769,21 @@ class TaskTrackerTUI(ClipboardMixin, CheckpointMixin, EditingMixin, DisplayMixin
     def get_footer_text(self) -> FormattedText:
         if getattr(self, "help_visible", False):
             return FormattedText([
-                ("class:text.dimmer", self._t("NAV_STATUS_HINT")),
+                ("class:icon.info", "ℹ "),
+                ("class:text", self._t("NAV_STATUS_HINT")),
                 ("", "\n"),
                 ("class:text.dim", self._t("NAV_CHECKPOINT_HINT")),
+                ("", "\n"),
+                ("class:icon.info", "FAQ "),
+                ("class:text", self._t("HELP_DOMAIN_FAQ")),
+                ("", "\n"),
+                ("class:text", self._t("HELP_PHASE_FAQ")),
+                ("", "\n"),
+                ("class:text", self._t("HELP_COMPONENT_FAQ")),
+                ("", "\n"),
+                ("class:icon.check", self._t("HELP_EXAMPLE_DOMAIN")),
+                ("", "\n"),
+                ("class:icon.link", self._t("HELP_DOMAIN_DOC")),
             ])
         if getattr(self, "settings_mode", False):
             options = self._settings_options()
@@ -1860,6 +1962,23 @@ class TaskTrackerTUI(ClipboardMixin, CheckpointMixin, EditingMixin, DisplayMixin
         self._ensure_settings_selection_visible(total)
         self.force_render()
 
+    def _run_guided_creation(self) -> None:
+        """Suspend TUI and run guided creation wizard; reload tasks afterwards."""
+        if getattr(self, "app", None):
+            from core.desktop.devtools.interface import cli_guided
+            # Suspend prompt_toolkit rendering to allow raw stdin/out
+            with self.app.suspend():
+                try:
+                    cli_guided.cmd_create_guided(type("Args", (), {
+                        "domain": self.domain_filter,
+                        "phase": self.phase_filter,
+                        "component": self.component_filter,
+                        "priority": "MEDIUM",
+                    })())
+                except SystemExit:
+                    pass
+        self.load_tasks(skip_sync=True)
+        self.force_render()
     def activate_settings_option(self):
         activate_settings_option(self)
 

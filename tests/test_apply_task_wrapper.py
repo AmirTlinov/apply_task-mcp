@@ -117,7 +117,8 @@ def test_run_tasks_py_forwards_env(monkeypatch, tmp_path, capsys, apply_task_mod
     captured = capsys.readouterr()
 
     assert "using env" in captured.err
-    assert calls["cmd"][0] == str(fake_task)
+    expected_first = apply_task_mod.sys.executable or "python3"
+    assert calls["cmd"][:2] == [expected_first, str(fake_task)]
     assert calls["cwd"] == tmp_path
     assert calls["env"]["APPLY_TASK_PROJECT_ROOT"] == str(tmp_path)
     assert exit_code == 7

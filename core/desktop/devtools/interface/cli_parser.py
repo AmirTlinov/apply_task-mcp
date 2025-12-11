@@ -37,6 +37,9 @@ def build_parser(commands: Any, themes: Mapping[str, Any], default_theme: str, a
     # list
     lp = sub.add_parser("list", help="Список задач")
     lp.add_argument("--status", choices=["OK", "WARN", "FAIL"])
+    lp.add_argument("--tag", help="Фильтр по тегу")
+    lp.add_argument("--blocked", action="store_true", help="Только заблокированные зависимостями")
+    lp.add_argument("--stale", type=int, metavar="DAYS", help="Без активности N дней")
     lp.add_argument("--progress", action="store_true")
     add_context_args(lp)
     lp.set_defaults(func=commands.cmd_list)
@@ -63,6 +66,7 @@ def build_parser(commands: Any, themes: Mapping[str, Any], default_theme: str, a
         help="JSON массив подзадач (строкой, --subtasks @file.json или --subtasks - для STDIN; всё на русском)",
     )
     cp.add_argument("--dependencies")
+    cp.add_argument("--depends-on", help="ID задач-зависимостей через запятую (TASK-001,TASK-002)")
     cp.add_argument("--next-steps", "-n")
     cp.add_argument("--tests", required=True)
     cp.add_argument("--risks", help="semicolon-separated risks", required=True)
@@ -94,6 +98,7 @@ def build_parser(commands: Any, themes: Mapping[str, Any], default_theme: str, a
         help="JSON массив подзадач (строкой, --subtasks @file.json или --subtasks - для STDIN; всё на русском)",
     )
     tp.add_argument("--dependencies")
+    tp.add_argument("--depends-on", help="ID задач-зависимостей через запятую (TASK-001,TASK-002)")
     tp.add_argument("--next-steps", "-n")
     tp.add_argument("--tests", required=True)
     tp.add_argument("--risks", help="semicolon-separated risks", required=True)
@@ -149,10 +154,11 @@ def build_parser(commands: Any, themes: Mapping[str, Any], default_theme: str, a
     add_context_args(adp)
     adp.set_defaults(func=commands.cmd_add_dependency)
 
-    # ok macro
-    okp = sub.add_parser("ok", help="Закрыть подзадачу одним махом (criteria/tests/blockers+done)")
+    # ok macro (batch support: ok TASK 0,1,2 or ok TASK --all)
+    okp = sub.add_parser("ok", help="Закрыть подзадачу(и) одним махом (criteria/tests/blockers+done)")
     okp.add_argument("task_id")
-    okp.add_argument("index", type=int)
+    okp.add_argument("indices", nargs="?", help="Индекс(ы) подзадач: 0 или 0,1,2")
+    okp.add_argument("--all", action="store_true", dest="all_subtasks", help="Завершить все незакрытые подзадачи")
     okp.add_argument("--criteria-note")
     okp.add_argument("--tests-note")
     okp.add_argument("--blockers-note")
@@ -169,7 +175,8 @@ def build_parser(commands: Any, themes: Mapping[str, Any], default_theme: str, a
     subok_sub = subok.add_subparsers(dest="subcommand", required=True)
     subok_ok = subok_sub.add_parser("ok", help="Подтвердить критерии/тесты/блокеры и закрыть подзадачу (алиас ok)")
     subok_ok.add_argument("task_id")
-    subok_ok.add_argument("index", type=int)
+    subok_ok.add_argument("indices", nargs="?", help="Индекс(ы) подзадач: 0 или 0,1,2")
+    subok_ok.add_argument("--all", action="store_true", dest="all_subtasks", help="Завершить все незакрытые подзадачи")
     subok_ok.add_argument("--criteria-note")
     subok_ok.add_argument("--tests-note")
     subok_ok.add_argument("--blockers-note")
@@ -295,6 +302,9 @@ def build_parser(commands: Any, themes: Mapping[str, Any], default_theme: str, a
     ep.add_argument("--phase", help="новая фаза/итерация")
     ep.add_argument("--component", help="новый компонент/модуль")
     ep.add_argument("--new-domain", help="переместить в подпапку")
+    ep.add_argument("--depends-on", help="ID задач-зависимостей через запятую (заменяет список)")
+    ep.add_argument("--add-dep", help="Добавить зависимость (один ID)")
+    ep.add_argument("--remove-dep", help="Удалить зависимость (один ID)")
     add_domain_arg(ep)
     ep.set_defaults(func=commands.cmd_edit)
 
@@ -408,5 +418,20 @@ def build_parser(commands: Any, themes: Mapping[str, Any], default_theme: str, a
     mcp_p.add_argument("--tasks-dir", type=str, help="Директория задач")
     mcp_p.add_argument("--local", action="store_true", help="Использовать локальное .tasks вместо глобального")
     mcp_p.set_defaults(func=commands.cmd_mcp)
+
+    # gui (Tauri desktop application)
+    gui_p = sub.add_parser(
+        "gui",
+        help="Запустить графический интерфейс (Tauri)",
+        description=(
+            "Запуск Tauri десктоп-приложения для визуальной работы с задачами.\n"
+            "Использует веб-интерфейс с React и нативную обёртку Tauri.\n\n"
+            "Режимы:\n"
+            "  --dev  — режим разработки с hot-reload (pnpm tauri dev)\n"
+            "  по умолчанию — запуск скомпилированного приложения"
+        ),
+    )
+    gui_p.add_argument("--dev", action="store_true", help="Режим разработки с hot-reload")
+    gui_p.set_defaults(func=commands.cmd_gui)
 
     return parser

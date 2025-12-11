@@ -80,7 +80,48 @@ def cmd_update(args) -> int:
     )
 
 
+def _parse_indices(indices_str: Optional[str], all_flag: bool, subtasks_count: int) -> List[int]:
+    """Parse indices from string (0,1,2) or get all incomplete indices."""
+    if all_flag:
+        return list(range(subtasks_count))
+    if not indices_str:
+        return []
+    # Support: "0", "0,1,2", "0, 1, 2"
+    parts = [p.strip() for p in indices_str.split(",") if p.strip()]
+    result = []
+    for part in parts:
+        try:
+            result.append(int(part))
+        except ValueError:
+            pass  # Skip invalid indices
+    return result
+
+
+def _ok_single_subtask(
+    manager, task_id: str, index: int, domain: str, notes: Dict[str, str]
+) -> Tuple[bool, str]:
+    """Complete a single subtask with all checkpoints. Returns (success, error_message)."""
+    checkpoints = ["criteria", "tests", "blockers"]
+    for checkpoint in checkpoints:
+        note = notes.get(checkpoint, "")
+        ok, msg = manager.update_subtask_checkpoint(task_id, index, checkpoint, True, note, domain)
+        if not ok:
+            return False, f"{checkpoint}: {msg or 'failed'}"
+
+    ok, msg = manager.set_subtask(task_id, index, True, domain)
+    if not ok:
+        return False, msg or "set_subtask failed"
+    return True, ""
+
+
 def cmd_ok(args) -> int:
+    """Complete subtask(s) with all checkpoints (batch support).
+
+    Usage:
+        ok TASK 0           # single subtask
+        ok TASK 0,1,2       # multiple subtasks
+        ok TASK --all       # all incomplete subtasks
+    """
     manager = TaskManager()
     try:
         task_id, domain = resolve_task_reference(
@@ -88,41 +129,103 @@ def cmd_ok(args) -> int:
         )
     except ValueError as exc:
         return structured_error("ok", str(exc))
-    index = args.index
-    checkpoints: List[Tuple[str, Optional[str], str]] = [
-        ("criteria", getattr(args, "criteria_note", None), "criteria_done"),
-        ("tests", getattr(args, "tests_note", None), "tests_done"),
-        ("blockers", getattr(args, "blockers_note", None), "blockers_done"),
-    ]
-    for checkpoint, note, _ in checkpoints:
-        ok, msg = manager.update_subtask_checkpoint(task_id, index, checkpoint, True, note or "", domain)
-        if ok:
-            continue
-        payload = {"task_id": task_id, "checkpoint": checkpoint, "index": index}
-        if msg == "not_found":
-            return structured_error("ok", f"Задача {task_id} не найдена", payload=payload)
-        if msg == "index":
-            return structured_error("ok", translate("ERR_SUBTASK_INDEX"), payload=payload)
-        return structured_error("ok", msg or "Не удалось подтвердить чекпоинт", payload=payload)
 
-    ok, msg = manager.set_subtask(task_id, index, True, domain)
-    if not ok:
-        payload = {"task_id": task_id, "index": index}
-        return structured_error("ok", msg or "Не удалось завершить подзадачу", payload=payload)
+    # Load task to get subtasks count
+    detail = manager.load_task(task_id, domain)
+    if not detail:
+        return structured_error("ok", f"Задача {task_id} не найдена", payload={"task_id": task_id})
+
+    # Parse indices
+    indices_str = getattr(args, "indices", None) or getattr(args, "index", None)
+    all_flag = getattr(args, "all_subtasks", False)
+
+    # Handle legacy single int index
+    if isinstance(indices_str, int):
+        indices = [indices_str]
+    else:
+        indices = _parse_indices(str(indices_str) if indices_str else None, all_flag, len(detail.subtasks))
+
+    if not indices:
+        return structured_error("ok", "Укажите индекс(ы) подзадач или --all", payload={"task_id": task_id})
+
+    # Filter to incomplete subtasks only (for --all mode)
+    if all_flag:
+        indices = [i for i in indices if i < len(detail.subtasks) and not detail.subtasks[i].completed]
+
+    if not indices:
+        return structured_response(
+            "ok",
+            status="OK",
+            message="Все подзадачи уже завершены",
+            payload={"task": task_to_dict(detail, include_subtasks=True)},
+            summary=f"{task_id} all done",
+        )
+
+    # Collect notes
+    notes = {
+        "criteria": getattr(args, "criteria_note", None) or "",
+        "tests": getattr(args, "tests_note", None) or "",
+        "blockers": getattr(args, "blockers_note", None) or "",
+    }
+
+    # Process each subtask
+    completed: List[int] = []
+    failed: List[Dict[str, Any]] = []
+
+    for index in indices:
+        if index < 0 or index >= len(detail.subtasks):
+            failed.append({"index": index, "error": "index out of range"})
+            continue
+
+        if detail.subtasks[index].completed:
+            completed.append(index)  # Already done, count as success
+            continue
+
+        success, error = _ok_single_subtask(manager, task_id, index, domain, notes)
+        if success:
+            completed.append(index)
+        else:
+            failed.append({"index": index, "error": error})
+
+    # Reload task for final state
     detail = manager.load_task(task_id, domain)
     save_last_task(task_id, domain)
+
     payload: Dict[str, Any] = {
         "task": task_to_dict(detail, include_subtasks=True) if detail else {"id": task_id},
-        "subtask_index": index,
+        "completed": completed,
+        "failed": failed,
     }
-    if detail and 0 <= index < len(detail.subtasks):
-        payload["subtask"] = subtask_to_dict(detail.subtasks[index])
+
+    # Add "subtask" key for backward compatibility when single subtask is completed
+    if len(completed) == 1 and detail and completed[0] < len(detail.subtasks):
+        payload["subtask"] = subtask_to_dict(detail.subtasks[completed[0]], completed[0])
+
+    if failed:
+        return structured_response(
+            "ok",
+            status="WARN",
+            message=f"Завершено {len(completed)} из {len(indices)} подзадач",
+            payload=payload,
+            summary=f"{task_id} {len(completed)}/{len(indices)} OK",
+            exit_code=1,
+        )
+
+    if len(completed) == 1:
+        return structured_response(
+            "ok",
+            status="OK",
+            message=f"Подзадача {completed[0]} полностью подтверждена и закрыта",
+            payload=payload,
+            summary=f"{task_id} subtask#{completed[0]} OK",
+        )
+
     return structured_response(
         "ok",
         status="OK",
-        message=f"Подзадача {index} полностью подтверждена и закрыта",
+        message=f"Завершено {len(completed)} подзадач: {', '.join(map(str, completed))}",
         payload=payload,
-        summary=f"{task_id} subtask#{index} OK",
+        summary=f"{task_id} {len(completed)} subtasks OK",
     )
 
 

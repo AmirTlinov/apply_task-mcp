@@ -13,7 +13,7 @@ fields:
     name: Subtasks
 project:
   enabled: true
-  number: null
+  number: 25
   owner: AmirTlinov
   repo: apply_task
   type: repository

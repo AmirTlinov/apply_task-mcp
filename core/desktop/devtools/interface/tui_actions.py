@@ -1,5 +1,7 @@
 """Action handlers extracted from TaskTrackerTUI to reduce coupling."""
 
+import shutil
+from pathlib import Path
 
 from projects_sync import update_projects_enabled, reload_projects_sync
 from core.desktop.devtools.application.task_manager import _find_subtask_by_path
@@ -60,6 +62,59 @@ def activate_settings_option(tui) -> None:
 
 
 def delete_current_item(tui) -> None:
+    # Project-level deletion: remove project folder with all tasks
+    if getattr(tui, "project_mode", False) and not getattr(tui, "detail_mode", False):
+        if not tui.tasks:
+            return
+        project = tui.filtered_tasks[tui.selected_index]
+        prev_index = tui.selected_index
+        path_raw = getattr(project, "task_file", None)
+        if not path_raw:
+            return
+        path = Path(path_raw).resolve()
+        root = getattr(tui, "projects_root", None)
+        if not root:
+            return
+        root_resolved = Path(root).resolve()
+        try:
+            if not path.is_relative_to(root_resolved):
+                return
+        except AttributeError:
+            # Python <3.9 compatibility: manual check
+            if root_resolved not in path.parents and path != root_resolved:
+                return
+        # Не удаляем текущий namespace, чтобы не ломать активный менеджер
+        try:
+            if path.samefile(getattr(tui, "tasks_dir", Path())):
+                tui.set_status_message("Нельзя удалить активный проект", ttl=3)
+                return
+        except Exception:
+            pass
+        try:
+            if path.is_symlink() or path.is_file():
+                path.unlink()
+            elif path.exists():
+                shutil.rmtree(path)
+            tui.set_status_message(f"Проект удален: {project.name}", ttl=3)
+        except OSError:
+            tui.set_status_message("Не удалось удалить проект", ttl=3)
+            return
+        if path.exists():
+            tui.set_status_message("Не удалось удалить проект: путь остался", ttl=3)
+            return
+        # reload list and keep selection in bounds
+        tui.load_projects()
+        tui.selected_index = min(prev_index, max(0, len(tui.tasks) - 1))
+        if tui.tasks:
+            tui.last_project_index = tui.selected_index
+            tui.last_project_name = tui.tasks[tui.selected_index].name
+        else:
+            tui.last_project_index = 0
+            tui.last_project_name = None
+        tui._ensure_selection_visible()
+        tui.force_render()
+        return
+
     if getattr(tui, "detail_mode", False) and getattr(tui, "current_task_detail", None):
         entry = tui._selected_subtask_entry()
         if not entry:

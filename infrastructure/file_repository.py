@@ -10,9 +10,9 @@ from infrastructure.task_file_parser import TaskFileParser
 class FileTaskRepository(TaskRepository):
     def __init__(self, tasks_dir: Path | None):
         if tasks_dir is None:
-            fallback = (Path.cwd() / ".tasks").resolve()
-            fallback.mkdir(parents=True, exist_ok=True)
-            self.tasks_dir = fallback
+            # Use global storage ~/.tasks/<namespace>/ (or APPLY_TASK_TASKS_DIR if set)
+            from core.desktop.devtools.interface.tasks_dir_resolver import get_tasks_dir_for_project
+            self.tasks_dir = get_tasks_dir_for_project(use_global=True)
         else:
             self.tasks_dir = tasks_dir
 
@@ -40,16 +40,47 @@ class FileTaskRepository(TaskRepository):
                 task.domain = ""
 
     def load(self, task_id: str, domain: str = "") -> Optional[TaskDetail]:
-        filepath = self._resolve_path(task_id, domain)
-        if not filepath.exists():
-            candidates = list(self.tasks_dir.rglob(f"{task_id}.task"))
-            filepath = candidates[0] if candidates else None
-        if not filepath or not Path(filepath).exists():
+        """Load a task by ID, optionally from a specific domain buffer."""
+        path = self._resolve_path(task_id, domain)
+        with open("/tmp/debug_mcp.log", "a") as f:
+             f.write(f"[_repo_load] task_id={task_id}, domain={domain}, resolved_path={path}\n")
+             
+        if path.exists():
+            task = TaskFileParser.parse(path)
+            if task:
+                self._assign_domain(task, path)
+            return task
+
+        # Fallback: search everywhere
+        with open("/tmp/debug_mcp.log", "a") as f:
+             f.write(f"[_repo_load] Path not found. Trying rglob for {task_id}.task in {self.tasks_dir}\n")
+             
+        # Case-insensitive search using rglob is tricky, but we assume exact match for now
+        # or use glob pattern
+        candidates = list(self.tasks_dir.rglob(f"{task_id}.task"))
+        
+        with open("/tmp/debug_mcp.log", "a") as f:
+             f.write(f"[_repo_load] Candidates found: {candidates}\n")
+             
+        if not candidates:
             return None
-        task = TaskFileParser.parse(filepath)
-        if task:
-            self._assign_domain(task, Path(filepath))
-        return task
+        
+        # Iterate through candidates to find the first parsable one
+        # This handles cases where duplicates exist and one might be corrupt/invalid
+        for candidate in candidates:
+             try:
+                 task = TaskFileParser.parse(candidate)
+                 if task:
+                     self._assign_domain(task, candidate)
+                     with open("/tmp/debug_mcp.log", "a") as f:
+                        f.write(f"[_repo_load] Loaded parsing candidate: {candidate}\n")
+                     return task
+             except Exception as e:
+                 with open("/tmp/debug_mcp.log", "a") as f:
+                    f.write(f"[_repo_load] Failed to parse candidate {candidate}: {e}\n")
+                 continue
+        
+        return None
 
     def save(self, task: TaskDetail) -> None:
         path = self._resolve_path(task.id, task.domain)

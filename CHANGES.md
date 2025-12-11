@@ -1,5 +1,38 @@
 # Changes
 
+## 2025-12-07 · AI interface enhancements
+
+### New AI intents
+- `resume` — restore AI session context with timeline and dependencies after context loss
+- `history` — view operation history or task event timeline with markdown format support
+- `context` — now supports `format: "markdown"` for prompt-friendly output
+
+### New CLI commands
+- `task` — smart create with auto-parsing of #tags and @dependencies from title
+- `edit` — edit task properties (description, tags, priority, phase, component, dependencies)
+- `checkpoint` — interactive wizard for step-by-step checkpoint confirmation
+- `analyze` — deep task analysis
+- `add-dep` — add dependency between tasks
+
+### New flags
+- `--path` — support for nested subtasks (0.1.2 notation) in `ok`, `note`, `subtask` commands
+- `--depends-on` — specify dependencies when creating/editing tasks
+- `--validate-only` — dry run validation without creating task
+- `--progress` — show completion progress in list command
+- `--blocked` — filter tasks blocked by dependencies
+- `--stale N` — filter tasks inactive for N days
+
+### Batch operations
+- `ok TASK 0,1,2` — batch complete multiple subtasks by indices
+- `ok TASK --all` — complete all incomplete subtasks
+- `batch` intent supports `atomic: true` for all-or-nothing operations
+
+### Bug fixes
+- Fixed `handle_history` AIResponse field violations (error→error_message, message→summary)
+- Fixed `handle_resume` tuple unpacking for `get_blocked_by_dependencies`
+- Fixed `handle_context` message field usage
+- Added missing `params` field to `Suggestion` dataclass
+
 ## 2025-11-22 · Nested subtasks TUI
 - Detail view now renders nested subtasks as an indented tree with `--path` prefixes (e.g., `0.1.2`), and selection is tracked by path.
 - Subtask actions in TUI (toggle, edit, delete, open card) now honor nested paths; mouse/keyboard navigation works across depths.

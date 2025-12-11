@@ -50,10 +50,18 @@ def get_tasks_dir_for_project(use_global: bool = True, tasks_dir: Path | None = 
     """Unified resolver for tasks directory.
 
     Priority:
-    1. Explicit tasks_dir if provided.
-    2. Global (~/.tasks/<namespace>) when use_global=True.
-    3. Local .tasks under project root (fallback for test/temp dirs without git).
+    1. APPLY_TASK_TASKS_DIR env variable (for tests).
+    2. Explicit tasks_dir if provided.
+    3. Global (~/.tasks/<namespace>) when use_global=True.
+    4. Local .tasks under project root (only when use_global=False).
     """
+    # Allow env override for tests
+    env_tasks_dir = os.environ.get("APPLY_TASK_TASKS_DIR")
+    if env_tasks_dir:
+        env_path = Path(env_tasks_dir).expanduser().resolve()
+        env_path.mkdir(parents=True, exist_ok=True)
+        return env_path
+
     if tasks_dir:
         return Path(tasks_dir).expanduser().resolve()
 
@@ -61,16 +69,12 @@ def get_tasks_dir_for_project(use_global: bool = True, tasks_dir: Path | None = 
     if use_global:
         namespace = get_project_namespace(project_root)
         global_dir = (Path.home() / ".tasks" / namespace).resolve()
-        # Fallback: if no git/namespace dir exists and local .tasks is present, use local
-        local_dir = (project_root / ".tasks").resolve()
-        if not global_dir.exists() and local_dir.exists():
-            return local_dir
-        if not global_dir.exists() and not local_dir.exists():
-            # test/temp dir with no git: use local
-            return local_dir
+        global_dir.mkdir(parents=True, exist_ok=True)
         return global_dir
 
-    return (project_root / ".tasks").resolve()
+    local_dir = (project_root / ".tasks").resolve()
+    local_dir.mkdir(parents=True, exist_ok=True)
+    return local_dir
 
 
 __all__ = ["get_tasks_dir_for_project", "resolve_project_root", "get_project_namespace"]

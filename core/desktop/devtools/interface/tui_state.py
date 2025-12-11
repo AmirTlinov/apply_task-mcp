@@ -51,7 +51,7 @@ def maybe_reload(tui, now: Optional[float] = None) -> None:
     from time import time
 
     ts = now if now is not None else time()
-    if ts - tui._last_check < 0.7:
+    if ts - tui._last_check < 0.3:  # Reduced from 0.7s for faster CLI updates
         return
     tui._last_check = ts
 

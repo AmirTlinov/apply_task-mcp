@@ -102,6 +102,8 @@ class GraphQLClient:
             "forbidden",
             "access denied",
             "insufficient",
+            "scope",
+            "scopes",
             "could not resolve to a projectv2",
             "could not resolve to a repository",
             "not a member",

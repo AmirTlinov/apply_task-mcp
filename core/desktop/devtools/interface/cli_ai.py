@@ -1963,6 +1963,7 @@ def handle_delete(
     """
     task_id = data.get("task")
     path = data.get("path")
+    domain_path = derive_domain_explicit(data.get("domain", ""), data.get("phase"), data.get("component"))
 
     if not task_id:
         return error_response("delete", "MISSING_TASK", "Field 'task' is required")

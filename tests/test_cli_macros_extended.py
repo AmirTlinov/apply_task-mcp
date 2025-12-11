@@ -59,14 +59,16 @@ def test_cmd_ok_success_builds_payload(monkeypatch, capsys):
             return True, None
 
         def load_task(self, task_id, domain):
-            st = SimpleNamespace(criteria_confirmed=True, tests_confirmed=True, blockers_resolved=True)
+            st = SimpleNamespace(
+                criteria_confirmed=True, tests_confirmed=True, blockers_resolved=True, completed=False
+            )
             return SimpleNamespace(id=task_id, domain=domain, subtasks=[st])
 
     monkeypatch.setattr(macros, "TaskManager", lambda: DummyManager())
     monkeypatch.setattr(macros, "resolve_task_reference", lambda *args, **kwargs: ("TASK-2", "dom"))
     monkeypatch.setattr(macros, "translate", lambda key, **kwargs: key)
     monkeypatch.setattr(macros, "task_to_dict", lambda detail, include_subtasks=True: {"id": detail.id})
-    monkeypatch.setattr(macros, "subtask_to_dict", lambda st: {"done": True})
+    monkeypatch.setattr(macros, "subtask_to_dict", lambda st, idx=0: {"completed": True})
     monkeypatch.setattr(macros, "save_last_task", lambda *args, **kwargs: None)
 
     exit_code = macros.cmd_ok(
@@ -75,7 +77,8 @@ def test_cmd_ok_success_builds_payload(monkeypatch, capsys):
             domain=None,
             phase=None,
             component=None,
-            index=0,
+            indices="0",  # Changed from index to indices (string)
+            all_subtasks=False,
             criteria_note="",
             tests_note="",
             blockers_note="",
@@ -121,12 +124,20 @@ def test_cmd_ok_checkpoint_failure(monkeypatch, capsys):
         def update_subtask_checkpoint(self, *args, **kwargs):
             return False, "index"
 
+        def load_task(self, task_id, domain):
+            st = SimpleNamespace(completed=False)
+            return SimpleNamespace(id=task_id, domain=domain, subtasks=[st, st])
+
     monkeypatch.setattr(macros, "TaskManager", lambda: DummyManager())
     monkeypatch.setattr(macros, "resolve_task_reference", lambda *args, **kwargs: ("TASK-3", ""))
     monkeypatch.setattr(macros, "translate", lambda key, **kwargs: key)
-    exit_code = macros.cmd_ok(SimpleNamespace(task_id=None, domain=None, phase=None, component=None, index=1, criteria_note="", tests_note="", blockers_note=""))
+    monkeypatch.setattr(macros, "task_to_dict", lambda detail, include_subtasks=True: {"id": detail.id})
+    monkeypatch.setattr(macros, "save_last_task", lambda *args, **kwargs: None)
+    exit_code = macros.cmd_ok(SimpleNamespace(task_id=None, domain=None, phase=None, component=None, indices="1", all_subtasks=False, criteria_note="", tests_note="", blockers_note=""))
     assert exit_code == 1
-    assert "ERR_SUBTASK_INDEX" in capsys.readouterr().out
+    # Now returns WARN with partial failure info
+    out = capsys.readouterr().out
+    assert "criteria: index" in out or "WARN" in out
 
 
 def test_cmd_ok_set_subtask_failure(monkeypatch, capsys):
@@ -137,16 +148,22 @@ def test_cmd_ok_set_subtask_failure(monkeypatch, capsys):
         def set_subtask(self, *args, **kwargs):
             return False, "boom"
 
+        def load_task(self, task_id, domain):
+            st = SimpleNamespace(completed=False)
+            return SimpleNamespace(id=task_id, domain=domain, subtasks=[st])
+
     monkeypatch.setattr(macros, "TaskManager", lambda: DummyManager())
     monkeypatch.setattr(macros, "resolve_task_reference", lambda *args, **kwargs: ("TASK-4", ""))
-    exit_code = macros.cmd_ok(SimpleNamespace(task_id=None, domain=None, phase=None, component=None, index=0, criteria_note="", tests_note="", blockers_note=""))
+    monkeypatch.setattr(macros, "task_to_dict", lambda detail, include_subtasks=True: {"id": detail.id})
+    monkeypatch.setattr(macros, "save_last_task", lambda *args, **kwargs: None)
+    exit_code = macros.cmd_ok(SimpleNamespace(task_id=None, domain=None, phase=None, component=None, indices="0", all_subtasks=False, criteria_note="", tests_note="", blockers_note=""))
     assert exit_code == 1
     assert "boom" in capsys.readouterr().out
 
 
 def test_cmd_ok_resolve_error(monkeypatch, capsys):
     monkeypatch.setattr(macros, "resolve_task_reference", lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("bad")))
-    exit_code = macros.cmd_ok(SimpleNamespace(task_id=None, domain=None, phase=None, component=None, index=0, criteria_note="", tests_note="", blockers_note=""))
+    exit_code = macros.cmd_ok(SimpleNamespace(task_id=None, domain=None, phase=None, component=None, indices="0", all_subtasks=False, criteria_note="", tests_note="", blockers_note=""))
     assert exit_code == 1
     assert "bad" in capsys.readouterr().out
 

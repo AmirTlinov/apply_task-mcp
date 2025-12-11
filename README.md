@@ -13,12 +13,11 @@ Task Tracker (`apply_task`) is a single self-contained CLI/TUI that keeps your b
 # Install dependencies
 pip install -r requirements.txt
 
-# Install apply_task into PATH (one-time)
-cp apply_task ~/.local/bin/ && chmod +x ~/.local/bin/apply_task
+# Install into PATH (one-time; isolated)
+pipx install .
+# or: python -m pip install --user .
 
-# Reload your shell (or `source ~/.zshrc`)
-
-# Launch the TUI (project picker opens first, storage in ~/.tasks/<namespace>)
+# Launch the TUI (auto-opens current project; project picker is still available via ←)
 apply_task tui
 ```
 
@@ -99,16 +98,49 @@ Every non-interactive command prints structured JSON:
 }
 ```
 
-Use `apply_task help` (also in English) for the complete command reference. Highlights:
+Use `apply_task help` for the complete command reference. Highlights:
 
 ```bash
-apply_task "Ship vector index #feature" --parent ROOT --tests "pytest -q" \
-  --risks "perf spike;quota" --subtasks @specs/subtasks.json
+# Create task with full specification
+apply_task create "Ship vector index #feature" --parent ROOT \
+  --description "Implement vector search" --tests "pytest -q" \
+  --risks "perf spike;quota" --subtasks @specs/subtasks.json \
+  --depends-on TASK-001,TASK-002
+
+# Smart create (auto-parses #tags and @dependencies from title)
+apply_task task "Add OAuth #feature #security @TASK-015" \
+  --parent ROOT --description "..." --tests "..." --risks "..." \
+  --subtasks @subtasks.json
+
+# View and navigate
 apply_task show               # show the last task
-apply_task start|done|fail    # update status (WARN/OK/FAIL)
-apply_task ok NOTEBOOK 0      # close criteria/tests/blockers for subtask 0
+apply_task list --blocked     # tasks blocked by dependencies
+apply_task list --stale 7     # inactive for 7+ days
+apply_task list --progress    # show completion progress
+apply_task analyze TASK-001   # deep task analysis
+
+# Edit task properties
+apply_task edit TASK-001 --description "New scope" --priority HIGH \
+  --depends-on TASK-002 --phase sprint-2
+
+# Status updates
+apply_task update TASK-001 WARN   # start work (FAIL → WARN)
+apply_task update TASK-001 OK     # complete (WARN → OK)
+
+# Checkpoints
+apply_task ok TASK-001 0 --criteria-note "..." --tests-note "..."
+apply_task ok TASK-001 0,1,2      # batch complete multiple subtasks
+apply_task ok TASK-001 --all      # complete all incomplete subtasks
+apply_task ok TASK-001 --path 0.1.2  # nested subtask by path
+
+# Checkpoint wizard
+apply_task checkpoint TASK-001 --subtask 0  # interactive step-by-step
+apply_task checkpoint TASK-001 --auto       # auto-confirm all
+
+# Bulk operations
 apply_task bulk --input plan.json   # batch checkpoints from JSON
-apply_task checkpoint TASK-123 --auto  # guided wizard for criteria/tests/blockers
+
+# TUI
 apply_task tui --theme dark-contrast   # TUI with alternative palette
 ```
 
@@ -124,6 +156,59 @@ apply_task tui --theme dark-contrast   # TUI with alternative palette
 | Horizontal scroll            | `Shift + wheel`                               |
 | Filters                      | `1` In Progress, `2` Backlog, `3` Done, `0` All|
 | Subtask toggle               | `d`, `в` or mouse click on checkbox           |
+
+## AI interface (JSON API)
+
+For AI agents and automation, `apply_task ai` provides a structured JSON API:
+
+```bash
+# Get current context
+apply_task ai '{"intent": "context"}'
+apply_task ai '{"intent": "context", "compact": true}'
+apply_task ai '{"intent": "context", "format": "markdown"}'
+
+# Resume session after context loss
+apply_task ai '{"intent": "resume"}'
+apply_task ai '{"intent": "resume", "task": "TASK-001"}'
+
+# View operation history
+apply_task ai '{"intent": "history"}'
+apply_task ai '{"intent": "history", "task": "TASK-001", "format": "markdown"}'
+
+# Create task programmatically
+apply_task ai '{"intent": "create", "title": "Task", "parent": "ROOT", ...}'
+
+# Batch operations (atomic)
+apply_task ai '{"intent": "batch", "task": "TASK-001", "atomic": true, "operations": [...]}'
+```
+
+**Available intents:** `context`, `resume`, `create`, `decompose`, `define`, `verify`, `done`, `progress`, `delete`, `complete`, `batch`, `undo`, `redo`, `history`, `storage`, `migrate`.
+
+All responses follow a consistent structure:
+
+```json
+{
+  "success": true,
+  "intent": "context",
+  "result": { ... },
+  "suggestions": ["next action 1", "next action 2"]
+}
+```
+
+## MCP server
+
+For Claude Code and other AI assistants:
+
+```bash
+apply_task mcp  # Start MCP stdio server
+```
+
+Available tools: `tasks_list`, `tasks_show`, `tasks_context`, `tasks_create`, `tasks_done`, `tasks_macro_ok`, `tasks_macro_note`, `tasks_macro_bulk`.
+
+Configure in Claude Desktop:
+```json
+{"mcpServers": {"tasks": {"command": "apply_task", "args": ["mcp"]}}}
+```
 
 ## Data layout / storage
 
@@ -143,7 +228,11 @@ apply_task tui
 
 ## Additional docs
 
+- [SYNTAX.md](SYNTAX.md) — CLI/JSON formats, required fields.
+- [AI_INTENTS.md](AI_INTENTS.md) — complete AI JSON API reference.
+- [AGENTS.md](AGENTS.md) — playbook for AI agents.
 - [CHANGES.md](CHANGES.md) — latest UX/feature notes.
+- [DOMAIN_STRUCTURE.md](DOMAIN_STRUCTURE.md) — domain/layer layout.
 - [SCROLLING.md](SCROLLING.md) — TUI navigation & scrolling design.
 - [UI_UX_IMPROVEMENTS.md](UI_UX_IMPROVEMENTS.md) — rationale behind the responsive interface.
 - [GIT_PROJECT.md](GIT_PROJECT.md) — git-aware workflow details.

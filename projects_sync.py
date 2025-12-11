@@ -7,6 +7,7 @@ import os
 import random
 import subprocess
 import time
+import shutil
 import yaml
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -28,6 +29,10 @@ from infrastructure.projects_sync.graphql_client import (
 from infrastructure.projects_sync.issues_client import IssuesClient, IssuesPermissionError
 from infrastructure.projects_sync.rate_limiter import RateLimiter
 from infrastructure.projects_sync.schema_cache import SchemaCache
+from infrastructure.token_status_cache import (
+    should_show_projects_warning,
+    mark_projects_warning_shown,
+)
 
 PROJECT_ROOT = Path(os.environ.get("APPLY_TASK_PROJECT_ROOT") or Path.cwd()).resolve()
 GRAPHQL_URL = "https://api.github.com/graphql"
@@ -57,6 +62,7 @@ def _load_token() -> str:
     3. GH_TOKEN
     4. ~/.apply_task_config.yaml (get_user_token)
     5. GitHub CLI auth (~/.config/gh/hosts.yml)
+    6. gh CLI (`gh auth token`) when configured on the system
     """
     token = os.getenv("APPLY_TASK_GITHUB_TOKEN") or os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN") or get_user_token()
     if token:
@@ -71,11 +77,51 @@ def _load_token() -> str:
                 return str(tok).strip()
         except Exception:
             pass
+    gh_bin = shutil.which("gh")
+    if gh_bin:
+        try:
+            result = subprocess.run(
+                [gh_bin, "auth", "token"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                tok = (result.stdout or "").strip()
+                if tok:
+                    try:
+                        # Persist for reuse across runs
+                        set_user_token(tok)
+                    except Exception:
+                        pass
+                    return tok
+        except Exception:
+            # As a last resort we ignore CLI errors and keep sync disabled
+            pass
     return ""
 
 
 class ProjectsSyncPermissionError(RuntimeError):
     """Raised when GitHub denies Projects mutations due to permissions."""
+
+
+def _permission_reason(exc: Exception) -> str:
+    """Normalize permission errors into a user-friendly string."""
+    text = str(exc)
+    if isinstance(exc, list):
+        try:
+            text = exc[0].get("message", "") or text
+        except Exception:
+            pass
+    lowered = text.lower()
+    if "resource not accessible" in lowered:
+        return "Resource not accessible by integration (проверь права на репозиторий/Projects)"
+    if "scope" in lowered or "scopes" in lowered:
+        return "GitHub token lacks Projects scopes (need read:project). Обнови gh auth: gh auth refresh -s project -s read:project"
+    if "access" in lowered or "forbidden" in lowered:
+        return "GitHub token lacks Projects access"
+    return text
 
 
 def _read_project_file(path: Optional[Path] = None) -> Dict[str, Any]:
@@ -306,7 +352,11 @@ class ProjectsSync:
     def _disable_runtime(self, reason: str, persist: bool = False) -> None:
         if not self._runtime_disabled_reason:
             self._runtime_disabled_reason = reason
-            logger.warning("Projects sync disabled: %s", reason)
+            # Use cached warning to avoid spamming same message
+            warning_msg = f"Projects sync disabled: {reason}"
+            if should_show_projects_warning(warning_msg, self.token or ""):
+                logger.warning(warning_msg)
+                mark_projects_warning_shown(warning_msg, self.token or "")
         self._project_lookup_failed = True
         global _PROJECTS_DISABLED_REASON
         _PROJECTS_DISABLED_REASON = self._runtime_disabled_reason
@@ -337,7 +387,10 @@ class ProjectsSync:
         except ProjectsSyncPermissionError:
             return False
         except Exception as exc:  # pragma: no cover - defensive log
-            logger.warning("projects sync disabled: %s", exc)
+            warning_msg = f"projects sync disabled: {exc}"
+            if should_show_projects_warning(warning_msg, self.token or ""):
+                logger.warning(warning_msg)
+                mark_projects_warning_shown(warning_msg, self.token or "")
             return False
 
         changed = False
@@ -462,8 +515,9 @@ class ProjectsSync:
         try:
             return self._graphql_client.execute(query, variables)
         except GraphQLPermissionError as exc:
-            self._disable_runtime(f"GitHub token lacks Projects access ({exc})")
-            raise ProjectsSyncPermissionError("projects sync disabled due to insufficient permissions") from exc
+            reason = _permission_reason(exc)
+            self._disable_runtime(reason)
+            raise ProjectsSyncPermissionError(reason) from exc
         except GraphQLRateLimitError as exc:
             hard_extra = 120 if _RATE_RESET_MODE == "hard" else 60
             self._rate_limiter.update({}, errors=[{"message": "rate limit"}])
@@ -601,7 +655,7 @@ class ProjectsSync:
                                 pass
                             self._disable_runtime(f"Project {cfg.owner}/{cfg.repo}#{variables.get('number')} not found")
                         raise ProjectsSyncPermissionError("project not found")
-                raise
+                    raise
             repo_node = (data.get("repository") or {})
             node = repo_node.get("projectV2")
         elif cfg.project_type == "organization":

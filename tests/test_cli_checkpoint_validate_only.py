@@ -57,7 +57,8 @@ def test_cli_checkpoint_validate_only(monkeypatch, capsys):
 
     monkeypatch.setattr(cli_checkpoint, "TaskManager", lambda: DummyManager())
     monkeypatch.setattr(cli_checkpoint, "translate", lambda key, **kwargs: key)
-    args = SimpleNamespace(task=None, auto=True, domain=None, phase=None, component=None, note="n", validate_only=True, subtask=None, path=None)
+    # Pass task_id directly to avoid needing .last file
+    args = SimpleNamespace(task_id="TASK-1", auto=True, domain=None, phase=None, component=None, note="n", validate_only=True, subtask=None, path=None)
     rc = cli_checkpoint.cmd_checkpoint(args)
     assert rc == 0
     out = capsys.readouterr().out

@@ -42,13 +42,18 @@ def render_task_list_text(tui) -> FormattedText:
 def render_task_list_text_impl(tui) -> FormattedText:
     term_width = max(1, tui.get_terminal_width())
     if not tui.filtered_tasks:
-        empty_width = min(term_width, max(10, min(80, term_width - 2)))
+        empty_width = min(term_width, max(20, min(90, term_width - 2)))
         tui.task_row_map = []
-        return FormattedText([
+        lines = [
             ('class:border', '+' + '-' * empty_width + '+\n'),
             ('class:text.dim', '| ' + tui._t("TASK_LIST_EMPTY").ljust(empty_width - 2) + ' |\n'),
+            ('class:text', '| ' + tui._t("CTA_CREATE_TASK").ljust(empty_width - 2) + ' |\n'),
+            ('class:text', '| ' + tui._t("CTA_IMPORT_TASK").ljust(empty_width - 2) + ' |\n'),
+            ('class:text.dim', '| ' + tui._t("CTA_DOMAIN_HINT").ljust(empty_width - 2) + ' |\n'),
+            ('class:text.dim', '| ' + tui._t("CTA_KEYS_HINT").ljust(empty_width - 2) + ' |\n'),
             ('class:border', '+' + '-' * empty_width + '+'),
-        ])
+        ]
+        return FormattedText(lines)
 
     result: List[Tuple[str, str]] = []
     tui.task_row_map = []

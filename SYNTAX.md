@@ -31,15 +31,35 @@ apply_task "Refactor parser #refactoring"
 ### Creating a fully-specified task
 
 ```bash
-apply_task "Task Title #tag" \
+apply_task create "Task Title #tag" \
   --parent TASK-001 \
   --description "Concrete scope" \
   --tests "pytest -q;coverage xml" \
   --risks "risk1;risk2" \
-  --subtasks @payload/subtasks.json
+  --subtasks @payload/subtasks.json \
+  --depends-on TASK-002,TASK-003
 ```
 
 Flags `--parent`, `--description`, `--tests`, `--risks`, `--subtasks` are mandatory for flagship quality. Subtasks payload must contain ≥3 detailed items.
+
+**Optional flags:**
+- `--depends-on` — comma-separated task IDs for dependencies
+- `--validate-only` — dry run validation without creating task
+
+### Smart create (auto-parses tags & dependencies)
+
+```bash
+apply_task task "Add auth #feature #security @TASK-010" \
+  --parent ROOT \
+  --description "..." \
+  --tests "..." \
+  --risks "..." \
+  --subtasks @subtasks.json
+```
+
+Automatically extracts:
+- `#tag` → adds to tags
+- `@TASK-xxx` → adds to dependencies
 
 ### Subtasks input helpers
 
@@ -54,16 +74,43 @@ Flags `--parent`, `--description`, `--tests`, `--risks`, `--subtasks` are mandat
 apply_task show           # last task from .last
 apply_task show 001       # TASK-001
 apply_task list           # backlog summary
+apply_task list --status WARN     # filter by status
+apply_task list --tag feature     # filter by tag
+apply_task list --blocked         # only tasks blocked by dependencies
+apply_task list --stale 7         # inactive for 7+ days
+apply_task list --progress        # show completion progress
+apply_task analyze TASK-001       # deep task analysis
+apply_task suggest                # AI recommendations
+apply_task quick                  # top-3 quick overview
 ```
 
 List output (TUI/CLI) shows status glyph, title, status code, and percentage. Details include tags, description, subtasks, dependencies, blockers.
 
+### Editing tasks
+
+```bash
+apply_task edit TASK-001 \
+  --description "New description" \
+  --context "Additional context" \
+  --tags "backend,api" \
+  --priority HIGH \
+  --phase sprint-2 \
+  --component auth \
+  --depends-on TASK-002,TASK-003  # replace all dependencies
+  --add-dep TASK-004              # add single dependency
+  --remove-dep TASK-002           # remove single dependency
+  --new-domain "core/api"         # move to subdirectory
+```
+
 ### Status updates
 
 ```bash
-apply_task start [TASK]   # FAIL → WARN
-apply_task done [TASK]    # WARN → OK
-apply_task fail [TASK]    # → FAIL
+apply_task update [TASK] WARN   # FAIL → WARN (start work)
+apply_task update [TASK] OK     # WARN → OK (complete, requires all subtasks done)
+apply_task update [TASK] FAIL   # → FAIL (reopen)
+
+# Alternative argument order
+apply_task update OK [TASK]     # Status first, then task
 ```
 
 ### Navigation
@@ -81,28 +128,76 @@ apply_task tui --theme dark-contrast
 
 ### Checkpoint macros
 
-- `apply_task ok TASK IDX --criteria-note "..." --tests-note "..." --blockers-note "..."`
-- `apply_task note TASK IDX --checkpoint tests --note "log" [--undo]`
-- `apply_task bulk --input payload.json` (also `-` for STDIN / `@path` for files)
+```bash
+# All-in-one completion (single subtask)
+apply_task ok TASK-001 0 \
+  --criteria-note "evidence" \
+  --tests-note "output" \
+  --blockers-note "resolution"
 
-JSON payload example:
+# Batch completion (multiple subtasks)
+apply_task ok TASK-001 0,1,2        # specific indices
+apply_task ok TASK-001 --all        # all incomplete subtasks
 
-```json
-{
-  "task": "TASK-123",
-  "index": 0,
-  "criteria": {"done": true, "note": "metrics logged"},
-  "tests": {"done": true, "note": "pytest -q"},
-  "blockers": {"done": false},
-  "complete": false
-}
+# Nested subtasks (path notation)
+apply_task ok TASK-001 --path 0.1.2 # path instead of index
+
+# Add note to checkpoint
+apply_task note TASK-001 0 --checkpoint tests --note "pytest output"
+apply_task note TASK-001 0 --checkpoint criteria --undo  # reset confirmation
+
+# Alias: sub ok (same as ok)
+apply_task sub ok TASK-001 0 --criteria-note "..." --tests-note "..."
+
+# Batch from JSON
+apply_task bulk --task TASK-001 --input checkpoints.json
 ```
 
-### History & replay
+### Checkpoint wizard
 
 ```bash
-apply_task history [N]    # last N commands (default 5)
-apply_task replay N       # re-run command #N (1 = latest)
+# Interactive step-by-step wizard
+apply_task checkpoint TASK-001 --subtask 0
+
+# Auto-confirm all checkpoints
+apply_task checkpoint TASK-001 --auto
+
+# With default note
+apply_task checkpoint . --subtask 0 --note "Verified in code review"
+```
+
+**Bulk JSON payload example:**
+
+```json
+[
+  {
+    "task": "TASK-123",
+    "index": 0,
+    "criteria": {"done": true, "note": "metrics logged"},
+    "tests": {"done": true, "note": "pytest -q"},
+    "blockers": {"done": true, "note": "resolved"},
+    "complete": true
+  }
+]
+```
+
+### Subtask management
+
+```bash
+# Add subtask with full specification
+apply_task subtask TASK-001 --add "Subtask title" \
+  --criteria "criterion1;criterion2" \
+  --tests "test1;test2" \
+  --blockers "blocker1;blocker2"
+
+# Confirm individual checkpoints
+apply_task subtask TASK-001 --criteria-done 0 --note "evidence"
+apply_task subtask TASK-001 --tests-done 0 --note "output"
+apply_task subtask TASK-001 --blockers-done 0 --note "resolution"
+apply_task subtask TASK-001 --done 0
+
+# Add dependency
+apply_task add-dep TASK-001 TASK-002  # TASK-001 depends on TASK-002
 ```
 
 ### GitHub Projects helpers
@@ -113,6 +208,68 @@ apply_task projects-webhook-serve --host 0.0.0.0 --port 8787 --secret "$WEBHOOK_
 ```
 
 The first form applies a single webhook payload (useful for testing or piping from another server). The `projects-webhook-serve` command runs a minimal HTTP server that accepts GitHub `projects_v2_item` events and keeps `.task` metadata in sync when board fields change.
+
+## AI interface (JSON API)
+
+For AI agents and automation, `apply_task ai` provides a structured JSON API:
+
+```bash
+# Basic usage
+apply_task ai '{"intent": "context"}'
+apply_task ai '{"intent": "context", "compact": true}'
+echo '{"intent": "resume"}' | apply_task ai
+apply_task ai @request.json
+```
+
+### Available intents
+
+| Intent | Description | Example |
+|--------|-------------|---------|
+| `context` | Get working context | `{"intent": "context", "format": "markdown"}` |
+| `resume` | Restore AI session | `{"intent": "resume", "task": "TASK-001"}` |
+| `create` | Create new task | `{"intent": "create", "title": "...", "parent": "ROOT"}` |
+| `decompose` | Add subtasks | `{"intent": "decompose", "task": "T-1", "subtasks": [...]}` |
+| `define` | Set properties | `{"intent": "define", "task": "T-1", "description": "..."}` |
+| `verify` | Verify checkpoints | `{"intent": "verify", "task": "T-1", "path": "0", ...}` |
+| `done` | Complete subtask | `{"intent": "done", "task": "T-1", "path": "0"}` |
+| `progress` | Toggle completion | `{"intent": "progress", "task": "T-1", "path": "0", "completed": true}` |
+| `delete` | Delete task/subtask | `{"intent": "delete", "task": "T-1"}` |
+| `complete` | Complete task | `{"intent": "complete", "task": "T-1"}` |
+| `batch` | Multiple ops | `{"intent": "batch", "task": "T-1", "atomic": true, "operations": [...]}` |
+| `undo` | Undo last op | `{"intent": "undo"}` |
+| `redo` | Redo undone op | `{"intent": "redo"}` |
+| `history` | View history | `{"intent": "history", "task": "T-1", "format": "markdown"}` |
+| `storage` | Storage info | `{"intent": "storage"}` |
+| `migrate` | Migrate local→global | `{"intent": "migrate"}` |
+
+### Response format
+
+All responses follow a consistent structure:
+
+```json
+{
+  "success": true,
+  "intent": "context",
+  "result": { ... },
+  "suggestions": ["next action 1", "next action 2"],
+  "recovery_hint": { ... }  // on errors
+}
+```
+
+## MCP server
+
+For Claude Code and other AI assistants:
+
+```bash
+apply_task mcp  # Start MCP stdio server
+```
+
+Available tools: `tasks_list`, `tasks_show`, `tasks_context`, `tasks_create`, `tasks_done`, `tasks_macro_ok`, `tasks_macro_note`, `tasks_macro_bulk`.
+
+Configure in Claude Desktop:
+```json
+{"mcpServers": {"tasks": {"command": "apply_task", "args": ["mcp"]}}}
+```
 
 ## Direct tasks.py commands (for scripts)
 

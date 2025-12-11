@@ -3,6 +3,7 @@ import os
 import importlib.util
 import shutil
 import subprocess
+import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,9 +31,19 @@ def isolated_tasks(tmp_path):
         last_backup.write_text(last_file.read_text())
         last_file.unlink()
 
+    # Set env variable to force CLI to use local .tasks/
+    old_env = os.environ.get("APPLY_TASK_TASKS_DIR")
+    os.environ["APPLY_TASK_TASKS_DIR"] = str(tasks_dir)
+
     try:
         yield tasks_dir
     finally:
+        # Restore env
+        if old_env is not None:
+            os.environ["APPLY_TASK_TASKS_DIR"] = old_env
+        else:
+            os.environ.pop("APPLY_TASK_TASKS_DIR", None)
+
         if tasks_dir.exists():
             shutil.rmtree(tasks_dir)
         if backup_dir and backup_dir.exists():
@@ -49,7 +60,7 @@ def isolated_tasks(tmp_path):
 def _run_apply_cmd(args):
     root = Path(__file__).resolve().parents[1]
     script = root / "apply_task"
-    return subprocess.run(["python3", str(script)] + args, cwd=root, capture_output=True, text=True)
+    return subprocess.run([sys.executable, str(script)] + args, cwd=root, capture_output=True, text=True)
 
 
 def _read_last_task_ref():
@@ -67,8 +78,13 @@ def _read_last_task_ref():
 
 
 def _task_file(task_id: str, folder: str = "") -> Path:
-    root = Path(__file__).resolve().parents[1]
-    base = root / ".tasks"
+    # Use env variable if set (by isolated_tasks fixture)
+    env_dir = os.environ.get("APPLY_TASK_TASKS_DIR")
+    if env_dir:
+        base = Path(env_dir)
+    else:
+        root = Path(__file__).resolve().parents[1]
+        base = root / ".tasks"
     if folder:
         base = base / folder
     return base / f"{task_id}.task"
@@ -103,6 +119,8 @@ class ApplyTaskResolveTests(unittest.TestCase):
             shutil.copytree(self.tasks_dir, self._tasks_backup)
             shutil.rmtree(self.tasks_dir)
         self.tasks_dir.mkdir(exist_ok=True)
+        # Set env variable to force CLI to use local .tasks/
+        os.environ["APPLY_TASK_TASKS_DIR"] = str(self.tasks_dir)
         self._last_backup = None
         if self.last_file.exists():
             self._last_backup = self._sandbox_dir / "last"
@@ -131,7 +149,7 @@ class ApplyTaskResolveTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         script = root / "apply_task"
         result = subprocess.run(
-            ["python3", str(script)] + args,
+            [sys.executable, str(script)] + args,
             cwd=root,
             input=stdin_data,
             capture_output=True,
@@ -148,14 +166,17 @@ class ApplyTaskResolveTests(unittest.TestCase):
         return data.split("@", 1)[0] if data else None
 
     def _read_task_metadata(self, task_id):
-        root = Path(__file__).resolve().parents[1]
-        task_file = root / ".tasks" / f"{task_id}.task"
+        task_file = self._tasks_root() / f"{task_id}.task"
         content = task_file.read_text()
         parts = content.split("---")
         meta = yaml.safe_load(parts[1]) if len(parts) > 1 else {}
         return meta, content
 
     def _tasks_root(self):
+        # Use env variable if set (by isolated_tasks fixture)
+        env_dir = os.environ.get("APPLY_TASK_TASKS_DIR")
+        if env_dir:
+            return Path(env_dir)
         return Path(__file__).resolve().parents[1] / ".tasks"
 
     def _task_files(self):

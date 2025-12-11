@@ -1,5 +1,6 @@
 from dataclasses import dataclass
-from typing import Any, Callable, Dict
+from datetime import datetime, timedelta
+from typing import Any, Callable, Dict, List
 
 from core.task_detail import TaskDetail
 from core.desktop.devtools.interface.cli_io import structured_error, structured_response
@@ -24,16 +25,72 @@ def _priority(task: TaskDetail) -> int:
     return {"HIGH": 3, "MEDIUM": 2, "LOW": 1}.get(task.priority, 0)
 
 
+def _is_blocked_by_deps(task: TaskDetail, manager) -> bool:
+    """Check if task is blocked by incomplete dependencies."""
+    if not task.depends_on:
+        return False
+    for dep_id in task.depends_on:
+        dep = manager.load_task(dep_id)
+        if dep and dep.status != "OK":
+            return True
+    return False
+
+
+def _is_stale(task: TaskDetail, days: int) -> bool:
+    """Check if task has no activity in last N days."""
+    cutoff = datetime.now() - timedelta(days=days)
+    cutoff_iso = cutoff.isoformat()
+
+    # Check events for recent activity
+    if task.events:
+        latest_event = max((e.timestamp or "" for e in task.events), default="")
+        if latest_event and latest_event > cutoff_iso:
+            return False
+
+    # Check updated_at
+    if hasattr(task, "updated_at") and task.updated_at:
+        if task.updated_at > cutoff_iso:
+            return False
+
+    # Check created_at as fallback
+    if hasattr(task, "created_at") and task.created_at:
+        if task.created_at > cutoff_iso:
+            return False
+
+    return True
+
+
 def cmd_list(args, deps: CliDeps) -> int:
     manager = deps.manager_factory()
     domain = deps.derive_domain_explicit(getattr(args, "domain", ""), getattr(args, "phase", None), getattr(args, "component", None))
-    tasks = manager.list_tasks(domain)
+    tasks: List[TaskDetail] = manager.list_tasks(domain)
+
+    # Status filter
     if getattr(args, "status", None):
         tasks = [t for t in tasks if t.status == args.status]
+
+    # Component filter
     if getattr(args, "component", None):
         tasks = [t for t in tasks if t.component == args.component]
+
+    # Phase filter
     if getattr(args, "phase", None):
         tasks = [t for t in tasks if t.phase == args.phase]
+
+    # Tag filter
+    tag_filter = getattr(args, "tag", None)
+    if tag_filter:
+        tasks = [t for t in tasks if tag_filter in (t.tags or [])]
+
+    # Blocked filter (tasks blocked by dependencies)
+    if getattr(args, "blocked", False):
+        tasks = [t for t in tasks if _is_blocked_by_deps(t, manager)]
+
+    # Stale filter (no activity in N days)
+    stale_days = getattr(args, "stale", None)
+    if stale_days is not None:
+        tasks = [t for t in tasks if _is_stale(t, stale_days)]
+
     payload = {
         "total": len(tasks),
         "filters": {
@@ -41,6 +98,9 @@ def cmd_list(args, deps: CliDeps) -> int:
             "phase": getattr(args, "phase", None) or "",
             "component": getattr(args, "component", None) or "",
             "status": getattr(args, "status", None) or "",
+            "tag": tag_filter or "",
+            "blocked": bool(getattr(args, "blocked", False)),
+            "stale_days": stale_days,
             "progress_details": bool(getattr(args, "progress", False)),
         },
         "tasks": [

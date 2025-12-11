@@ -18,6 +18,7 @@ def test_cmd_create_requires_tests(monkeypatch, capsys):
             task.tags = []
             task.risks = []
             task.blocked = False
+            task.events = []  # Add events list
             def update():
                 return None
             task.update_status_from_progress = update
@@ -80,6 +81,7 @@ def test_cmd_smart_create_uses_template(monkeypatch, capsys):
             task.history = []
             task.project_remote_updated = False
             task.subtasks = []
+            task.events = []  # Add events list
             task.calculate_progress = lambda: 0
             task.update_status_from_progress = lambda: None
             return task
@@ -141,6 +143,7 @@ def test_cmd_create_validate_only_false(monkeypatch, capsys):
                 risks=["r"],
                 history=[],
                 subtasks=[],
+                events=[],  # Add events list
                 project_remote_updated=False,
             )
             task.calculate_progress = lambda: 0

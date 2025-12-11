@@ -1,8 +1,8 @@
 """CLI handlers for task creation to keep tasks_app slim."""
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Set
 
-from core import TaskDetail
+from core import TaskDetail, TaskEvent, validate_dependencies, build_dependency_graph
 from core.desktop.devtools.application.task_manager import TaskManager
 from core.desktop.devtools.interface.cli_io import structured_error, structured_response, validation_response
 from core.desktop.devtools.interface.i18n import translate
@@ -35,7 +35,43 @@ def _success_preview(kind: str, task: TaskDetail, message: str = "") -> int:
     return validation_response(kind, True, msg, payload)
 
 
-def _apply_common_fields(task: TaskDetail, args) -> Optional[int]:
+def _validate_depends_on(
+    task_id: str,
+    depends_on: List[str],
+    manager: TaskManager,
+    args,
+    kind: str = "create",
+) -> Optional[int]:
+    """Validate depends_on list: existence check and cycle detection."""
+    if not depends_on:
+        return None
+
+    # Get all existing task IDs
+    all_tasks = manager.list_all_tasks()
+    existing_ids: Set[str] = {t.id for t in all_tasks}
+
+    # Build dependency graph from existing tasks
+    dep_graph = build_dependency_graph([(t.id, t.depends_on) for t in all_tasks])
+
+    # Validate
+    errors, cycle = validate_dependencies(task_id, depends_on, existing_ids, dep_graph)
+
+    if errors:
+        error_msgs = [str(e) for e in errors]
+        return _fail(args, translate("ERR_INVALID_DEPS"), payload={"errors": error_msgs}, kind=kind)
+
+    if cycle:
+        return _fail(
+            args,
+            translate("ERR_CIRCULAR_DEP"),
+            payload={"cycle": cycle},
+            kind=kind,
+        )
+
+    return None
+
+
+def _apply_common_fields(task: TaskDetail, args, manager: TaskManager) -> Optional[int]:
     task.description = (args.description or "").strip()
     if not task.description or task.description.upper() == "TBD":
         return _fail(args, translate("ERR_DESCRIPTION_REQUIRED"))
@@ -47,6 +83,17 @@ def _apply_common_fields(task: TaskDetail, args) -> Optional[int]:
     if args.dependencies:
         deps = [dep.strip() for dep in args.dependencies.split(",") if dep.strip()]
         task.dependencies.extend(deps)
+
+    # Handle --depends-on (task-level dependencies)
+    if getattr(args, "depends_on", None):
+        dep_ids = [d.strip() for d in args.depends_on.split(",") if d.strip()]
+        err = _validate_depends_on(task.id, dep_ids, manager, args)
+        if err:
+            return err
+        task.depends_on = dep_ids
+        # Add event for each dependency
+        for dep_id in dep_ids:
+            task.events.append(TaskEvent.dependency_added(dep_id))
 
     if args.next_steps:
         for step in args.next_steps.split(";"):
@@ -81,8 +128,11 @@ def cmd_create(args) -> int:
         component=args.component or "",
     )
 
+    # Add created event
+    task.events.append(TaskEvent.created())
+
     # общие поля
-    err = _apply_common_fields(task, args)
+    err = _apply_common_fields(task, args, manager)
     if err:
         return err
 
@@ -145,7 +195,10 @@ def cmd_smart_create(args) -> int:
         component=args.component or "",
     )
 
-    err = _apply_common_fields(task, args)
+    # Add created event
+    task.events.append(TaskEvent.created())
+
+    err = _apply_common_fields(task, args, manager)
     if err:
         return err
 

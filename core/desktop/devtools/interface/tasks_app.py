@@ -13,6 +13,7 @@ from pathlib import Path
 
 from core.desktop.devtools.interface.cli_parser import build_parser as build_cli_parser
 from core.desktop.devtools.interface.constants import AI_HELP
+from importlib.metadata import version as pkg_version, PackageNotFoundError
 from core.desktop.devtools.interface.cli_automation import AUTOMATION_TMP
 
 # Import all command functions
@@ -113,6 +114,7 @@ __all__ = [
     "cmd_template_subtasks",
     "cmd_ai",
     "cmd_mcp",
+    "cmd_gui",
     "cmd_tui",
     "cmd_update",
     "cmd_ok",
@@ -158,15 +160,82 @@ def cmd_mcp(args) -> int:
     return 0
 
 
+def cmd_gui(args) -> int:
+    """Запустить GUI приложение (Tauri)."""
+    import subprocess
+    import shutil
+
+    # GUI directory relative to this file
+    gui_dir = Path(__file__).resolve().parent.parent.parent.parent.parent / "gui"
+
+    if not gui_dir.exists():
+        print(f"Error: GUI directory not found at {gui_dir}", file=sys.stderr)
+        return 1
+
+    dev_mode = getattr(args, "dev", False)
+
+    if dev_mode:
+        # Development mode: run with hot-reload
+        pnpm = shutil.which("pnpm")
+        if not pnpm:
+            print("Error: pnpm not found. Install with: npm install -g pnpm", file=sys.stderr)
+            return 1
+        cmd = [pnpm, "tauri", "dev"]
+        print(f"Starting GUI in development mode...")
+        result = subprocess.run(cmd, cwd=gui_dir)
+        return result.returncode
+    else:
+        # Production mode: try to find and run the built binary
+        # Tauri builds to src-tauri/target/release/apply-task-gui (Linux)
+        # or similar paths on other platforms
+        import platform
+
+        system = platform.system().lower()
+        if system == "linux":
+            binary_name = "apply-task-gui"
+            binary_path = gui_dir / "src-tauri" / "target" / "release" / binary_name
+        elif system == "darwin":
+            binary_name = "apply-task-gui.app"
+            binary_path = gui_dir / "src-tauri" / "target" / "release" / "bundle" / "macos" / binary_name
+        elif system == "windows":
+            binary_name = "apply-task-gui.exe"
+            binary_path = gui_dir / "src-tauri" / "target" / "release" / binary_name
+        else:
+            print(f"Error: Unsupported platform: {system}", file=sys.stderr)
+            return 1
+
+        if not binary_path.exists():
+            print(f"Error: Built GUI not found at {binary_path}", file=sys.stderr)
+            print("Build with: cd gui && pnpm tauri build", file=sys.stderr)
+            print("Or run in dev mode: apply_task gui --dev", file=sys.stderr)
+            return 1
+
+        print(f"Starting GUI...")
+        if system == "darwin":
+            # macOS: open the .app bundle
+            result = subprocess.run(["open", str(binary_path)])
+        else:
+            result = subprocess.run([str(binary_path)])
+        return result.returncode
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build CLI argument parser."""
-    return build_cli_parser(commands=sys.modules[__name__], themes=THEMES, default_theme=DEFAULT_THEME, automation_tmp=AUTOMATION_TMP)
+    parser = build_cli_parser(commands=sys.modules[__name__], themes=THEMES, default_theme=DEFAULT_THEME, automation_tmp=AUTOMATION_TMP)
+    parser.add_argument("--version", action="store_true", help="Show version and exit")
+    return parser
 
 
 def main() -> int:
     """Main entry point."""
     parser = build_parser()
     args = parser.parse_args()
+    if getattr(args, "version", False):
+        try:
+            print(pkg_version("apply-task"))
+        except PackageNotFoundError:
+            print("0.0.0")
+        return 0
     if not getattr(args, "command", None):
         parser.print_help()
         return 1

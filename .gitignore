@@ -13,7 +13,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+/lib/
 lib64/
 parts/
 sdist/
@@ -49,3 +49,5 @@ tasks \(Копия\).py
 
 # Optional: uncomment if you don't want to commit your todo file
 # todo.machine.md
+.venv/
+.coverage

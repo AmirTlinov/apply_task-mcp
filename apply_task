@@ -21,6 +21,7 @@ import os
 import json
 import subprocess
 from pathlib import Path
+from importlib.metadata import version as pkg_version, PackageNotFoundError
 
 try:
     ROOT = Path(__file__).resolve().parent
@@ -130,8 +131,19 @@ def run_tasks_py(args, verbose: bool = False):
     if verbose and source:
         print(explain_source(source, tasks_py), file=sys.stderr)
 
-    project_root = git_root if git_root else Path.cwd()
-    cmd = [str(tasks_py)] + args
+    if git_root:
+        project_root = git_root
+    else:
+        cwd = Path.cwd().resolve()
+        home = Path.home().resolve()
+        if cwd != home and ((cwd / "tasks.py").exists() or (cwd / ".tasks").exists()):
+            project_root = cwd
+        elif (tasks_py.parent / ".git").exists():
+            project_root = tasks_py.parent
+        else:
+            project_root = tasks_py.parent
+    python_exec = sys.executable or "python3"
+    cmd = [python_exec, str(tasks_py)] + args
     env = os.environ.copy()
     env["APPLY_TASK_PROJECT_ROOT"] = str(project_root)
     result = subprocess.run(cmd, cwd=project_root, env=env)
@@ -165,6 +177,11 @@ FORWARD_COMMANDS = {
     "projects-webhook-serve": "projects-webhook-serve",
     "move": "move",
     "automation": "automation",
+    "ai": "ai",
+    "mcp": "mcp",
+    "analyze": "analyze",
+    "add-subtask": "add-subtask",
+    "add-dep": "add-dep",
 }
 
 STATUS_COMMANDS = {"done": "OK", "start": "WARN", "fail": "FAIL"}
@@ -180,6 +197,13 @@ def main(argv=None):
     args_list = list(sys.argv[1:] if argv is None else argv)
     if not args_list:
         return emit_cli("help", status="ERROR", message="Не указана команда", payload={"help": __doc__}, exit_code=1)
+
+    if args_list[0] in ("--version", "-V", "version"):
+        try:
+            print(pkg_version("apply-task"))
+        except PackageNotFoundError:
+            print("0.0.0")
+        return 0
 
     cmd, *args = args_list
 
@@ -266,7 +290,7 @@ def main(argv=None):
         env = os.environ.copy()
         env[SKIP_HISTORY_ENV] = "1"
         proc = subprocess.run(
-            ["python3", str(script_path)] + target.get("args", []),
+            [sys.executable, str(script_path)] + target.get("args", []),
             cwd=Path.cwd(),
             env=env,
         )
@@ -287,46 +311,45 @@ def main(argv=None):
 
     if cmd == 'help':
         help_payload = {
-            "overview": "apply_task — флагманский CLI для AI-операторов. Пиши описания задач/подзадач только на русском языке и всегда привязывай их к нужному домену/папке (--domain/-F, см. DOMAIN_STRUCTURE.md).",
-            "automation": [
-                "create|task --validate-only — прогоняет все проверки без записи .task, удобно для AI перед коммитом.",
-                "create|guided — создание задач; всегда передавай --parent/--description/--tests/--risks/--subtasks (JSON). --subtasks принимает строку, @файл или '-' для STDIN.",
-                "show|list — просмотр задач с учётом --domain/-F или --phase/--component.",
-                "start|done|fail — дисциплина WARN/OK/FAIL для текущей или указанной задачи.",
-                "subtask TASK-ID --add/--criteria/--tests/--blockers — управление подзадачами, описания строго на русском.",
-                "clean [--tag/--status/--phase] [--dry-run] — безопасное удаление по фильтрам.",
-                "next|quick|suggest|sg — подсказки по приоритету.",
-                "template subtasks --count N — генерация JSON с подзадачами, тестовым планом и требованиями к документации.",
-                "ok|note|bulk — макросы для чекпоинтов ('.'/last → последняя задача, bulk поддерживает --task).",
-                "checkpoint [TASK] — guided-мастер критериев/тестов/блокеров (есть режим --auto).",
-                "history [N] / replay N — история и повтор команд.",
-                "move --glob '*.task' --to phaseX — пакетное перемещение; clean --glob '*.task' или --tag/--status — пакетное удаление.",
-                "lint [--fix] — проверка структуры .tasks.",
-                "automation task-template|task-create|checkpoint|health|projects-health — devtools обёртки с дефолтами в .tmp. Пример кавычек: --risks \"perf;deps\" --sla \"p95<=200ms\".",
-            ],
-            "discipline": [
-                "Каждая задача дробится на атомарные результаты (<1 рабочего дня).",
-                "Критерии успеха и описания обязательно формулируются на русском и содержат измеримые метрики.",
-                "Блокеры/зависимости не могут быть пустыми и тоже описываются на русском.",
-                "Текст подзадачи ≥20 символов, включает критерии/тесты/блокеры и контекст на русском.",
-                "Подзадача закрывается только после отдельного подтверждения критериев/тестов/блокеров.",
-            ],
-            "testing": [
-                "Перечисляй все тестовые наборы (unit/integration/perf) с командами и метриками.",
-                "Порог покрытия ≥85%, указывай как проверяешь (команда/репорт).",
-                "Добавляй проверки регресса, мониторинга, откатов.",
-            ],
-            "checkpoint_workflow": [
-                "После выполнения подпункта: apply_task subtask TASK-ID --criteria-done <idx> --note \"доказательство\" (аналогично для tests/blockers).",
-                "--done <idx> доступно только если все три чекпоинта в статусе DONE.",
-                "Макросы ok|note|bulk поддерживают шорткат '.'/last вместо task_id и автоматически обновляют историю/контекст.",
-                "apply_task checkpoint [TASK] — guided-мастер критериев/тестов/блокеров (интерактивно или --auto).",
-            ],
-            "context": [
-                "--domain/-F переопределяет .last; без него используется последний контекст.",
-                "Запускай lint --fix после правок структуры и убедись, что все описания/отчёты на русском.",
-            ],
-            "language": "Все описания, подзадачи, заметки и отчёты оформляй на русском языке — это обязательное требование.",
+            "overview": "apply_task — AI-first CLI. Все выходы — JSON. Пиши описания/подзадачи на русском. Всегда указывай domain (или используй .last).",
+            "commands": {
+                "list": "apply_task list --domain lab/backend",
+                "show": "apply_task show TASK-001 --domain lab/backend",
+                "create": "apply_task create \"Title\" --parent TASK-000 --description \"...\" --tests \"pytest -q\" --risks \"perf;deps\" --subtasks @subtasks.json --domain lab/backend",
+                "task": "Умное create (парсит #теги/@deps). Те же обязательные поля, что и create.",
+                "subtask": "apply_task subtask TASK-001 --add \"...\" --criteria \"...\" --tests \"...\" --blockers \"...\" --domain lab/backend",
+                "ok": "apply_task ok TASK-001 0 --criteria-note \"...\" --path 0.1 --domain lab/backend --phase sprint-12 --component api",
+                "note": "apply_task note TASK-001 0 --checkpoint tests --note \"...\" --path 0.1 --domain lab/backend",
+                "bulk": "apply_task bulk --task TASK-001 --input '{\"ops\":[{\"path\":\"0\",\"checkpoint\":\"criteria\",\"note\":\"done\",\"domain\":\"lab/backend\",\"phase\":\"sprint-12\",\"component\":\"api\"}]}'",
+                "checkpoint": "apply_task checkpoint TASK-001 --auto",
+                "history": "apply_task history 5 | apply_task replay 1",
+                "next/suggest/quick": "apply_task next --domain lab/backend",
+                "move/clean": "apply_task move --glob \"*.task\" --to phaseX",
+                "automation": "apply_task automation health --pytest-cmd \"pytest -q\"; apply_task automation projects-health",
+                "template": "apply_task template subtasks --count 3"
+            },
+            "required_fields": {
+                "create/task": ["title", "parent", "description", "tests", "risks", "subtasks", "domain"],
+                "subtask add": ["criteria", "tests", "blockers (>=1)", "title >=20 chars"],
+                "ok/note/bulk": ["task", "path or index", "checkpoint notes in рус"],
+                "status": ["update TASK-ID OK|WARN|FAIL"]
+            },
+            "examples": {
+                "create_min": "apply_task create \"Ship feature\" --parent TASK-001 --description \"кратко, ≥20\" --tests \"pytest -q\" --risks \"perf;deps\" --subtasks @subtasks.json --domain lab/backend",
+                "macro_ok": "apply_task ok TASK-001 0 --criteria-note \"доказ\" --path 0.1 --domain lab/backend --phase sprint-12 --component api",
+                "macro_note": "apply_task note TASK-001 0 --checkpoint tests --note \"pytest -q\" --domain lab/backend --phase sprint-12 --component api",
+                "macro_bulk": "apply_task bulk --task TASK-001 --input '{\"ops\":[{\"path\":\"0\",\"checkpoint\":\"criteria\",\"note\":\"done\",\"domain\":\"lab/backend\",\"phase\":\"sprint-12\",\"component\":\"api\"}]}'",
+                "automation_health": "apply_task automation health --pytest-cmd \"pytest -q\"",
+                "automation_projects_health": "apply_task automation projects-health",
+                "mcp_template_subtasks": {"tool": "tasks_template_subtasks", "arguments": {"count": 3}}
+            },
+            "payload_templates": {
+                "subtasks": [
+                    {"title": "Результат 1 (>=20)", "criteria": ["Метрика"], "tests": ["pytest -q"], "blockers": ["approve"]},
+                    {"title": "Результат 2", "criteria": ["Coverage>=85%"], "tests": ["pytest --cov"], "blockers": ["deps"]},
+                    {"title": "Результат 3", "criteria": ["Docs обновлены"], "tests": ["markdownlint"], "blockers": ["review"]}
+                ]
+            }
         }
         return emit_cli("help", status="OK", message="Справка apply_task", payload=help_payload)
 

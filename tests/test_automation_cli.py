@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 from pathlib import Path
 import sys
@@ -15,7 +16,9 @@ SCRIPT = ROOT / "apply_task"
 
 
 def _run(args, cwd):
-    result = subprocess.run(["python3", str(SCRIPT)] + args, cwd=cwd, text=True, capture_output=True)
+    env = os.environ.copy()
+    env["APPLY_TASK_TASKS_DIR"] = str(cwd / ".tasks")  # use local .tasks for isolation
+    result = subprocess.run([sys.executable, str(SCRIPT)] + args, cwd=cwd, text=True, capture_output=True, env=env)
     return result
 
 

@@ -1,0 +1,344 @@
+#!/usr/bin/env python3
+"""
+apply_task — flagship CLI for deterministic .tasks workflows
+  new/create: apply_task create "Title #tag" --parent TASK-001 --description ... --tests ... --risks ... --subtasks JSON
+  guided:     apply_task guided [--domain/-F ...]                           # interactive flagship creation
+  subtask:    apply_task subtask TASK-001 --add "..." --criteria "...;..." --tests "...;..." --blockers "...;..." |
+              apply_task subtask TASK-001 --criteria-done N|--tests-done N|--blockers-done N [--note "..."] | --done N
+  show/list:  apply_task show [ID]/list [filters]
+  stat:       apply_task start|done|fail [ID]                               # enforce WARN/OK/FAIL discipline
+  guide:      apply_task next | quick | suggest|sg [context]
+  lint:       apply_task lint [--fix]
+Rules:
+  - Manual decomposition only: break work into atomic, testable goals with explicit success criteria plus non-empty blockers/dependencies.
+  - Tests must be enumerated exhaustively: name suites, files, datasets, commands, assertions, coverage/perf metrics (>85% coverage baseline).
+  - Subtasks close only after checkpoints: criteria/tests/blockers must be individually confirmed (with notes) before --done succeeds.
+  - storage: .tasks holds tasks, .last caches TASK@domain; --domain overrides phase/component fallback.
+"""
+
+import sys
+import os
+import json
+import subprocess
+from pathlib import Path
+
+try:
+    ROOT = Path(__file__).resolve().parent
+except NameError:
+    ROOT = Path.cwd()
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from core.desktop.devtools.interface import cli_runtime
+
+HISTORY_PATH = cli_runtime.HISTORY_PATH
+SKIP_HISTORY_ENV = cli_runtime.SKIP_HISTORY_ENV
+LAST_POINTER = cli_runtime.LAST_POINTER
+
+
+def record_history(argv) -> None:
+    cli_runtime.record_history(argv, history_path=HISTORY_PATH)
+
+
+def load_history():
+    return cli_runtime.load_history(history_path=HISTORY_PATH)
+
+
+def read_last_pointer():
+    return cli_runtime.read_last_pointer(pointer_path=LAST_POINTER)
+
+
+def emit_cli(command: str, *, status: str = "OK", message: str = "", payload=None, summary: str = None, exit_code: int = 0):
+    body = {
+        "command": command,
+        "status": status,
+        "message": message,
+        "timestamp": cli_runtime._iso_timestamp(),
+        "payload": payload or {},
+    }
+    if summary:
+        body["summary"] = summary
+    print(json.dumps(body, ensure_ascii=False, indent=2))
+    return exit_code
+
+
+def find_git_root():
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        root = Path(result.stdout.strip())
+        return root if root.exists() else None
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+
+
+def find_tasks_py(verbose: bool = False):
+    current = Path.cwd()
+
+    env_override = os.environ.get("APPLY_TASKS_PY")
+    if env_override:
+        candidate = Path(env_override).expanduser().resolve()
+        if candidate.exists():
+            return candidate, "env"
+
+    git_root = find_git_root()
+    if git_root:
+        tasks_in_git = git_root / "tasks.py"
+        if tasks_in_git.exists():
+            return tasks_in_git.resolve(), "git"
+
+    if (current / "tasks.py").exists():
+        return (current / "tasks.py"), "cwd"
+
+    search_limit = git_root if git_root else None
+    for parent in current.parents:
+        if search_limit and parent == search_limit.parent:
+            break
+        candidate = parent / "tasks.py"
+        if candidate.exists():
+            return candidate.resolve(), "parent"
+
+    script_dir = Path(__file__).resolve().parent
+    fallback = script_dir / "tasks.py"
+    if fallback.exists():
+        return fallback.resolve(), "script"
+
+    return None, None
+
+
+def explain_source(source: str, path: Path):
+    return cli_runtime.explain_source(source, path)
+
+
+def run_tasks_py(args, verbose: bool = False):
+    tasks_py, source = find_tasks_py(verbose=verbose)
+    git_root = find_git_root()
+
+    if not tasks_py:
+        payload = {
+            "git_root": str(git_root) if git_root else None,
+            "hint": "Установи/обнови apply_task так, чтобы tasks.py был доступен в PATH или через APPLY_TASKS_PY",
+        }
+        if not git_root:
+            payload["hint"] = "Инициализируй git или задай APPLY_TASKS_PY=/abs/path/to/tasks.py"
+        return emit_cli("apply_task", status="ERROR", message="tasks.py не найден", payload=payload, exit_code=1)
+
+    if verbose and source:
+        print(explain_source(source, tasks_py), file=sys.stderr)
+
+    project_root = git_root if git_root else Path.cwd()
+    cmd = [str(tasks_py)] + args
+    env = os.environ.copy()
+    env["APPLY_TASK_PROJECT_ROOT"] = str(project_root)
+    result = subprocess.run(cmd, cwd=project_root, env=env)
+    return result.returncode
+
+
+FORWARD_COMMANDS = {
+    "list": "list",
+    "create": "create",
+    "guided": "guided",
+    "subtask": "subtask",
+    "sub": "sub",
+    "clean": "clean",
+    "template": "template",
+    "ok": "ok",
+    "note": "note",
+    "bulk": "bulk",
+    "next": "next",
+    "suggest": "suggest",
+    "sg": "suggest",
+    "tui": "tui",
+    "lint": "lint",
+    "quick": "quick",
+    "update": "update",
+    "task": "task",
+    "edit": "edit",
+    "checkpoint": "checkpoint",
+    "projects": "projects",
+    "projects-auth": "projects-auth",
+    "projects-webhook": "projects-webhook",
+    "projects-webhook-serve": "projects-webhook-serve",
+    "move": "move",
+    "automation": "automation",
+    "ai": "ai",
+    "mcp": "mcp",
+    "analyze": "analyze",
+    "add-dep": "add-dep",
+    "gui": "gui",
+}
+
+STATUS_COMMANDS = {"done": "OK", "start": "WARN", "fail": "FAIL"}
+
+KNOWN_COMMANDS = set(FORWARD_COMMANDS) | set(STATUS_COMMANDS) | {"show", "history", "replay", "which", "help"}
+
+
+def _normalize_task_id(arg: str) -> str:
+    return f"TASK-{arg}" if not arg.startswith("TASK-") else arg
+
+
+def main(argv=None):
+    args_list = list(sys.argv[1:] if argv is None else argv)
+    if not args_list:
+        return emit_cli("help", status="ERROR", message="Не указана команда", payload={"help": __doc__}, exit_code=1)
+
+    cmd, *args = args_list
+
+    if os.environ.get(SKIP_HISTORY_ENV) != "1" and cmd not in ("history", "replay"):
+        record_history([cmd] + args)
+
+    verbose = False
+    if '--verbose' in args:
+        verbose = True
+        args = [a for a in args if a != '--verbose']
+    if '-v' in args:
+        verbose = True
+        args = [a for a in args if a != '-v']
+
+    if cmd not in KNOWN_COMMANDS:
+        required = [
+            ("--parent", "Нет parent. Пример: --parent TASK-001 или --parent 1"),
+            ("--tests", "Нет --tests. Пример: --tests \"unit;acceptance\""),
+            ("--risks", "Нет --risks. Пример: --risks \"perf;deps\""),
+        ]
+        for flag, msg in required:
+            if flag not in args:
+                return emit_cli("task", status="ERROR", message=msg, exit_code=1)
+        if "--subtasks" not in args and "-s" not in args:
+            return emit_cli("task", status="ERROR", message="Нет --subtasks/-s (JSON array или @file)", exit_code=1)
+        has_desc = any(flag in args for flag in ("--description", "-d"))
+        if not has_desc:
+            return emit_cli("task", status="ERROR", message="Нет --description/-d", exit_code=1)
+        # treat as create with implicit title = cmd via tasks.py 'task' command (legacy macro)
+        return run_tasks_py(['task', cmd] + args, verbose=verbose)
+
+    # Выполнение команды
+    if cmd == 'show':
+        if args and not args[0].startswith('-'):
+            return run_tasks_py(['show', _normalize_task_id(args[0])] + args[1:], verbose=verbose)
+        return run_tasks_py(['show'] + args, verbose=verbose)
+
+    if cmd in STATUS_COMMANDS:
+        target_status = STATUS_COMMANDS[cmd]
+        if args and not args[0].startswith('-'):
+            return run_tasks_py(['update', _normalize_task_id(args[0]), target_status] + args[1:], verbose=verbose)
+        return run_tasks_py(['update', target_status] + args, verbose=verbose)
+
+    if cmd == 'history':
+        limit = 5
+        if args:
+            try:
+                limit = max(1, int(args[0]))
+                args = args[1:]
+            except ValueError:
+                pass
+        entries = load_history()
+        picked = list(reversed(entries[-limit:]))
+        macro_names = {"ok", "note", "bulk", "history", "replay"}
+        last_task_id, last_task_domain = read_last_pointer()
+        payload = {
+            "entries": [
+                {
+                    "order": idx + 1,
+                    "timestamp": entry.get("timestamp"),
+                    "args": entry.get("args", []),
+                    "cli": "apply_task " + " ".join(entry.get("args", [])),
+                    "macro": bool(entry.get("args") and entry.get("args", [])[0] in macro_names),
+                }
+                for idx, entry in enumerate(picked)
+            ],
+            "total": len(entries),
+            "limit": limit,
+            "last_task": {"id": last_task_id, "domain": last_task_domain} if last_task_id else None,
+        }
+        return emit_cli("history", status="OK", message="История команд", payload=payload, summary=f"{len(picked)} записей")
+    if cmd == 'replay':
+        if not args:
+            return emit_cli("replay", status="ERROR", message="Укажи индекс из history", exit_code=1)
+        try:
+            order = int(args[0])
+        except ValueError:
+            return emit_cli("replay", status="ERROR", message="Индекс должен быть числом", exit_code=1)
+        entries = load_history()
+        if order <= 0 or order > len(entries):
+            return emit_cli("replay", status="ERROR", message="Нет такой записи в истории", payload={"order": order}, exit_code=1)
+        target = entries[-order]
+        script_path = Path(__file__).resolve()
+        env = os.environ.copy()
+        env[SKIP_HISTORY_ENV] = "1"
+        proc = subprocess.run(
+            ["python3", str(script_path)] + target.get("args", []),
+            cwd=Path.cwd(),
+            env=env,
+        )
+        return proc.returncode
+
+    if cmd in FORWARD_COMMANDS:
+        target = FORWARD_COMMANDS[cmd]
+        return run_tasks_py([target] + args, verbose=verbose)
+
+    if cmd == 'which':
+        tasks_py, source = find_tasks_py(verbose=verbose)
+        git_root = find_git_root()
+        if not tasks_py:
+            payload = {"git_root": str(git_root) if git_root else None}
+            return emit_cli("which", status="ERROR", message="tasks.py не найден", payload=payload, exit_code=1)
+        payload = {"source": source or 'unknown', "path": str(tasks_py)}
+        return emit_cli("which", status="OK", message="Источник tasks.py", payload=payload)
+
+    if cmd == 'help':
+        help_payload = {
+            "overview": "apply_task — флагманский CLI для AI-операторов. Пиши описания задач/подзадач только на русском языке и всегда привязывай их к нужному домену/папке (--domain/-F, см. DOMAIN_STRUCTURE.md).",
+            "automation": [
+                "create|task --validate-only — прогоняет все проверки без записи .task, удобно для AI перед коммитом.",
+                "create|guided — создание задач; всегда передавай --parent/--description/--tests/--risks/--subtasks (JSON). --subtasks принимает строку, @файл или '-' для STDIN.",
+                "show|list — просмотр задач с учётом --domain/-F или --phase/--component.",
+                "start|done|fail — дисциплина WARN/OK/FAIL для текущей или указанной задачи.",
+                "subtask TASK-ID --add/--criteria/--tests/--blockers — управление подзадачами, описания строго на русском.",
+                "clean [--tag/--status/--phase] [--dry-run] — безопасное удаление по фильтрам.",
+                "next|quick|suggest|sg — подсказки по приоритету.",
+                "template subtasks --count N — генерация JSON с подзадачами, тестовым планом и требованиями к документации.",
+                "ok|note|bulk — макросы для чекпоинтов ('.'/last → последняя задача, bulk поддерживает --task).",
+                "checkpoint [TASK] — guided-мастер критериев/тестов/блокеров (есть режим --auto).",
+                "history [N] / replay N — история и повтор команд.",
+                "move --glob '*.task' --to phaseX — пакетное перемещение; clean --glob '*.task' или --tag/--status — пакетное удаление.",
+                "lint [--fix] — проверка структуры .tasks.",
+                "automation task-template|task-create|checkpoint|health|projects-health — devtools обёртки с дефолтами в .tmp. Пример кавычек: --risks \"perf;deps\" --sla \"p95<=200ms\".",
+            ],
+            "discipline": [
+                "Каждая задача дробится на атомарные результаты (<1 рабочего дня).",
+                "Критерии успеха и описания обязательно формулируются на русском и содержат измеримые метрики.",
+                "Блокеры/зависимости не могут быть пустыми и тоже описываются на русском.",
+                "Текст подзадачи ≥20 символов, включает критерии/тесты/блокеры и контекст на русском.",
+                "Подзадача закрывается только после отдельного подтверждения критериев/тестов/блокеров.",
+            ],
+            "testing": [
+                "Перечисляй все тестовые наборы (unit/integration/perf) с командами и метриками.",
+                "Порог покрытия ≥85%, указывай как проверяешь (команда/репорт).",
+                "Добавляй проверки регресса, мониторинга, откатов.",
+            ],
+            "checkpoint_workflow": [
+                "После выполнения подпункта: apply_task subtask TASK-ID --criteria-done <idx> --note \"доказательство\" (аналогично для tests/blockers).",
+                "--done <idx> доступно только если все три чекпоинта в статусе DONE.",
+                "Макросы ok|note|bulk поддерживают шорткат '.'/last вместо task_id и автоматически обновляют историю/контекст.",
+                "apply_task checkpoint [TASK] — guided-мастер критериев/тестов/блокеров (интерактивно или --auto).",
+            ],
+            "context": [
+                "--domain/-F переопределяет .last; без него используется последний контекст.",
+                "Запускай lint --fix после правок структуры и убедись, что все описания/отчёты на русском.",
+            ],
+            "language": "Все описания, подзадачи, заметки и отчёты оформляй на русском языке — это обязательное требование.",
+        }
+        return emit_cli("help", status="OK", message="Справка apply_task", payload=help_payload)
+
+    else:  # pragma: no cover - defensive fallback for future commands
+        payload = {"command": cmd}
+        return emit_cli("apply_task", status="ERROR", message="Неизвестная команда. Используй: apply_task help", payload=payload, exit_code=1)
+
+
+if __name__ == '__main__':  # pragma: no cover
+    sys.exit(main())

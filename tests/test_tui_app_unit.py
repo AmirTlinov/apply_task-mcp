@@ -166,6 +166,45 @@ class TestTaskTrackerTUIInstanceMethods:
         tui = TaskTrackerTUI(tasks_dir=custom)
         assert tui.tasks_dir.resolve() == custom.resolve()
 
+    def test_delete_project_removes_directory(self, tmp_path):
+        projects_root = tmp_path / "projects"
+        proj1 = projects_root / "proj1"
+        proj2 = projects_root / "proj2"
+        proj1.mkdir(parents=True)
+        proj2.mkdir(parents=True)
+
+        tui = TaskTrackerTUI(tasks_dir=tmp_path / "default_tasks", projects_root=projects_root)
+
+        assert len(tui.tasks) == 2
+        assert proj1.exists()
+
+        tui.selected_index = 0
+        tui.delete_current_item()
+
+        assert not proj1.exists()
+        assert len(tui.tasks) == 1
+        assert tui.tasks[0].name == "proj2"
+
+    def test_return_to_projects_keeps_selection(self, tmp_path):
+        projects_root = tmp_path / "projects"
+        proj1 = projects_root / "proj1"
+        proj2 = projects_root / "proj2"
+        proj1.mkdir(parents=True)
+        proj2.mkdir(parents=True)
+
+        tui = TaskTrackerTUI(tasks_dir=tmp_path / "default_tasks", projects_root=projects_root)
+        assert [p.name for p in tui.tasks] == ["proj1", "proj2"]
+
+        tui.selected_index = 1
+        tui._enter_project(tui.tasks[1])
+        assert tui.project_mode is False
+
+        tui.return_to_projects()
+
+        assert tui.project_mode is True
+        assert tui.selected_index == 1
+        assert tui.tasks[tui.selected_index].name == "proj2"
+
     def test_format_cell_left(self, tui):
         """Test _format_cell with left alignment."""
         result = tui._format_cell("test", 10, "left")

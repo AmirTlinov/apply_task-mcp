@@ -7,6 +7,19 @@ from prompt_toolkit.formatted_text import FormattedText
 
 
 def build_footer_text(tui) -> FormattedText:
+    # Empty-state CTA footer
+    if not getattr(tui, "filtered_tasks", []):
+        return FormattedText([
+            ('class:border', '╭─ '),
+            ('class:header', tui._t("CTA_CREATE_TASK")),
+            ('class:border', ' · '),
+            ('class:header', tui._t("CTA_IMPORT_TASK")),
+            ('class:border', ' · '),
+            ('class:text.dim', tui._t("CTA_DOMAIN_HINT")),
+            ('class:border', ' · '),
+            ('class:text.dim', f"Duration: — | Legend: — {tui._t('OFFSET_LABEL') if hasattr(tui,'_t') else ''}0"),
+        ])
+
     scroll_info = f"{tui._t('OFFSET_LABEL')}{tui.horizontal_offset}" if tui.horizontal_offset > 0 else ""
     desc = tui._current_description_snippet() or tui._t("DESCRIPTION_MISSING")
     detail = tui._current_task_detail_obj()

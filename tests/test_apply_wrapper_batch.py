@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -8,7 +9,8 @@ def _run_apply(tmp_path: Path, args: list[str]) -> dict:
     root = Path(__file__).resolve().parents[1]
     env = os.environ.copy()
     env["APPLY_TASKS_PY"] = str(root / "tasks.py")  # явно указываем tasks.py
-    cmd = ["python3", str(root / "apply_task")] + args
+    env["APPLY_TASK_TASKS_DIR"] = str(tmp_path / ".tasks")  # use local .tasks for isolation
+    cmd = [sys.executable, str(root / "apply_task")] + args
     result = subprocess.run(cmd, cwd=tmp_path, capture_output=True, text=True, env=env)
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
