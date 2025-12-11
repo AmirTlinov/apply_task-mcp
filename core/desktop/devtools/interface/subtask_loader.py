@@ -90,6 +90,14 @@ def parse_subtasks_json(raw: str) -> List[SubTask]:
             if not isinstance(blockers_notes, list):
                 blockers_notes = [str(blockers_notes)]
 
+            progress_notes = item.get("progress_notes", [])
+            started_at = item.get("started_at", None)
+            blocked = item.get("blocked", False)
+            block_reason = item.get("block_reason", "")
+
+            if not isinstance(progress_notes, list):
+                progress_notes = [str(progress_notes)]
+
             st = SubTask(
                 False,
                 title,
@@ -102,6 +110,10 @@ def parse_subtasks_json(raw: str) -> List[SubTask]:
                 criteria_notes=[str(n).strip() for n in criteria_notes if str(n).strip()],
                 tests_notes=[str(n).strip() for n in tests_notes if str(n).strip()],
                 blockers_notes=[str(n).strip() for n in blockers_notes if str(n).strip()],
+                progress_notes=[str(n).strip() for n in progress_notes if str(n).strip()],
+                started_at=str(started_at).strip() if started_at else None,
+                blocked=_to_bool(blocked),
+                block_reason=str(block_reason).strip() if block_reason else "",
             )
             subtasks.append(st)
 
