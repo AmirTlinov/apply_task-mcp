@@ -33,6 +33,12 @@ def subtask_to_dict(subtask: SubTask, path: str = "0", compact: bool = False) ->
                     blocking.append("blockers")
                 if blocking:
                     d["needs"] = blocking
+        # Phase 1: Add status and blocked info
+        d["status"] = getattr(subtask, "computed_status", "pending")
+        if getattr(subtask, "blocked", False):
+            d["blocked"] = True
+            if getattr(subtask, "block_reason", ""):
+                d["block_reason"] = subtask.block_reason
         return d
 
     # Full representation
@@ -51,6 +57,11 @@ def subtask_to_dict(subtask: SubTask, path: str = "0", compact: bool = False) ->
         "blockers_notes": list(subtask.blockers_notes),
         "created_at": getattr(subtask, "created_at", None),
         "completed_at": getattr(subtask, "completed_at", None),
+        "progress_notes": list(getattr(subtask, "progress_notes", [])),
+        "started_at": getattr(subtask, "started_at", None),
+        "blocked": getattr(subtask, "blocked", False),
+        "block_reason": getattr(subtask, "block_reason", ""),
+        "computed_status": getattr(subtask, "computed_status", "pending"),
     }
 
 
@@ -69,6 +80,9 @@ def task_to_dict(
             "status": task.status,
             "progress": task.calculate_progress(),
         }
+        # Include domain for GUI task disambiguation
+        if task.domain:
+            data["domain"] = task.domain
         if task.blocked:
             data["blocked"] = True
         if include_subtasks:
