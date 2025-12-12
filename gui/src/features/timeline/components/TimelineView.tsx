@@ -19,6 +19,7 @@ import type { TaskListItem } from "@/types/task";
 interface TimelineViewProps {
   tasks: TaskListItem[];
   isLoading?: boolean;
+  onTaskClick?: (taskId: string) => void;
 }
 
 type EventType = "created" | "started" | "completed" | "blocked" | "comment" | "subtask";
@@ -52,9 +53,9 @@ function generateEventsFromTasks(tasks: TaskListItem[]): TimelineEvent[] {
 
     // Map current status to event type
     const statusEventMap: Record<string, EventType> = {
-      OK: "completed",
-      WARN: "started",
-      FAIL: "blocked",
+      DONE: "completed",
+      ACTIVE: "started",
+      TODO: "created",
     };
 
     const eventType = statusEventMap[task.status] || "created";
@@ -65,8 +66,8 @@ function generateEventsFromTasks(tasks: TaskListItem[]): TimelineEvent[] {
       taskId: task.id,
       taskTitle: task.title,
       timestamp,
-      description: task.status === "FAIL" && task.progress && task.progress > 0
-        ? "Task blocked or pending"
+      description: task.status === "TODO" && task.progress && task.progress > 0
+        ? "Task moved back to TODO"
         : undefined,
     });
 
@@ -114,7 +115,7 @@ function groupEventsByDate(events: TimelineEvent[]): Map<string, TimelineEvent[]
   return groups;
 }
 
-export function TimelineView({ tasks, isLoading = false }: TimelineViewProps) {
+export function TimelineView({ tasks, isLoading = false, onTaskClick }: TimelineViewProps) {
   const [filter, setFilter] = useState<EventType | "all">("all");
 
   if (isLoading) {
@@ -212,13 +213,14 @@ export function TimelineView({ tasks, isLoading = false }: TimelineViewProps) {
 
             {/* Events */}
             <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-              {events.map((event, idx) => (
-                <TimelineEventItem
-                  key={event.id}
-                  event={event}
-                  isLast={idx === events.length - 1}
-                />
-              ))}
+	              {events.map((event, idx) => (
+	                <TimelineEventItem
+	                  key={event.id}
+	                  event={event}
+	                  isLast={idx === events.length - 1}
+	                  onTaskClick={onTaskClick}
+	                />
+	              ))}
             </div>
           </div>
         ))}
@@ -230,18 +232,31 @@ export function TimelineView({ tasks, isLoading = false }: TimelineViewProps) {
 interface TimelineEventItemProps {
   event: TimelineEvent;
   isLast: boolean;
+  onTaskClick?: (taskId: string) => void;
 }
 
-function TimelineEventItem({ event, isLast }: TimelineEventItemProps) {
+function TimelineEventItem({ event, isLast, onTaskClick }: TimelineEventItemProps) {
   const config = eventConfig[event.type];
   const Icon = config.icon;
 
   return (
     <div
+      onClick={() => onTaskClick?.(event.taskId)}
       style={{
         display: "flex",
         gap: "12px",
         position: "relative",
+        cursor: onTaskClick ? "pointer" : "default",
+        padding: "4px 8px",
+        borderRadius: "8px",
+      }}
+      onMouseEnter={(e) => {
+        if (onTaskClick) {
+          e.currentTarget.style.backgroundColor = "var(--color-background-muted)";
+        }
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.backgroundColor = "transparent";
       }}
     >
       {/* Timeline line */}

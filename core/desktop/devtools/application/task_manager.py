@@ -21,6 +21,7 @@ from core.desktop.devtools.interface.i18n import translate, effective_lang as _e
 from infrastructure.file_repository import FileTaskRepository
 from infrastructure.projects_sync_service import ProjectsSyncService
 from projects_sync import get_projects_sync
+from core.status import task_status_code
 
 
 def current_timestamp() -> str:
@@ -206,6 +207,7 @@ class TaskManager:
         repository: Optional[TaskRepository] = None,
         sync_service: Optional[SyncService] = None,
         sync_provider=None,
+        auto_sync: bool = True,
     ):
         if tasks_dir is None:
             from core.desktop.devtools.interface.tasks_dir_resolver import get_tasks_dir_for_project
@@ -231,9 +233,14 @@ class TaskManager:
         self._known_tasks: Set[str] = set()
         # Store task snapshots for change detection: {task_id: (subtasks_count, progress, hash)}
         self._task_snapshots: Dict[str, Tuple[int, int, str]] = {}
-        synced = self._auto_sync_all()
-        if synced:
-            self.auto_sync_message = translate("STATUS_MESSAGE_AUTO_SYNC", lang=self.language, count=synced)
+        if auto_sync:
+            synced = self._auto_sync_all()
+            if synced:
+                self.auto_sync_message = translate(
+                    "STATUS_MESSAGE_AUTO_SYNC",
+                    lang=self.language,
+                    count=synced,
+                )
 
     def _t(self, key: str, **kwargs) -> str:
         return translate(key, lang=getattr(self, "language", "en"), **kwargs)
@@ -378,6 +385,10 @@ class TaskManager:
         component: str = "",
         folder: Optional[str] = None,
     ) -> TaskDetail:
+        try:
+            status = task_status_code(status or "FAIL")
+        except ValueError:
+            status = "FAIL"
         domain = self.sanitize_domain(folder or domain or derive_domain_explicit("", phase, component))
         now_value = current_timestamp()
         task = TaskDetail(
@@ -446,6 +457,10 @@ class TaskManager:
                     sync.pull_task_fields(parsed)
         return sorted(tasks, key=lambda t: t.id)
 
+    def list_all_tasks(self, skip_sync: bool = True) -> List[TaskDetail]:
+        """List all tasks across domains within current namespace."""
+        return self.list_tasks("", skip_sync=skip_sync)
+
     def _auto_sync_all(self) -> int:
         base_sync = self.sync_service
         if not _auto_sync_allowed(base_sync, self.config):
@@ -506,7 +521,12 @@ class TaskManager:
         task = self.load_task(task_id, domain, skip_sync=True)
         if not task:
             return False, {"code": "not_found", "message": self._t("ERR_TASK_NOT_FOUND", task_id=task_id)}
-        if status == "OK":
+        try:
+            status_code = task_status_code(status)
+        except ValueError:
+            return False, {"code": "invalid_status", "message": self._t("ERR_STATUS_REQUIRED")}
+
+        if status_code == "OK":
             if not force:
                 ok, error = _validate_task_ready_for_ok(task, self._t)
                 if not ok:
@@ -517,32 +537,18 @@ class TaskManager:
                 # keep actual progress/subtasks, but mark status as explicitly set
                 task.progress = task.calculate_progress()
                 task.status_manual = True
-            task.status = status
+            task.status = status_code
         else:
             task.status_manual = False
-            _update_progress_for_status(task, status)
-            # When reopening task, also reopen subtasks if force
-            if force and task.subtasks:
+            _update_progress_for_status(task, status_code)
+            # When reopening task, ensure status change is not immediately auto-overridden by 100% progress.
+            if task.subtasks and (force or task.calculate_progress() == 100):
                 for st in task.subtasks:
                     st.completed = False
                     st.completed_at = None
         # skip_sync=True чтобы sync не перезаписал локальные изменения
         self.save_task(task, skip_sync=True)
         return True, None
-
-    def _mark_subtask_completed_recursive(self, subtask: SubTask) -> None:
-        """Mark subtask and all nested subtasks as completed."""
-        subtask.completed = True
-        subtask.completed_at = current_timestamp()
-        # Auto-confirm checkpoints if not already
-        if not subtask.criteria_confirmed:
-            subtask.criteria_confirmed = True
-        if not subtask.tests_confirmed:
-            subtask.tests_confirmed = True
-        if not subtask.blockers_resolved:
-            subtask.blockers_resolved = True
-        for child in subtask.children:
-            self._mark_subtask_completed_recursive(child)
 
     def add_subtask(
         self,
@@ -638,11 +644,49 @@ class TaskManager:
         return True, None
 
     def add_dependency(self, task_id: str, dep: str, domain: str = "") -> bool:
+        """Add dependency to a task.
+
+        - If `dep` looks like a TASK-ID, it is treated as blocking `depends_on`
+          with existence/cycle validation.
+        - Otherwise it is treated as a soft/freeform dependency and stored in
+          `dependencies` (legacy/external refs).
+        """
+        import re
+        from core import TaskEvent, validate_dependencies, build_dependency_graph
+        from core.desktop.devtools.application.context import normalize_task_id
+
         task = self.load_task(task_id, domain)
         if not task:
             return False
-        task.dependencies.append(dep)
-        self.save_task(task)
+
+        raw = (dep or "").strip()
+        upper = raw.upper()
+        is_task_id = bool(re.match(r"^TASK-\\d+$", upper) or upper.isdigit())
+
+        if not is_task_id:
+            if raw and raw not in task.dependencies:
+                task.dependencies.append(raw)
+                self.save_task(task)
+            return True
+
+        dep_id = normalize_task_id(raw)
+        if dep_id == task.id:
+            return False
+
+        all_tasks = self.list_all_tasks()
+        existing_ids = {t.id for t in all_tasks}
+        dep_graph = build_dependency_graph([(t.id, t.depends_on) for t in all_tasks])
+        errors, cycle = validate_dependencies(task.id, [dep_id], existing_ids, dep_graph)
+        if errors:
+            return False
+        if cycle:
+            return False
+
+        if dep_id not in task.depends_on:
+            task.depends_on.append(dep_id)
+            task.events.append(TaskEvent.dependency_added(dep_id))
+            self.save_task(task)
+
         return True
 
     def move_task(self, task_id: str, new_domain: str) -> bool:

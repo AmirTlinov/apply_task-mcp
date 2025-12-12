@@ -42,6 +42,7 @@ from core.desktop.devtools.application.task_manager import TaskManager, current_
 from core.desktop.devtools.application.context import derive_domain_explicit
 from core.desktop.devtools.interface.cli_activity import write_activity_marker
 from core.desktop.devtools.interface.serializers import task_to_dict
+from core.status import task_status_code, task_status_label
 from core.desktop.devtools.interface.cli_history import (
     OperationHistory,
     get_project_tasks_dir,
@@ -49,6 +50,7 @@ from core.desktop.devtools.interface.cli_history import (
     get_project_namespace,
     migrate_to_global,
 )
+from core.desktop.devtools.interface.ai_state import get_ai_state
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -178,7 +180,7 @@ class TaskState:
     """
     task_id: str
     title: str
-    status: str  # OK, WARN, FAIL
+    status: str  # TODO, ACTIVE, DONE
     progress: str  # "3/5 (60%)" format
     ready: List[str] = field(default_factory=list)  # paths ready for "done"
     blocked: List[str] = field(default_factory=list)  # paths waiting for verification
@@ -223,7 +225,7 @@ class TaskState:
         return cls(
             task_id=task.id,
             title=task.title,
-            status=task.status,
+            status=task_status_label(task.status),
             progress=f"{completed}/{total} ({pct}%)",
             ready=ready,
             blocked=blocked,
@@ -418,7 +420,8 @@ class Meta:
     """Мини-контекст в каждом ответе — ИИ всегда видит картину."""
 
     task_id: Optional[str] = None
-    task_status: Optional[str] = None
+    task_status: Optional[str] = None  # TODO / ACTIVE / DONE
+    task_status_code: Optional[str] = None  # FAIL / WARN / OK (internal)
     task_progress: int = 0
     subtasks_total: int = 0
     subtasks_completed: int = 0
@@ -430,6 +433,7 @@ class Meta:
         return {
             "task_id": self.task_id,
             "task_status": self.task_status,
+            "task_status_code": self.task_status_code,
             "task_progress": self.task_progress,
             "subtasks": {
                 "total": self.subtasks_total,
@@ -541,7 +545,8 @@ def build_meta(manager: TaskManager, task_id: Optional[str] = None, domain_filte
         return meta
 
     meta.task_id = task_id
-    meta.task_status = task.status
+    meta.task_status_code = task.status
+    meta.task_status = task_status_label(task.status)
     meta.task_progress = task.calculate_progress()
     meta.subtasks_total = len(task.subtasks)
     meta.subtasks_completed = sum(1 for st in task.subtasks if st.completed)
@@ -680,19 +685,21 @@ def render_context_markdown(
     all_tasks = manager.list_tasks(domain_filter or "")
 
     # Header with summary
-    by_status = {"OK": 0, "WARN": 0, "FAIL": 0}
+    by_status = {"DONE": 0, "ACTIVE": 0, "TODO": 0}
     for t in all_tasks:
-        by_status[t.status] = by_status.get(t.status, 0) + 1
+        label = task_status_label(t.status)
+        by_status[label] = by_status.get(label, 0) + 1
 
     lines.append(f"## Task Summary ({len(all_tasks)} total)")
-    lines.append(f"✅ OK: {by_status['OK']} | ⚠️ WARN: {by_status['WARN']} | ❌ FAIL: {by_status['FAIL']}")
+    lines.append(f"✅ DONE: {by_status['DONE']} | ▶️ ACTIVE: {by_status['ACTIVE']} | ⏳ TODO: {by_status['TODO']}")
     lines.append("")
 
     # All tasks list (if requested or no specific task)
     if include_all_tasks or not task_id:
         lines.append("### All Tasks")
         for t in all_tasks:
-            status_icon = {"OK": "✅", "WARN": "⚠️", "FAIL": "❌"}.get(t.status, "❓")
+            status = task_status_label(t.status)
+            status_icon = {"DONE": "✅", "ACTIVE": "▶️", "TODO": "⏳"}.get(status, "❓")
             progress = t.calculate_progress()
             blocked_marker = " 🔒BLOCKED" if t.blocked else ""
             lines.append(f"- {status_icon} `{t.id}` {t.title} ({progress}%){blocked_marker}")
@@ -711,8 +718,9 @@ def render_context_markdown(
                 lines.append("")
 
             # Status and progress
-            status_icon = {"OK": "✅", "WARN": "⚠️", "FAIL": "❌"}.get(task.status, "❓")
-            lines.append(f"Status: {status_icon} {task.status} | Progress: {task.calculate_progress()}%")
+            status = task_status_label(task.status)
+            status_icon = {"DONE": "✅", "ACTIVE": "▶️", "TODO": "⏳"}.get(status, "❓")
+            lines.append(f"Status: {status_icon} {status} | Progress: {task.calculate_progress()}%")
 
             # Dependencies
             if task.depends_on:
@@ -1210,6 +1218,47 @@ def handle_resume(
     )
 
 
+def handle_plan(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
+    """Set/advance/clear AI plan for human-visible transparency.
+
+    Input:
+        {"intent": "plan", "task": "TASK-001", "steps": ["...", "..."]}
+        {"intent": "plan", "advance": true}
+        {"intent": "plan", "clear": true}
+    """
+    ai_state = get_ai_state()
+    clear = bool(data.get("clear", False))
+    advance = bool(data.get("advance", False))
+    steps = data.get("steps")
+    task_id = data.get("task") or (ai_state.plan.task_id if ai_state.plan else None)
+
+    if clear:
+        ai_state.clear_plan()
+        return AIResponse(success=True, intent="plan", result={"plan": None})
+
+    if steps is not None:
+        err = validate_array(steps, "steps", 100)
+        if err:
+            return error_response("plan", "INVALID_STEPS", err)
+        if not task_id:
+            return error_response("plan", "MISSING_TASK", "Поле 'task' обязательно при установке steps")
+        # Validate each step string
+        for idx, s in enumerate(steps):
+            serr = validate_string(s, f"steps[{idx}]", 500)
+            if serr:
+                return error_response("plan", "INVALID_STEP", serr)
+        ai_state.set_plan(task_id, [str(s).strip() for s in steps if str(s).strip()])
+
+    if advance:
+        ai_state.advance_plan()
+
+    return AIResponse(
+        success=True,
+        intent="plan",
+        result={"plan": ai_state.plan.to_dict() if ai_state.plan else None},
+    )
+
+
 def handle_decompose(
     manager: TaskManager, data: Dict[str, Any]
 ) -> AIResponse:
@@ -1395,6 +1444,13 @@ def handle_define(
             if err:
                 return error_response("define", "INVALID_DATA", err)
 
+    if "title" in data:
+        err = validate_string(data.get("title"), "title")
+        if err:
+            return error_response("define", "INVALID_DATA", err)
+        if not str(data.get("title", "")).strip():
+            return error_response("define", "INVALID_DATA", "title cannot be empty")
+
     task = _load_task(manager, task_id, domain_path)
     if not task:
         return error_response("define", "TASK_NOT_FOUND", f"Задача {task_id} не найдена")
@@ -1408,6 +1464,9 @@ def handle_define(
 
     # Обновить атрибуты
     updated = {}
+    if "title" in data:
+        subtask.title = str(data["title"]).strip()
+        updated["title"] = subtask.title
     if "criteria" in data:
         subtask.success_criteria = list(data["criteria"])
         updated["criteria"] = subtask.success_criteria
@@ -2088,7 +2147,7 @@ def handle_complete(
         {"intent": "complete", "task": "TASK-001", "status": "OK"}
     """
     task_id = data.get("task")
-    status = data.get("status", "OK")
+    status = data.get("status", "DONE")
     domain_path = derive_domain_explicit(data.get("domain", ""), data.get("phase"), data.get("component"))
 
     if not task_id:
@@ -2099,9 +2158,12 @@ def handle_complete(
     if err:
         return error_response("complete", "INVALID_TASK_ID", err)
 
-    # SEC-002: Validate status
-    if status not in ("OK", "WARN", "FAIL"):
-        return error_response("complete", "INVALID_STATUS", "status должен быть OK, WARN или FAIL")
+    # SEC-002: Validate and normalize status
+    try:
+        status_code = task_status_code(status)
+    except ValueError:
+        return error_response("complete", "INVALID_STATUS", "status должен быть TODO, ACTIVE или DONE (алиасы OK, WARN, FAIL)")
+    status_ui = task_status_label(status_code)
 
     task = _load_task(manager, task_id, domain_path)
     if not task:
@@ -2131,7 +2193,7 @@ def handle_complete(
                 f"Критерии {len(unverified)} подзадач не верифицированы",
             )
 
-    task.status = status
+    task.status = status_code
     manager.save_task(task)
 
     write_activity_marker(
@@ -2146,7 +2208,8 @@ def handle_complete(
         intent="complete",
         result={
             "task_id": task_id,
-            "status": status,
+            "status": status_ui,
+            "status_code": status_code,
         },
         context=ctx,
         suggestions=suggestions,
@@ -2759,7 +2822,11 @@ def handle_storage_info(
     if global_dir.exists():
         for ns_dir in global_dir.iterdir():
             if ns_dir.is_dir() and not ns_dir.name.startswith("."):
-                task_count = len(list(ns_dir.glob("*.task")))
+                task_count = sum(
+                    1
+                    for f in ns_dir.rglob("TASK-*.task")
+                    if ".snapshots" not in f.parts
+                )
                 namespaces.append({
                     "namespace": ns_dir.name,
                     "path": str(ns_dir),
@@ -2925,7 +2992,7 @@ def handle_prompts(
 MODIFYING_INTENTS = {"decompose", "define", "verify", "progress", "note", "block", "complete", "create", "done", "delete"}
 
 # Интенты только для чтения
-READONLY_INTENTS = {"context", "history", "storage", "resume", "prompts"}
+READONLY_INTENTS = {"context", "history", "storage", "resume", "prompts", "plan"}
 
 # Интенты управления историей (не записываются в историю)
 HISTORY_INTENTS = {"undo", "redo", "history"}
@@ -2937,6 +3004,7 @@ INTENT_HANDLERS = {
     "prompts": handle_prompts,
     "storage": handle_storage_info,
     "resume": handle_resume,
+    "plan": handle_plan,
     # Модификация
     "decompose": handle_decompose,
     "define": handle_define,
@@ -3016,6 +3084,9 @@ def process_intent(
     try:
         # Record to history before execution (for snapshot)
         task_id = data.get("task")
+        path = data.get("path")
+        ai_state = get_ai_state()
+        ai_state.start_operation(intent, task_id=task_id, path=path)
         should_record = (
             record_history and
             intent in MODIFYING_INTENTS and
@@ -3047,6 +3118,12 @@ def process_intent(
         if not response.hints:
             response.hints = generate_action_hints(manager, task_id)
 
+        # Update AI state history for human-visible dashboards
+        try:
+            ai_state.end_operation(response.summary or intent, success=response.success)
+        except Exception:
+            pass
+
         # Store in idempotency cache (only for successful modifying operations)
         if idempotency_key and intent in MODIFYING_INTENTS and response.success:
             response.idempotency_key = idempotency_key
@@ -3054,6 +3131,10 @@ def process_intent(
 
         return response
     except Exception as e:
+        try:
+            get_ai_state().end_operation(f"{intent}: {e}", success=False)
+        except Exception:
+            pass
         return error_response(intent, "INTERNAL_ERROR", str(e))
 
 
@@ -3205,10 +3286,12 @@ def _dry_run_validate(
                 result["validation"]["subtasks_count"] = len(task.subtasks)
 
     elif intent == "complete":
-        status = data.get("status", "OK")
-        if status not in ("OK", "WARN", "FAIL"):
+        status = data.get("status", "DONE")
+        try:
+            task_status_code(status)
+        except ValueError:
             result["would_execute"] = False
-            result["reason"] = "status должен быть OK, WARN или FAIL"
+            result["reason"] = "status должен быть TODO, ACTIVE или DONE (алиасы OK, WARN, FAIL)"
 
     elif intent == "create":
         title = data.get("title")

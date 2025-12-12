@@ -16,6 +16,9 @@ import {
 } from "lucide-react";
 import { DropdownMenu } from "@/components/common/DropdownMenu";
 import type { TaskListItem, Namespace } from "@/types/task";
+import { openPath } from "@/lib/tauri";
+import { toast } from "@/components/common/Toast";
+import { useSettingsStore } from "@/stores/settingsStore";
 
 interface ProjectsViewProps {
   tasks: TaskListItem[];
@@ -24,6 +27,8 @@ interface ProjectsViewProps {
   namespaces: Namespace[];
   isLoading?: boolean;
   onOpenProject?: () => void;
+  onRefresh?: () => void;
+  onSelectNamespace?: (namespace: string | null) => void;
 }
 
 interface Project {
@@ -35,6 +40,7 @@ interface Project {
   lastOpened: Date;
   isActive: boolean;
   isFavorite?: boolean;
+  isArchived?: boolean;
 }
 
 // Build current project from real API data
@@ -45,7 +51,7 @@ function getCurrentProject(
 ): Project | null {
   if (!projectName && !projectPath) return null;
 
-  const completed = tasks.filter((t) => t.status === "OK").length;
+  const completed = tasks.filter((t) => t.status === "DONE").length;
 
   return {
     id: "current",
@@ -77,7 +83,13 @@ export function ProjectsView({
   namespaces,
   isLoading = false,
   onOpenProject,
+  onRefresh,
+  onSelectNamespace,
 }: ProjectsViewProps) {
+  const archivedNamespaces = useSettingsStore((s) => s.archivedNamespaces);
+  const archiveNamespace = useSettingsStore((s) => s.archiveNamespace);
+  const restoreNamespace = useSettingsStore((s) => s.restoreNamespace);
+
   if (isLoading) {
     return <ProjectsSkeleton />;
   }
@@ -94,10 +106,12 @@ export function ProjectsView({
     lastOpened: new Date(),
     isActive: ns.namespace === projectName,
     isFavorite: ns.namespace === projectName,
+    isArchived: archivedNamespaces.includes(ns.namespace),
   }));
 
-  // Get other (non-active) projects
-  const otherProjects = allProjects.filter((p) => !p.isActive);
+  const archivedProjects = allProjects.filter((p) => p.isArchived);
+  const visibleProjects = allProjects.filter((p) => !p.isArchived);
+  const otherProjects = visibleProjects.filter((p) => !p.isActive);
 
   return (
     <div
@@ -178,7 +192,13 @@ export function ProjectsView({
               gap: "12px",
             }}
           >
-            <ProjectCard project={currentProject} />
+            <ProjectCard
+              project={currentProject}
+              onRefresh={onRefresh}
+              onSelectNamespace={onSelectNamespace}
+              onArchive={archiveNamespace}
+              onRestore={restoreNamespace}
+            />
           </div>
         </section>
       )}
@@ -208,7 +228,51 @@ export function ProjectsView({
             }}
           >
             {otherProjects.map((project) => (
-              <ProjectCard key={project.id} project={project} />
+              <ProjectCard
+                key={project.id}
+                project={project}
+                onRefresh={onRefresh}
+                onSelectNamespace={onSelectNamespace}
+                onArchive={archiveNamespace}
+                onRestore={restoreNamespace}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Archived Projects */}
+      {archivedProjects.length > 0 && (
+        <section>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              marginBottom: "16px",
+            }}
+          >
+            <Archive style={{ width: "14px", height: "14px", color: "var(--color-foreground-muted)" }} />
+            <h3 style={{ fontSize: "13px", fontWeight: 600, color: "var(--color-foreground-muted)" }}>
+              Archived Projects
+            </h3>
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))",
+              gap: "12px",
+            }}
+          >
+            {archivedProjects.map((project) => (
+              <ProjectCard
+                key={project.id}
+                project={project}
+                onRefresh={onRefresh}
+                onSelectNamespace={onSelectNamespace}
+                onArchive={archiveNamespace}
+                onRestore={restoreNamespace}
+              />
             ))}
           </div>
         </section>
@@ -254,31 +318,91 @@ export function ProjectsView({
 
 interface ProjectCardProps {
   project: Project;
+  onRefresh?: () => void;
+  onSelectNamespace?: (namespace: string | null) => void;
+  onArchive: (namespace: string) => void;
+  onRestore: (namespace: string) => void;
 }
 
-function ProjectCard({ project }: ProjectCardProps) {
+function ProjectCard({ project, onRefresh, onSelectNamespace, onArchive, onRestore }: ProjectCardProps) {
   const progress = project.taskCount > 0
     ? Math.round((project.completedCount / project.taskCount) * 100)
     : 0;
+
+  const menuItems = project.isArchived
+    ? [
+        {
+          label: "Restore",
+          icon: <FolderOpen style={{ width: "14px", height: "14px" }} />,
+          onClick: () => onRestore(project.id),
+        },
+      ]
+    : [
+        {
+          label: "Refresh",
+          icon: <RefreshCw style={{ width: "14px", height: "14px" }} />,
+          onClick: () => {
+            onRefresh?.();
+            toast.info("Projects refreshed");
+          },
+        },
+        {
+          label: "Open folder",
+          icon: <ExternalLink style={{ width: "14px", height: "14px" }} />,
+          onClick: async () => {
+            const resp = await openPath(project.path);
+            if (!resp.success) {
+              toast.error(resp.error || "Failed to open folder");
+            }
+          },
+        },
+        { type: "separator" as const },
+        {
+          label: "Archive",
+          icon: <Archive style={{ width: "14px", height: "14px" }} />,
+          onClick: () => onArchive(project.id),
+          disabled: project.isActive,
+        },
+        {
+          label: "Remove from list",
+          icon: <Trash2 style={{ width: "14px", height: "14px" }} />,
+          onClick: () => {
+            onArchive(project.id);
+            toast.info("Project hidden. Delete folder manually to remove tasks.");
+          },
+          danger: true,
+          disabled: project.isActive,
+        },
+      ];
 
   return (
     <div
       style={{
         padding: "16px",
-        backgroundColor: project.isActive ? "var(--color-primary-subtle)" : "var(--color-background)",
+        backgroundColor: project.isActive
+          ? "var(--color-primary-subtle)"
+          : project.isArchived
+            ? "var(--color-background-muted)"
+            : "var(--color-background)",
         borderRadius: "12px",
         border: `1px solid ${project.isActive ? "var(--color-primary)" : "var(--color-border)"}`,
-        cursor: "pointer",
+        cursor: project.isArchived ? "default" : "pointer",
+        opacity: project.isArchived ? 0.75 : 1,
         transition: "all 150ms ease",
       }}
+      onClick={() => {
+        if (project.isArchived) return;
+        onSelectNamespace?.(project.id);
+        toast.success(`Switched to ${project.name}`);
+      }}
       onMouseEnter={(e) => {
-        if (!project.isActive) {
+        if (!project.isActive && !project.isArchived) {
           e.currentTarget.style.borderColor = "var(--color-foreground-subtle)";
           e.currentTarget.style.transform = "translateY(-2px)";
         }
       }}
       onMouseLeave={(e) => {
-        if (!project.isActive) {
+        if (!project.isActive && !project.isArchived) {
           e.currentTarget.style.borderColor = "var(--color-border)";
           e.currentTarget.style.transform = "translateY(0)";
         }
@@ -357,33 +481,8 @@ function ProjectCard({ project }: ProjectCardProps) {
               <ExternalLink style={{ width: "14px", height: "14px", color: "var(--color-foreground-subtle)" }} />
             </button>
           }
-          items={[
-            {
-              label: "Refresh",
-              icon: <RefreshCw style={{ width: "14px", height: "14px" }} />,
-              onClick: () => console.log("Refresh project", project.id),
-            },
-            {
-              label: "Open in terminal",
-              icon: <ExternalLink style={{ width: "14px", height: "14px" }} />,
-              onClick: () => console.log("Open in terminal", project.path),
-            },
-            { type: "separator" as const },
-            {
-              label: "Archive",
-              icon: <Archive style={{ width: "14px", height: "14px" }} />,
-              onClick: () => console.log("Archive project", project.id),
-              disabled: project.isActive,
-            },
-            {
-              label: "Remove",
-              icon: <Trash2 style={{ width: "14px", height: "14px" }} />,
-              onClick: () => console.log("Remove project", project.id),
-              danger: true,
-              disabled: project.isActive,
-            },
-          ]}
-        />
+	          items={menuItems}
+	        />
       </div>
 
       {/* Stats */}

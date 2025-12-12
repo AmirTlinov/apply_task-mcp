@@ -90,6 +90,45 @@ def test_update_task_status_validates_and_sets_ok(tmp_path):
     assert reloaded.status == "OK"
 
 
+def test_update_task_status_accepts_human_labels(tmp_path):
+    manager = TaskManager(tasks_dir=tmp_path / ".tasks", sync_service=DummySync(enabled=False))
+    task = TaskDetail(
+        id="TASK-010H",
+        title="Human labels",
+        status="FAIL",
+        domain="",
+        created="2025-01-01 00:00",
+        updated="2025-01-01 00:00",
+    )
+    task.subtasks.append(
+        SubTask(
+            completed=True,
+            title="Sub with checkpoints",
+            success_criteria=["c"],
+            tests=["t"],
+            blockers=["b"],
+            criteria_confirmed=True,
+            tests_confirmed=True,
+            blockers_resolved=True,
+        )
+    )
+    task.success_criteria = ["sc"]
+    task.tests = ["tt"]
+    manager.repo.save(task)
+
+    ok, err = manager.update_task_status("TASK-010H", "DONE")
+    assert ok and err is None
+    assert manager.load_task("TASK-010H").status == "OK"
+
+    ok, err = manager.update_task_status("TASK-010H", "ACTIVE")
+    assert ok and err is None
+    assert manager.load_task("TASK-010H").status == "WARN"
+
+    ok, err = manager.update_task_status("TASK-010H", "TODO")
+    assert ok and err is None
+    assert manager.load_task("TASK-010H").status == "FAIL"
+
+
 def test_update_task_status_not_found(tmp_path):
     manager = TaskManager(tasks_dir=tmp_path / ".tasks", sync_service=DummySync(enabled=False))
     ok, err = manager.update_task_status("NOPE", "OK")

@@ -5,10 +5,24 @@
  * Falls back to mock data when running in browser (not in Tauri).
  */
 
-import type { Task, TaskListItem } from "@/types/task";
+import type { Task, TaskListItem, TaskStatus, TaskStatusCode } from "@/types/task";
 
 // Check if we're running inside Tauri (Tauri 2.0 uses __TAURI_INTERNALS__)
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+const DEBUG = import.meta.env.DEV;
+const debugLog = (...args: unknown[]) => {
+  if (DEBUG) {
+    // eslint-disable-next-line no-console
+    console.log(...args);
+  }
+};
+const debugError = (...args: unknown[]) => {
+  if (DEBUG) {
+    // eslint-disable-next-line no-console
+    console.error(...args);
+  }
+};
 
 // Dynamic import for Tauri API (only when available)
 let tauriInvoke: typeof import("@tauri-apps/api/core").invoke | null = null;
@@ -17,7 +31,7 @@ let tauriInvoke: typeof import("@tauri-apps/api/core").invoke | null = null;
 const tauriInitPromise: Promise<void> = isTauri
   ? import("@tauri-apps/api/core").then((mod) => {
     tauriInvoke = mod.invoke;
-    console.log("[Tauri] API initialized successfully");
+    debugLog("[Tauri] API initialized successfully");
   })
   : Promise.resolve();
 
@@ -26,7 +40,8 @@ const MOCK_TASKS: TaskListItem[] = [
   {
     id: "TASK-001",
     title: "Implement user authentication system",
-    status: "OK",
+    status: "DONE",
+    status_code: "OK",
     progress: 75,
     subtask_count: 4,
     completed_count: 3,
@@ -37,7 +52,8 @@ const MOCK_TASKS: TaskListItem[] = [
   {
     id: "TASK-002",
     title: "Design dashboard UI components",
-    status: "WARN",
+    status: "ACTIVE",
+    status_code: "WARN",
     progress: 40,
     subtask_count: 6,
     completed_count: 2,
@@ -48,7 +64,8 @@ const MOCK_TASKS: TaskListItem[] = [
   {
     id: "TASK-003",
     title: "Setup CI/CD pipeline",
-    status: "FAIL",
+    status: "TODO",
+    status_code: "FAIL",
     progress: 20,
     subtask_count: 5,
     completed_count: 1,
@@ -171,7 +188,7 @@ function getMockTaskDetail(taskId: string): Task | null {
     risks: ["Potential blockers from dependencies"],
     tags: listItem.tags || [],
     domain: listItem.domain,
-    priority: listItem.status === "FAIL" ? "HIGH" : "NORMAL",
+    priority: listItem.status === "TODO" ? "HIGH" : "NORMAL",
     progress: listItem.progress,
     created_at: new Date(Date.now() - 7 * 86400000).toISOString(),
     updated_at: listItem.updated_at,
@@ -184,24 +201,24 @@ function getMockTaskDetail(taskId: string): Task | null {
  */
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   // Wait for Tauri API to be initialized (resolves immediately if not in Tauri)
-  console.log(`[invoke] Starting cmd=${cmd}, isTauri=${isTauri}, tauriInvoke=${!!tauriInvoke}`);
+  debugLog(`[invoke] Starting cmd=${cmd}, isTauri=${isTauri}, tauriInvoke=${!!tauriInvoke}`);
   await tauriInitPromise;
-  console.log(`[invoke] After init promise, isTauri=${isTauri}, tauriInvoke=${!!tauriInvoke}`);
+  debugLog(`[invoke] After init promise, isTauri=${isTauri}, tauriInvoke=${!!tauriInvoke}`);
 
   if (isTauri && tauriInvoke) {
-    console.log(`[Tauri] invoke: ${cmd}`, args);
+    debugLog(`[Tauri] invoke: ${cmd}`, args);
     try {
       const result = await tauriInvoke<T>(cmd, args);
-      console.log(`[Tauri] invoke result for ${cmd}:`, result);
+      debugLog(`[Tauri] invoke result for ${cmd}:`, result);
       return result;
     } catch (err) {
-      console.error(`[Tauri] invoke error for ${cmd}:`, err);
+      debugError(`[Tauri] invoke error for ${cmd}:`, err);
       throw err;
     }
   }
 
   // Mock responses for browser development
-  console.log(`[Mock] invoke: ${cmd}`, args);
+  debugLog(`[Mock] invoke: ${cmd}`, args);
 
   switch (cmd) {
     case "tasks_list":
@@ -252,17 +269,23 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
     }
 
     case "tasks_update_status": {
-      const { task_id, status } = args as { task_id: string; status: "OK" | "WARN" | "FAIL" };
+      const { task_id, status } = args as { task_id: string; status: TaskStatus };
       const taskIndex = MOCK_TASKS.findIndex((t) => t.id === task_id);
       if (taskIndex >= 0) {
+        const statusCodeMap: Record<TaskStatus, TaskStatusCode> = {
+          DONE: "OK",
+          ACTIVE: "WARN",
+          TODO: "FAIL",
+        };
         // Update mock data
         MOCK_TASKS[taskIndex] = {
           ...MOCK_TASKS[taskIndex],
           status,
-          progress: status === "OK" ? 100 : status === "WARN" ? 50 : 0,
+          status_code: statusCodeMap[status],
+          progress: status === "DONE" ? 100 : status === "ACTIVE" ? 50 : 0,
           updated_at: new Date().toISOString(),
         };
-        console.log(`[Mock] Updated task ${task_id} status to ${status}`);
+        debugLog(`[Mock] Updated task ${task_id} status to ${status}`);
         return {
           success: true,
           intent: "update_status",
@@ -276,25 +299,63 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
     }
 
     case "tasks_create": {
-      const { title, domain } = args as { title: string; domain?: string };
+      const { title, domain, namespace, tags, subtasks } = args as {
+        title: string;
+        domain?: string;
+        namespace?: string;
+        tags?: string[];
+        subtasks?: unknown[];
+      };
       const newId = `TASK-${String(MOCK_TASKS.length + 1).padStart(3, "0")}`;
+      const uiId = namespace ? `${namespace}/${newId}` : newId;
       const newTask: TaskListItem = {
-        id: newId,
+        id: uiId,
+        task_id: newId,
         title,
-        status: "FAIL",
+        status: "TODO",
+        status_code: "FAIL",
         progress: 0,
-        subtask_count: 0,
+        subtask_count: Array.isArray(subtasks) ? subtasks.length : 0,
         completed_count: 0,
-        tags: [],
+        tags: tags || [],
         domain: domain || "general",
+        namespace,
         updated_at: new Date().toISOString(),
       };
       MOCK_TASKS.unshift(newTask); // Add to beginning
-      console.log(`[Mock] Created task ${newId}: ${title}`);
+      debugLog(`[Mock] Created task ${newId}: ${title}`);
       return {
         success: true,
         intent: "create",
         result: { taskId: newId, task: newTask },
+      } as T;
+    }
+
+    case "tasks_template_subtasks": {
+      const { count } = args as { count?: number };
+      const n = Math.max(3, count ?? 3);
+      const template = Array.from({ length: n }, (_v, i) => ({
+        title: `Result ${i + 1}: describe measurable outcome`,
+        criteria: ["Define measurable success criteria"],
+        tests: ["Add relevant tests"],
+        blockers: ["List blockers/dependencies"],
+      }));
+      return {
+        success: true,
+        intent: "template_subtasks",
+        result: {
+          success: true,
+          payload: { type: "subtasks", count: n, template },
+        },
+      } as T;
+    }
+
+    case "tasks_send_signal": {
+      const { signal, message } = args as { signal: string; message?: string };
+      return {
+        success: true,
+        intent: "send_signal",
+        result: { success: true, signal, message: message || "" },
       } as T;
     }
 
@@ -303,7 +364,7 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
       const taskIndex = MOCK_TASKS.findIndex((t) => t.id === task_id);
       if (taskIndex >= 0) {
         MOCK_TASKS.splice(taskIndex, 1);
-        console.log(`[Mock] Deleted task ${task_id}`);
+        debugLog(`[Mock] Deleted task ${task_id}`);
         return {
           success: true,
           intent: "delete",
@@ -356,19 +417,33 @@ export async function listTasks(params?: {
   domain?: string;
   status?: string;
   compact?: boolean;
+  namespace?: string | null;
+  allNamespaces?: boolean;
 }): Promise<TaskListResponse> {
   return invoke<TaskListResponse>("tasks_list", {
     domain: params?.domain,
     status: params?.status,
     compact: params?.compact ?? true,
+    namespace: params?.namespace ?? undefined,
+    // Support both camelCase and snake_case for Tauri argument mapping
+    allNamespaces: params?.allNamespaces ?? false,
+    all_namespaces: params?.allNamespaces ?? false,
   });
 }
 
 /**
  * Get task details
+ * @param taskId - The task ID (e.g., "TASK-001")
+ * @param domain - Optional domain path within namespace (e.g., "core/api")
+ * @param namespace - Optional namespace folder (e.g., "idea_h") for cross-namespace lookup
  */
-export async function showTask(taskId: string, domain?: string): Promise<TaskResponse> {
-  return invoke<TaskResponse>("tasks_show", { task_id: taskId, domain });
+export async function showTask(taskId: string, domain?: string, namespace?: string): Promise<TaskResponse> {
+  return invoke<TaskResponse>("tasks_show", {
+    taskId,
+    task_id: taskId,
+    domain,
+    namespace,
+  });
 }
 
 /**
@@ -399,29 +474,44 @@ export async function executeIntent(
  */
 export async function createTask(params: {
   title: string;
-  parent: string;
-  description: string;
-  tests: string[];
-  risks: string[];
-  subtasks: Array<{
+  description?: string;
+  priority?: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  parent?: string;
+  tags?: string[];
+  subtasks?: Array<{
     title: string;
-    success_criteria: string[];
-    tests: string[];
-    blockers: string[];
+    criteria?: string[];
+    tests?: string[];
+    blockers?: string[];
   }>;
   domain?: string;
+  phase?: string;
+  component?: string;
+  context?: string;
+  namespace?: string;
 }): Promise<AIIntentResponse> {
   return invoke<AIIntentResponse>("tasks_create", params);
 }
 
 /**
  * Update task status
+ * @param taskId - The task ID (e.g., "TASK-001")
+ * @param status - New status
+ * @param domain - Optional namespace for cross-namespace operations
  */
 export async function updateTaskStatus(
   taskId: string,
-  status: "OK" | "WARN" | "FAIL"
+  status: TaskStatus,
+  domain?: string,
+  namespace?: string
 ): Promise<AIIntentResponse> {
-  return invoke<AIIntentResponse>("tasks_update_status", { task_id: taskId, status });
+  return invoke<AIIntentResponse>("tasks_update_status", {
+    taskId,
+    task_id: taskId,
+    status,
+    domain,
+    namespace,
+  });
 }
 
 export async function completeCheckpoint(params: {
@@ -429,12 +519,58 @@ export async function completeCheckpoint(params: {
   path: string;
   checkpoint: "criteria" | "tests" | "blockers";
   note: string;
+  domain?: string;
+  namespace?: string;
 }): Promise<AIIntentResponse> {
   return invoke<AIIntentResponse>("tasks_checkpoint", {
     task_id: params.taskId,
     path: params.path,
     checkpoint: params.checkpoint,
     note: params.note,
+    domain: params.domain,
+    namespace: params.namespace,
+  });
+}
+
+/**
+ * Define or update criteria/tests/blockers for a subtask
+ */
+export async function defineSubtask(params: {
+	  taskId: string;
+	  path: string;
+	  title?: string;
+	  criteria?: string[];
+	  tests?: string[];
+	  blockers?: string[];
+	  domain?: string;
+	  namespace?: string;
+}): Promise<AIIntentResponse> {
+	  return executeIntent("define", {
+	    task: params.taskId,
+	    path: params.path,
+	    title: params.title,
+	    criteria: params.criteria,
+	    tests: params.tests,
+	    blockers: params.blockers,
+	    domain: params.domain,
+	    namespace: params.namespace,
+	  });
+}
+
+/**
+ * Delete a subtask at path
+ */
+export async function deleteSubtask(params: {
+  taskId: string;
+  path: string;
+  domain?: string;
+  namespace?: string;
+}): Promise<AIIntentResponse> {
+  return executeIntent("delete", {
+    task: params.taskId,
+    path: params.path,
+    domain: params.domain,
+    namespace: params.namespace,
   });
 }
 
@@ -445,13 +581,15 @@ export async function toggleSubtask(
   taskId: string,
   path: string,
   completed: boolean,
-  domain?: string
+  domain?: string,
+  namespace?: string
 ): Promise<AIIntentResponse> {
   return executeIntent("progress", {
     task: taskId,
     path,
     completed,
     domain,
+    namespace,
   });
 }
 
@@ -460,6 +598,30 @@ export async function toggleSubtask(
  */
 export async function getStorage(): Promise<AIIntentResponse> {
   return invoke<AIIntentResponse>("tasks_storage");
+}
+
+/**
+ * Get AI session status (current op / plan / recent history)
+ */
+export async function getAIStatus(): Promise<AIIntentResponse> {
+  return invoke<AIIntentResponse>("tasks_ai_status");
+}
+
+/**
+ * Get subtasks template from backend
+ */
+export async function getSubtasksTemplate(count = 3): Promise<AIIntentResponse> {
+  return invoke<AIIntentResponse>("tasks_template_subtasks", { count });
+}
+
+/**
+ * Send user signal to AI (pause/resume/stop/skip/message)
+ */
+export async function sendAISignal(
+  signal: "pause" | "resume" | "stop" | "skip" | "message",
+  message?: string
+): Promise<AIIntentResponse> {
+  return invoke<AIIntentResponse>("tasks_send_signal", { signal, message });
 }
 
 /**
@@ -499,15 +661,40 @@ export async function openProject(): Promise<{ success: boolean; path?: string; 
   // Mock for browser - use prompt
   const path = window.prompt("Enter project folder path:", "/path/to/project");
   if (path) {
-    console.log(`[Mock] Opening project: ${path}`);
+    debugLog(`[Mock] Opening project: ${path}`);
     return { success: true, path };
   }
   return { success: false, error: "Cancelled" };
 }
 
 /**
- * Delete a task
+ * Open a local path in the system file manager (Tauri) or new tab (browser).
  */
-export async function deleteTask(taskId: string): Promise<AIIntentResponse> {
-  return invoke<AIIntentResponse>("tasks_delete", { task_id: taskId });
+export async function openPath(path: string): Promise<{ success: boolean; error?: string }> {
+  if (!path) return { success: false, error: "No path provided" };
+  try {
+    if (isTauri) {
+      const { openPath: openNativePath } = await import("@tauri-apps/plugin-opener");
+      await openNativePath(path);
+      return { success: true };
+    }
+    window.open(path, "_blank", "noopener,noreferrer");
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : "Failed to open path" };
+  }
+}
+
+/**
+ * Delete a task
+ * @param taskId - The task ID (e.g., "TASK-001")
+ * @param domain - Optional namespace for cross-namespace operations
+ */
+export async function deleteTask(taskId: string, domain?: string, namespace?: string): Promise<AIIntentResponse> {
+  return invoke<AIIntentResponse>("tasks_delete", {
+    taskId,
+    task_id: taskId,
+    domain,
+    namespace,
+  });
 }

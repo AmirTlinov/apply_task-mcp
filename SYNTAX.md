@@ -74,7 +74,7 @@ Automatically extracts:
 apply_task show           # last task from .last
 apply_task show 001       # TASK-001
 apply_task list           # backlog summary
-apply_task list --status WARN     # filter by status
+apply_task list --status ACTIVE   # filter by status (aliases: WARN/FAIL/OK)
 apply_task list --tag feature     # filter by tag
 apply_task list --blocked         # only tasks blocked by dependencies
 apply_task list --stale 7         # inactive for 7+ days
@@ -105,12 +105,12 @@ apply_task edit TASK-001 \
 ### Status updates
 
 ```bash
-apply_task update [TASK] WARN   # FAIL → WARN (start work)
-apply_task update [TASK] OK     # WARN → OK (complete, requires all subtasks done)
-apply_task update [TASK] FAIL   # → FAIL (reopen)
+apply_task update [TASK] ACTIVE # TODO → ACTIVE (start work)
+apply_task update [TASK] DONE   # ACTIVE → DONE (complete, requires all subtasks done)
+apply_task update [TASK] TODO   # → TODO (reopen)
 
 # Alternative argument order
-apply_task update OK [TASK]     # Status first, then task
+apply_task update DONE [TASK]   # Status first, then task
 ```
 
 ### Navigation
@@ -229,10 +229,11 @@ apply_task ai @request.json
 | `resume` | Restore AI session | `{"intent": "resume", "task": "TASK-001"}` |
 | `create` | Create new task | `{"intent": "create", "title": "...", "parent": "ROOT"}` |
 | `decompose` | Add subtasks | `{"intent": "decompose", "task": "T-1", "subtasks": [...]}` |
-| `define` | Set properties | `{"intent": "define", "task": "T-1", "description": "..."}` |
+| `define` | Set subtask fields | `{"intent": "define", "task": "T-1", "path": "0", "criteria": [...], "tests": [...], "blockers": [...]}` |
 | `verify` | Verify checkpoints | `{"intent": "verify", "task": "T-1", "path": "0", ...}` |
 | `done` | Complete subtask | `{"intent": "done", "task": "T-1", "path": "0"}` |
 | `progress` | Toggle completion | `{"intent": "progress", "task": "T-1", "path": "0", "completed": true}` |
+| `plan` | Set/advance AI plan | `{"intent": "plan", "task": "T-1", "steps": [...], "current": 0}` |
 | `delete` | Delete task/subtask | `{"intent": "delete", "task": "T-1"}` |
 | `complete` | Complete task | `{"intent": "complete", "task": "T-1"}` |
 | `batch` | Multiple ops | `{"intent": "batch", "task": "T-1", "atomic": true, "operations": [...]}` |
@@ -264,7 +265,11 @@ For Claude Code and other AI assistants:
 apply_task mcp  # Start MCP stdio server
 ```
 
-Available tools: `tasks_list`, `tasks_show`, `tasks_context`, `tasks_create`, `tasks_done`, `tasks_macro_ok`, `tasks_macro_note`, `tasks_macro_bulk`.
+Available tools (core): `tasks_context`, `tasks_list`, `tasks_show`, `tasks_create`, `tasks_decompose`, `tasks_define`, `tasks_verify`, `tasks_done`, `tasks_progress`, `tasks_delete`, `tasks_complete`, `tasks_batch`, `tasks_history`, `tasks_storage`, `tasks_next`.
+
+AI transparency/tools: `tasks_ai_status`, `tasks_plan`, `tasks_user_signal`, `tasks_send_signal`, `tasks_template_subtasks`.
+
+Macros/automation: `tasks_macro_ok`, `tasks_macro_note`, `tasks_macro_bulk`, `tasks_macro_update`, `tasks_macro_suggest`, `tasks_macro_quick`, `tasks_automation_task_template`, `tasks_automation_health`, `tasks_automation_projects_health`.
 
 Configure in Claude Desktop:
 ```json
@@ -275,7 +280,7 @@ Configure in Claude Desktop:
 
 ```bash
 ./tasks.py tui
-./tasks.py list --status WARN
+./tasks.py list --status ACTIVE
 ./tasks.py show TASK-001
 ./tasks.py create "Task" --description "..." --tags "tag1,tag2" --subtasks @file.json
 ./tasks.py task "Task #tag"          # smart parser (tags/deps from title)

@@ -6,4 +6,3 @@ mod bridge;
 mod protocol;
 
 pub use bridge::PythonBridge;
-pub use protocol::JsonRpcResponse;

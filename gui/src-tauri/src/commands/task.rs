@@ -42,13 +42,17 @@ pub async fn tasks_list(
     domain: Option<String>,
     status: Option<String>,
     compact: Option<bool>,
+    namespace: Option<String>,
+    all_namespaces: Option<bool>,
 ) -> Result<TaskListResponse, String> {
     let bridge = state.bridge.lock().await;
 
     let params = json!({
         "domain": domain,
         "status": status,
-        "compact": compact.unwrap_or(true)
+        "compact": compact.unwrap_or(true),
+        "namespace": namespace,
+        "all_namespaces": all_namespaces.unwrap_or(false)
     });
 
     match bridge.invoke("tasks_list", Some(params)).await {
@@ -82,15 +86,21 @@ pub async fn tasks_show(
     state: State<'_, AppState>,
     task_id: String,
     domain: Option<String>,
+    namespace: Option<String>,
 ) -> Result<TaskResponse, String> {
     let bridge = state.bridge.lock().await;
 
     let params = json!({
         "task": task_id,
-        "domain": domain
+        "domain": domain,
+        "namespace": namespace
     });
 
-    log::info!("tasks_show called with task_id: {}", task_id);
+    log::info!(
+        "tasks_show called with task_id: {}, namespace: {:?}",
+        task_id,
+        namespace
+    );
 
     match bridge.invoke("tasks_show", Some(params)).await {
         Ok(result) => {
@@ -233,19 +243,31 @@ pub async fn ai_intent(
 pub async fn tasks_create(
     state: State<'_, AppState>,
     title: String,
+    parent: Option<String>,
     description: Option<String>,
     priority: Option<String>,
+    tags: Option<Vec<String>>,
     subtasks: Option<Vec<Value>>,
     domain: Option<String>,
+    phase: Option<String>,
+    component: Option<String>,
+    context: Option<String>,
+    namespace: Option<String>,
 ) -> Result<AIResponse, String> {
     let bridge = state.bridge.lock().await;
 
     let params = json!({
         "title": title,
+        "parent": parent,
         "description": description.unwrap_or_default(),
         "priority": priority.unwrap_or_else(|| "MEDIUM".to_string()),
+        "tags": tags.unwrap_or_default(),
         "subtasks": subtasks.unwrap_or_default(),
-        "domain": domain.unwrap_or_default()
+        "domain": domain.unwrap_or_default(),
+        "phase": phase.unwrap_or_default(),
+        "component": component.unwrap_or_default(),
+        "context": context.unwrap_or_default(),
+        "namespace": namespace.unwrap_or_default()
     });
 
     match bridge.invoke("tasks_create", Some(params)).await {
@@ -276,13 +298,15 @@ pub async fn tasks_update_status(
     task_id: String,
     status: String,
     domain: Option<String>,
+    namespace: Option<String>,
 ) -> Result<AIResponse, String> {
     let bridge = state.bridge.lock().await;
 
     let params = json!({
         "task": task_id,
         "status": status,
-        "domain": domain.unwrap_or_default()
+        "domain": domain.unwrap_or_default(),
+        "namespace": namespace.unwrap_or_default()
     });
 
     match bridge.invoke("tasks_macro_update", Some(params)).await {
@@ -312,6 +336,7 @@ pub async fn tasks_checkpoint(
     checkpoint: String,
     note: String,
     domain: Option<String>,
+    namespace: Option<String>,
 ) -> Result<AIResponse, String> {
     let bridge = state.bridge.lock().await;
 
@@ -325,6 +350,7 @@ pub async fn tasks_checkpoint(
         "task": task_id,
         "path": path,
         "domain": domain.unwrap_or_default(),
+        "namespace": namespace.unwrap_or_default(),
         "checkpoints": checkpoints
     });
 
@@ -372,16 +398,111 @@ pub async fn tasks_storage(state: State<'_, AppState>) -> Result<AIResponse, Str
     }
 }
 
+/// Get AI session status (plan/current op/history)
+#[tauri::command]
+pub async fn tasks_ai_status(state: State<'_, AppState>) -> Result<AIResponse, String> {
+    let bridge = state.bridge.lock().await;
+
+    match bridge.invoke("tasks_ai_status", None).await {
+        Ok(result) => Ok(AIResponse {
+            success: true,
+            intent: "ai_status".to_string(),
+            result: Some(result),
+            suggestions: None,
+            error: None,
+        }),
+        Err(e) => Ok(AIResponse {
+            success: false,
+            intent: "ai_status".to_string(),
+            result: None,
+            suggestions: None,
+            error: Some(e.to_string()),
+        }),
+    }
+}
+
+/// Generate flagship subtasks template
+#[tauri::command]
+pub async fn tasks_template_subtasks(
+    state: State<'_, AppState>,
+    count: Option<u32>,
+) -> Result<AIResponse, String> {
+    let bridge = state.bridge.lock().await;
+
+    let params = json!({
+        "count": count.unwrap_or(3)
+    });
+
+    match bridge.invoke("tasks_template_subtasks", Some(params)).await {
+        Ok(result) => Ok(AIResponse {
+            success: result
+                .get("success")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true),
+            intent: "template_subtasks".to_string(),
+            result: Some(result),
+            suggestions: None,
+            error: None,
+        }),
+        Err(e) => Ok(AIResponse {
+            success: false,
+            intent: "template_subtasks".to_string(),
+            result: None,
+            suggestions: None,
+            error: Some(e.to_string()),
+        }),
+    }
+}
+
+/// Send a user signal to AI (pause/resume/stop/skip/message)
+#[tauri::command]
+pub async fn tasks_send_signal(
+    state: State<'_, AppState>,
+    signal: String,
+    message: Option<String>,
+) -> Result<AIResponse, String> {
+    let bridge = state.bridge.lock().await;
+
+    let params = json!({
+        "signal": signal,
+        "message": message.unwrap_or_default()
+    });
+
+    match bridge.invoke("tasks_send_signal", Some(params)).await {
+        Ok(result) => Ok(AIResponse {
+            success: result
+                .get("success")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true),
+            intent: "send_signal".to_string(),
+            result: Some(result),
+            suggestions: None,
+            error: None,
+        }),
+        Err(e) => Ok(AIResponse {
+            success: false,
+            intent: "send_signal".to_string(),
+            result: None,
+            suggestions: None,
+            error: Some(e.to_string()),
+        }),
+    }
+}
+
 /// Delete a task
 #[tauri::command]
 pub async fn tasks_delete(
     state: State<'_, AppState>,
     task_id: String,
+    domain: Option<String>,
+    namespace: Option<String>,
 ) -> Result<AIResponse, String> {
     let bridge = state.bridge.lock().await;
 
     let params = json!({
-        "task": task_id
+        "task": task_id,
+        "domain": domain.unwrap_or_default(),
+        "namespace": namespace.unwrap_or_default()
     });
 
     match bridge.invoke("tasks_delete", Some(params)).await {

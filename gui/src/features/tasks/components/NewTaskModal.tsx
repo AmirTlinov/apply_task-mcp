@@ -2,22 +2,102 @@
  * New Task Modal - Create new task form
  */
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { X, Plus, Loader2 } from "lucide-react";
-import { createTask } from "@/lib/tauri";
+import { createTask, getSubtasksTemplate } from "@/lib/tauri";
+import type { Namespace } from "@/types/task";
 
 interface NewTaskModalProps {
   isOpen: boolean;
   onClose: () => void;
   onTaskCreated?: () => void;
+  namespaces?: Namespace[];
+  selectedNamespace?: string | null;
+  defaultNamespace?: string | null;
 }
 
-export function NewTaskModal({ isOpen, onClose, onTaskCreated }: NewTaskModalProps) {
+type DraftSubtask = {
+  title: string;
+  criteria: string[];
+  tests: string[];
+  blockers: string[];
+};
+
+function normalizeListInput(value: string): string[] {
+  return value
+    .split(/[\n;]+/g)
+    .map((v) => v.trim())
+    .filter(Boolean);
+}
+
+export function NewTaskModal({
+  isOpen,
+  onClose,
+  onTaskCreated,
+  namespaces = [],
+  selectedNamespace = null,
+  defaultNamespace = null,
+}: NewTaskModalProps) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [domain, setDomain] = useState("");
+  const [priority, setPriority] = useState<"LOW" | "MEDIUM" | "HIGH" | "CRITICAL">("MEDIUM");
+  const [tagsText, setTagsText] = useState("");
+  const [namespace, setNamespace] = useState("");
+  const [subtasks, setSubtasks] = useState<DraftSubtask[]>([]);
+  const [isTemplateLoading, setIsTemplateLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const initial =
+      selectedNamespace ||
+      defaultNamespace ||
+      (namespaces.length === 1 ? namespaces[0].namespace : "");
+    setNamespace(initial);
+  }, [isOpen, selectedNamespace, defaultNamespace, namespaces]);
+
+  const handleLoadTemplate = useCallback(async () => {
+    setIsTemplateLoading(true);
+    setError(null);
+    try {
+      const count = Math.max(3, subtasks.length || 3);
+      const response = await getSubtasksTemplate(count);
+      if (!response.success) {
+        throw new Error(response.error || "Failed to load template");
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const payload = (response.result as any)?.payload;
+      const template = payload?.template;
+      if (!Array.isArray(template)) {
+        throw new Error("Invalid template format");
+      }
+      setSubtasks(
+        template.map((t: any) => ({
+          title: String(t.title || ""),
+          criteria: Array.isArray(t.criteria) ? t.criteria.map(String) : [],
+          tests: Array.isArray(t.tests) ? t.tests.map(String) : [],
+          blockers: Array.isArray(t.blockers) ? t.blockers.map(String) : [],
+        }))
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unknown error");
+    } finally {
+      setIsTemplateLoading(false);
+    }
+  }, [subtasks.length]);
+
+  const handleAddSubtask = useCallback(() => {
+    setSubtasks((prev) => [
+      ...prev,
+      { title: "", criteria: [], tests: [], blockers: [] },
+    ]);
+  }, []);
+
+  const handleRemoveSubtask = useCallback((index: number) => {
+    setSubtasks((prev) => prev.filter((_, i) => i !== index));
+  }, []);
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
@@ -31,14 +111,25 @@ export function NewTaskModal({ isOpen, onClose, onTaskCreated }: NewTaskModalPro
     setError(null);
 
     try {
+      const tags = normalizeListInput(tagsText.replace(/,/g, "\n"));
+      const sanitizedSubtasks = subtasks
+        .map((st) => ({
+          title: st.title.trim(),
+          criteria: st.criteria.map((c) => c.trim()).filter(Boolean),
+          tests: st.tests.map((t) => t.trim()).filter(Boolean),
+          blockers: st.blockers.map((b) => b.trim()).filter(Boolean),
+        }))
+        .filter((st) => st.title.length > 0);
+
       const response = await createTask({
         title: title.trim(),
         parent: "ROOT",
-        description: description.trim(),
-        tests: [],
-        risks: [],
-        subtasks: [],
+        description: description.trim() || undefined,
+        priority,
+        tags: tags.length ? tags : undefined,
+        subtasks: sanitizedSubtasks.length ? sanitizedSubtasks : undefined,
         domain: domain.trim() || undefined,
+        namespace: namespace.trim() || undefined,
       });
 
       if (response.success) {
@@ -46,6 +137,9 @@ export function NewTaskModal({ isOpen, onClose, onTaskCreated }: NewTaskModalPro
         setTitle("");
         setDescription("");
         setDomain("");
+        setPriority("MEDIUM");
+        setTagsText("");
+        setSubtasks([]);
         onClose();
         onTaskCreated?.();
       } else {
@@ -56,13 +150,16 @@ export function NewTaskModal({ isOpen, onClose, onTaskCreated }: NewTaskModalPro
     } finally {
       setIsSubmitting(false);
     }
-  }, [title, description, domain, onClose, onTaskCreated]);
+  }, [title, description, domain, priority, tagsText, subtasks, namespace, onClose, onTaskCreated]);
 
   const handleClose = useCallback(() => {
     if (!isSubmitting) {
       setTitle("");
       setDescription("");
       setDomain("");
+      setPriority("MEDIUM");
+      setTagsText("");
+      setSubtasks([]);
       setError(null);
       onClose();
     }
@@ -259,6 +356,309 @@ export function NewTaskModal({ isOpen, onClose, onTaskCreated }: NewTaskModalPro
                   outline: "none",
                 }}
               />
+            </div>
+
+            {/* Priority */}
+            <div>
+              <label
+                htmlFor="task-priority"
+                style={{
+                  display: "block",
+                  fontSize: "12px",
+                  fontWeight: 500,
+                  color: "var(--color-foreground-muted)",
+                  marginBottom: "6px",
+                }}
+              >
+                Priority
+              </label>
+              <select
+                id="task-priority"
+                value={priority}
+                onChange={(e) => setPriority(e.target.value as typeof priority)}
+                disabled={isSubmitting}
+                style={{
+                  width: "100%",
+                  padding: "10px 12px",
+                  borderRadius: "8px",
+                  border: "1px solid var(--color-border)",
+                  backgroundColor: "var(--color-background)",
+                  fontSize: "14px",
+                  color: "var(--color-foreground)",
+                  outline: "none",
+                }}
+              >
+                <option value="LOW">LOW</option>
+                <option value="MEDIUM">MEDIUM</option>
+                <option value="HIGH">HIGH</option>
+                <option value="CRITICAL">CRITICAL</option>
+              </select>
+            </div>
+
+            {/* Tags */}
+            <div>
+              <label
+                htmlFor="task-tags"
+                style={{
+                  display: "block",
+                  fontSize: "12px",
+                  fontWeight: 500,
+                  color: "var(--color-foreground-muted)",
+                  marginBottom: "6px",
+                }}
+              >
+                Tags (comma / newline separated)
+              </label>
+              <input
+                id="task-tags"
+                type="text"
+                value={tagsText}
+                onChange={(e) => setTagsText(e.target.value)}
+                placeholder="e.g., ui, mcp, infra"
+                disabled={isSubmitting}
+                style={{
+                  width: "100%",
+                  padding: "10px 12px",
+                  borderRadius: "8px",
+                  border: "1px solid var(--color-border)",
+                  backgroundColor: "var(--color-background)",
+                  fontSize: "14px",
+                  color: "var(--color-foreground)",
+                  outline: "none",
+                }}
+              />
+            </div>
+
+            {/* Namespace */}
+            {namespaces.length > 0 && (
+              <div>
+                <label
+                  htmlFor="task-namespace"
+                  style={{
+                    display: "block",
+                    fontSize: "12px",
+                    fontWeight: 500,
+                    color: "var(--color-foreground-muted)",
+                    marginBottom: "6px",
+                  }}
+                >
+                  Project / Namespace
+                </label>
+                <select
+                  id="task-namespace"
+                  value={namespace}
+                  onChange={(e) => setNamespace(e.target.value)}
+                  disabled={isSubmitting}
+                  style={{
+                    width: "100%",
+                    padding: "10px 12px",
+                    borderRadius: "8px",
+                    border: "1px solid var(--color-border)",
+                    backgroundColor: "var(--color-background)",
+                    fontSize: "14px",
+                    color: "var(--color-foreground)",
+                    outline: "none",
+                  }}
+                >
+                  <option value="">Current project</option>
+                  {namespaces.map((ns) => (
+                    <option key={ns.namespace} value={ns.namespace}>
+                      {ns.namespace} ({ns.task_count})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Subtasks */}
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <label
+                  style={{
+                    display: "block",
+                    fontSize: "12px",
+                    fontWeight: 600,
+                    color: "var(--color-foreground)",
+                  }}
+                >
+                  Subtasks
+                </label>
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <button
+                    type="button"
+                    onClick={handleLoadTemplate}
+                    disabled={isSubmitting || isTemplateLoading}
+                    style={{
+                      padding: "6px 10px",
+                      borderRadius: "6px",
+                      border: "1px solid var(--color-border)",
+                      backgroundColor: "transparent",
+                      fontSize: "12px",
+                      cursor: isSubmitting || isTemplateLoading ? "not-allowed" : "pointer",
+                      opacity: isSubmitting || isTemplateLoading ? 0.6 : 1,
+                    }}
+                  >
+                    {isTemplateLoading ? "Loading template..." : "Load template"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAddSubtask}
+                    disabled={isSubmitting}
+                    style={{
+                      padding: "6px 10px",
+                      borderRadius: "6px",
+                      border: "1px solid var(--color-border)",
+                      backgroundColor: "transparent",
+                      fontSize: "12px",
+                      cursor: isSubmitting ? "not-allowed" : "pointer",
+                      opacity: isSubmitting ? 0.6 : 1,
+                    }}
+                  >
+                    Add subtask
+                  </button>
+                </div>
+              </div>
+
+              {subtasks.length === 0 && (
+                <div style={{ fontSize: "12px", color: "var(--color-foreground-muted)" }}>
+                  No subtasks yet. Add manually or load template.
+                </div>
+              )}
+
+              {subtasks.map((st, idx) => (
+                <div
+                  key={idx}
+                  style={{
+                    border: "1px solid var(--color-border)",
+                    borderRadius: "8px",
+                    padding: "12px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "8px",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <div style={{ fontSize: "12px", fontWeight: 600 }}>
+                      #{idx + 1}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveSubtask(idx)}
+                      disabled={isSubmitting}
+                      style={{
+                        padding: "4px 6px",
+                        borderRadius: "6px",
+                        border: "1px solid var(--color-border)",
+                        backgroundColor: "transparent",
+                        fontSize: "11px",
+                        cursor: isSubmitting ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+
+                  <input
+                    type="text"
+                    value={st.title}
+                    onChange={(e) =>
+                      setSubtasks((prev) =>
+                        prev.map((p, i) => (i === idx ? { ...p, title: e.target.value } : p))
+                      )
+                    }
+                    placeholder="Subtask title..."
+                    disabled={isSubmitting}
+                    style={{
+                      width: "100%",
+                      padding: "8px 10px",
+                      borderRadius: "6px",
+                      border: "1px solid var(--color-border)",
+                      backgroundColor: "var(--color-background)",
+                      fontSize: "13px",
+                      color: "var(--color-foreground)",
+                      outline: "none",
+                    }}
+                  />
+
+                  <textarea
+                    value={st.criteria.join("\n")}
+                    onChange={(e) =>
+                      setSubtasks((prev) =>
+                        prev.map((p, i) =>
+                          i === idx ? { ...p, criteria: normalizeListInput(e.target.value) } : p
+                        )
+                      )
+                    }
+                    placeholder="Success criteria (one per line)..."
+                    rows={2}
+                    disabled={isSubmitting}
+                    style={{
+                      width: "100%",
+                      padding: "8px 10px",
+                      borderRadius: "6px",
+                      border: "1px solid var(--color-border)",
+                      backgroundColor: "var(--color-background)",
+                      fontSize: "13px",
+                      color: "var(--color-foreground)",
+                      outline: "none",
+                      resize: "vertical",
+                      fontFamily: "inherit",
+                    }}
+                  />
+
+                  <textarea
+                    value={st.tests.join("\n")}
+                    onChange={(e) =>
+                      setSubtasks((prev) =>
+                        prev.map((p, i) =>
+                          i === idx ? { ...p, tests: normalizeListInput(e.target.value) } : p
+                        )
+                      )
+                    }
+                    placeholder="Tests (commands/assertions)..."
+                    rows={2}
+                    disabled={isSubmitting}
+                    style={{
+                      width: "100%",
+                      padding: "8px 10px",
+                      borderRadius: "6px",
+                      border: "1px solid var(--color-border)",
+                      backgroundColor: "var(--color-background)",
+                      fontSize: "13px",
+                      color: "var(--color-foreground)",
+                      outline: "none",
+                      resize: "vertical",
+                      fontFamily: "inherit",
+                    }}
+                  />
+
+                  <textarea
+                    value={st.blockers.join("\n")}
+                    onChange={(e) =>
+                      setSubtasks((prev) =>
+                        prev.map((p, i) =>
+                          i === idx ? { ...p, blockers: normalizeListInput(e.target.value) } : p
+                        )
+                      )
+                    }
+                    placeholder="Blockers/dependencies..."
+                    rows={2}
+                    disabled={isSubmitting}
+                    style={{
+                      width: "100%",
+                      padding: "8px 10px",
+                      borderRadius: "6px",
+                      border: "1px solid var(--color-border)",
+                      backgroundColor: "var(--color-background)",
+                      fontSize: "13px",
+                      color: "var(--color-foreground)",
+                      outline: "none",
+                      resize: "vertical",
+                      fontFamily: "inherit",
+                    }}
+                  />
+                </div>
+              ))}
             </div>
           </div>
 

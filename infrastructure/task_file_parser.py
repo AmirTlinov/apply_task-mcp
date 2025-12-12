@@ -7,6 +7,7 @@ import yaml
 
 from core import SubTask, TaskDetail
 from core.task_event import TaskEvent
+from core.status import task_status_code
 
 
 class TaskFileParser:
@@ -26,7 +27,7 @@ class TaskFileParser:
         task = TaskDetail(
             id=metadata.get("id", ""),
             title=metadata.get("title", ""),
-            status=metadata.get("status", "FAIL"),
+            status=cls._parse_status(metadata.get("status", "FAIL")),
             status_manual=bool(metadata.get("status_manual", False)),
             domain=metadata.get("domain", "") or "",
             phase=metadata.get("phase", "") or "",
@@ -80,6 +81,13 @@ class TaskFileParser:
         except Exception:
             pass
         return task
+
+    @staticmethod
+    def _parse_status(raw: str) -> str:
+        try:
+            return task_status_code(raw or "FAIL")
+        except ValueError:
+            return "FAIL"
 
     @classmethod
     def _save_section(cls, task: TaskDetail, section: str, lines: List[str]) -> None:

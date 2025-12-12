@@ -33,6 +33,7 @@ from infrastructure.token_status_cache import (
     should_show_projects_warning,
     mark_projects_warning_shown,
 )
+from core.status import task_status_label
 
 PROJECT_ROOT = Path(os.environ.get("APPLY_TASK_PROJECT_ROOT") or Path.cwd()).resolve()
 GRAPHQL_URL = "https://api.github.com/graphql"
@@ -977,7 +978,8 @@ class ProjectsSync:
                 continue
             value = None
             if field["typename"] == "ProjectV2SingleSelectField":
-                desired = field_cfg.options.get(task.status)
+                status_ui = task_status_label(task.status)
+                desired = field_cfg.options.get(status_ui) or field_cfg.options.get(task.status)
                 option_id = field["options"].get(desired)
                 if option_id:
                     value = {"singleSelectOptionId": option_id}
@@ -1047,7 +1049,7 @@ class ProjectsSync:
         lines = [
             f"# {task.id}: {task.title}",
             "",
-            f"- Status: {task.status}",
+            f"- Status: {task_status_label(task.status)}",
             f"- Domain: {task.domain or '—'}",
             f"- Progress: {task.calculate_progress()}%",
         ]

@@ -269,12 +269,12 @@ class TaskTrackerTUI(ClipboardMixin, CheckpointMixin, EditingMixin, DisplayMixin
 
         @kb.add("2")
         def _(event):
-            self.current_filter = Status.WARN  # IN PROGRESS
+            self.current_filter = Status.WARN  # ACTIVE
             self.selected_index = 0
 
         @kb.add("3")
         def _(event):
-            self.current_filter = Status.FAIL  # BACKLOG
+            self.current_filter = Status.FAIL  # TODO
             self.selected_index = 0
 
         @kb.add("4")
@@ -1598,7 +1598,7 @@ class TaskTrackerTUI(ClipboardMixin, CheckpointMixin, EditingMixin, DisplayMixin
                 self.force_render()
 
     def toggle_task_completion(self):
-        """Переключить статус задачи между ACTIVE и OK"""
+        """Переключить статус задачи между ACTIVE и DONE"""
         if not self.filtered_tasks or self.selected_index >= len(self.filtered_tasks):
             return
         if self.project_mode:
@@ -1606,9 +1606,9 @@ class TaskTrackerTUI(ClipboardMixin, CheckpointMixin, EditingMixin, DisplayMixin
             return
         task = self.filtered_tasks[self.selected_index]
         domain = getattr(task, "domain", "")
-        # Toggle: OK -> ACTIVE, anything else -> OK
+        # Toggle: DONE -> ACTIVE, anything else -> DONE
         # task.status is Status enum, not string!
-        new_status = "ACTIVE" if task.status == Status.OK else "OK"
+        new_status = "ACTIVE" if task.status == Status.OK else "DONE"
         # force=True - пользователь может отметить без проверки подзадач
         ok, error = self.manager.update_task_status(task.id, new_status, domain, force=True)
         if not ok:

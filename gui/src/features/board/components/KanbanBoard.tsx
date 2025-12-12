@@ -7,6 +7,7 @@ import { Plus, MoreHorizontal, GripVertical, SortAsc, SortDesc, Filter, Archive 
 import type { TaskListItem, TaskStatus } from "@/types/task";
 import { EmptyState } from "@/components/common/EmptyState";
 import { DropdownMenu } from "@/components/common/DropdownMenu";
+import { toast } from "@/components/common/Toast";
 
 interface KanbanBoardProps {
   tasks: TaskListItem[];
@@ -16,7 +17,7 @@ interface KanbanBoardProps {
   isLoading?: boolean;
 }
 
-type StatusColumn = "BACKLOG" | "IN_PROGRESS" | "DONE";
+type StatusColumn = "TODO" | "ACTIVE" | "DONE";
 
 interface ColumnConfig {
   id: StatusColumn;
@@ -29,26 +30,26 @@ interface ColumnConfig {
 
 const columns: ColumnConfig[] = [
   {
-    id: "BACKLOG",
-    title: "Backlog",
-    statusFilter: ["FAIL"],
-    targetStatus: "FAIL",
-    color: "var(--color-status-fail)",
-    bgColor: "var(--color-status-fail-subtle)",
+    id: "TODO",
+    title: "TODO",
+    statusFilter: ["TODO"],
+    targetStatus: "TODO",
+    color: "var(--color-foreground-subtle)",
+    bgColor: "var(--color-background-muted)",
   },
   {
-    id: "IN_PROGRESS",
-    title: "In Progress",
-    statusFilter: ["WARN"],
-    targetStatus: "WARN",
-    color: "var(--color-status-warn)",
-    bgColor: "var(--color-status-warn-subtle)",
+    id: "ACTIVE",
+    title: "ACTIVE",
+    statusFilter: ["ACTIVE"],
+    targetStatus: "ACTIVE",
+    color: "var(--color-primary)",
+    bgColor: "var(--color-primary-subtle)",
   },
   {
     id: "DONE",
-    title: "Done",
-    statusFilter: ["OK"],
-    targetStatus: "OK",
+    title: "DONE",
+    statusFilter: ["DONE"],
+    targetStatus: "DONE",
     color: "var(--color-status-ok)",
     bgColor: "var(--color-status-ok-subtle)",
   },
@@ -64,6 +65,14 @@ export function KanbanBoard({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const [dragOverColumn, setDragOverColumn] = useState<StatusColumn | null>(null);
+	  const [sortDirection, setSortDirection] = useState<"asc" | "desc" | null>(null);
+	  const [columnFilters, setColumnFilters] = useState<Record<StatusColumn, string>>({
+	    TODO: "",
+	    ACTIVE: "",
+	    DONE: "",
+	  });
+  const [editingFilterColumn, setEditingFilterColumn] = useState<StatusColumn | null>(null);
+  const [hideDoneTasks, setHideDoneTasks] = useState(false);
 
   const handleClick = (taskId: string) => {
     setSelectedId(taskId);
@@ -93,6 +102,27 @@ export function KanbanBoard({
     setDraggedTaskId(null);
     setDragOverColumn(null);
   }, [draggedTaskId, tasks, onStatusChange]);
+
+  const handleSort = (dir: "asc" | "desc") => {
+    setSortDirection(dir);
+    toast.info(dir === "asc" ? "Sorted A–Z" : "Sorted Z–A");
+  };
+
+  const toggleFilterForColumn = (columnId: StatusColumn) => {
+    setEditingFilterColumn((prev) => (prev === columnId ? null : columnId));
+  };
+
+  const setFilterForColumn = (columnId: StatusColumn, value: string) => {
+    setColumnFilters((prev) => ({ ...prev, [columnId]: value }));
+  };
+
+  const toggleHideDone = () => {
+    setHideDoneTasks((prev) => {
+      const next = !prev;
+      toast.info(next ? "Done tasks hidden from board" : "Done tasks visible");
+      return next;
+    });
+  };
 
   if (isLoading) {
     return (
@@ -132,9 +162,27 @@ export function KanbanBoard({
       }}
     >
       {columns.map((column) => {
-        const columnTasks = tasks.filter((t) =>
-          column.statusFilter.includes(t.status)
-        );
+        let columnTasks = tasks.filter((t) => column.statusFilter.includes(t.status));
+
+        const filterValue = columnFilters[column.id];
+        if (filterValue) {
+          const q = filterValue.toLowerCase();
+          columnTasks = columnTasks.filter(
+            (t) => t.title.toLowerCase().includes(q) || t.id.toLowerCase().includes(q)
+          );
+        }
+
+        if (column.id === "DONE" && hideDoneTasks) {
+          columnTasks = [];
+        }
+
+        if (sortDirection) {
+          columnTasks = [...columnTasks].sort((a, b) =>
+            sortDirection === "asc"
+              ? a.title.localeCompare(b.title)
+              : b.title.localeCompare(a.title)
+          );
+        }
 
         return (
           <KanbanColumn
@@ -145,11 +193,18 @@ export function KanbanBoard({
             draggedTaskId={draggedTaskId}
             isDragOver={dragOverColumn === column.id}
             onTaskClick={handleClick}
-            onNewTask={column.id === "BACKLOG" ? onNewTask : undefined}
+	            onNewTask={column.id === "TODO" ? onNewTask : undefined}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
             onDragOver={() => handleDragOver(column.id)}
             onDrop={() => handleDrop(column.targetStatus)}
+            onSort={handleSort}
+            onToggleFilter={() => toggleFilterForColumn(column.id)}
+            filterValue={columnFilters[column.id]}
+            isFilterEditing={editingFilterColumn === column.id}
+            onFilterChange={(v) => setFilterForColumn(column.id, v)}
+            hideDoneTasks={hideDoneTasks}
+            onToggleHideDone={toggleHideDone}
           />
         );
       })}
@@ -169,6 +224,13 @@ interface KanbanColumnProps {
   onDragEnd: () => void;
   onDragOver: () => void;
   onDrop: () => void;
+  onSort: (dir: "asc" | "desc") => void;
+  onToggleFilter: () => void;
+  filterValue: string;
+  isFilterEditing: boolean;
+  onFilterChange: (value: string) => void;
+  hideDoneTasks: boolean;
+  onToggleHideDone: () => void;
 }
 
 function KanbanColumn({
@@ -183,6 +245,13 @@ function KanbanColumn({
   onDragEnd,
   onDragOver,
   onDrop,
+  onSort,
+  onToggleFilter,
+  filterValue,
+  isFilterEditing,
+  onFilterChange,
+  hideDoneTasks,
+  onToggleHideDone,
 }: KanbanColumnProps) {
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -274,35 +343,82 @@ function KanbanColumn({
               />
             </button>
           }
-          items={[
-            {
-              label: "Sort A-Z",
-              icon: <SortAsc style={{ width: "14px", height: "14px" }} />,
-              onClick: () => console.log("Sort A-Z"),
-            },
-            {
-              label: "Sort Z-A",
-              icon: <SortDesc style={{ width: "14px", height: "14px" }} />,
-              onClick: () => console.log("Sort Z-A"),
-            },
-            { type: "separator" as const },
-            {
-              label: "Filter tasks",
-              icon: <Filter style={{ width: "14px", height: "14px" }} />,
-              onClick: () => console.log("Filter"),
-            },
-            {
-              label: "Archive all done",
-              icon: <Archive style={{ width: "14px", height: "14px" }} />,
-              onClick: () => console.log("Archive"),
-              disabled: config.id !== "DONE",
-            },
-          ]}
-        />
-      </div>
+	          items={[
+	            {
+	              label: "Sort A-Z",
+	              icon: <SortAsc style={{ width: "14px", height: "14px" }} />,
+	              onClick: () => onSort("asc"),
+	            },
+	            {
+	              label: "Sort Z-A",
+	              icon: <SortDesc style={{ width: "14px", height: "14px" }} />,
+	              onClick: () => onSort("desc"),
+	            },
+	            { type: "separator" as const },
+	            {
+	              label: filterValue ? "Edit filter" : "Filter tasks",
+	              icon: <Filter style={{ width: "14px", height: "14px" }} />,
+	              onClick: onToggleFilter,
+	            },
+	            {
+	              label: hideDoneTasks ? "Show done tasks" : "Hide done tasks",
+	              icon: <Archive style={{ width: "14px", height: "14px" }} />,
+	              onClick: onToggleHideDone,
+	              disabled: config.id !== "DONE",
+	            },
+	          ]}
+		        />
+	      </div>
 
-      {/* Column content */}
-      <div
+	      {isFilterEditing && (
+	        <div
+	          style={{
+	            padding: "8px 12px",
+	            borderBottom: "1px solid var(--color-border)",
+	            backgroundColor: "var(--color-background)",
+	          }}
+	        >
+	          <input
+	            value={filterValue}
+	            onChange={(e) => onFilterChange(e.target.value)}
+	            placeholder="Filter tasks in this column..."
+	            autoFocus
+	            style={{
+	              width: "100%",
+	              fontSize: "12px",
+	              padding: "6px 8px",
+	              borderRadius: "6px",
+	              border: "1px solid var(--color-border)",
+	              backgroundColor: "var(--color-background)",
+	            }}
+	            onKeyDown={(e) => {
+	              if (e.key === "Escape") {
+	                onToggleFilter();
+	              }
+	            }}
+	          />
+	          {filterValue && (
+	            <button
+	              onClick={() => onFilterChange("")}
+	              style={{
+	                marginTop: "6px",
+	                fontSize: "11px",
+	                padding: "4px 6px",
+	                borderRadius: "6px",
+	                border: "none",
+	                backgroundColor: "transparent",
+	                color: "var(--color-foreground-muted)",
+	                cursor: "pointer",
+	              }}
+	            >
+	              Clear filter
+	            </button>
+	          )}
+	        </div>
+	      )}
+
+	      {/* Column content */}
+	      <div
         style={{
           flex: 1,
           overflowY: "auto",
@@ -407,25 +523,29 @@ function KanbanCard({ task, isSelected, isDragging, onClick, onDragStart, onDrag
       role="button"
       style={{
         padding: "12px",
-        borderRadius: "10px",
+        borderRadius: "12px",
         backgroundColor: isSelected ? "var(--color-primary-subtle)" : "var(--color-background)",
-        border: `1px solid ${isSelected ? "var(--color-primary)" : "var(--color-border)"}`,
+        border: "none",
         cursor: isDragging ? "grabbing" : "grab",
-        boxShadow: isSelected ? "0 0 0 3px var(--color-primary-subtle)" : "var(--shadow-sm)",
-        opacity: isDragging ? 0.5 : 1,
-        transform: isDragging ? "rotate(3deg)" : "none",
-        transition: "all 150ms ease",
+        boxShadow: isSelected
+          ? "0 0 0 2px var(--color-primary), var(--shadow-md)"
+          : isDragging
+            ? "var(--shadow-lg)"
+            : "var(--shadow-sm)",
+        opacity: isDragging ? 0.7 : 1,
+        transform: isDragging ? "rotate(2deg) scale(1.02)" : "none",
+        transition: "all 180ms cubic-bezier(0.32, 0.72, 0, 1)",
       }}
       onMouseEnter={(e) => {
         if (!isSelected && !isDragging) {
-          e.currentTarget.style.borderColor = "var(--color-foreground-subtle)";
           e.currentTarget.style.boxShadow = "var(--shadow-md)";
+          e.currentTarget.style.transform = "translateY(-2px)";
         }
       }}
       onMouseLeave={(e) => {
         if (!isSelected && !isDragging) {
-          e.currentTarget.style.borderColor = "var(--color-border)";
           e.currentTarget.style.boxShadow = "var(--shadow-sm)";
+          e.currentTarget.style.transform = "none";
         }
       }}
     >

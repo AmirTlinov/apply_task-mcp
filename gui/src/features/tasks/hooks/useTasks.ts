@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listTasks, getStorage, updateTaskStatus as apiUpdateTaskStatus, deleteTask as apiDeleteTask } from "@/lib/tauri";
 import type { TaskListItem, TaskStatus, Namespace, StorageInfo } from "@/types/task";
+import { toast } from "@/components/common/Toast";
 
 interface UseTasksResult {
   tasks: TaskListItem[];
@@ -17,11 +18,13 @@ interface UseTasksResult {
 interface UseTasksParams {
   domain?: string;
   status?: string;
+  namespace?: string | null;
+  allNamespaces?: boolean;
 }
 
 export function useTasks(params?: UseTasksParams): UseTasksResult {
   const queryClient = useQueryClient();
-  const queryKey = ["tasks", params?.domain, params?.status];
+  const queryKey = ["tasks", params?.domain, params?.status, params?.namespace, params?.allNamespaces];
 
   // Tasks Query
   const tasksQuery = useQuery({
@@ -31,6 +34,8 @@ export function useTasks(params?: UseTasksParams): UseTasksResult {
         domain: params?.domain,
         status: params?.status,
         compact: true,
+        namespace: params?.namespace ?? undefined,
+        allNamespaces: params?.allNamespaces ?? false,
       });
       if (!response.success) {
         throw new Error(response.error || "Failed to load tasks");
@@ -47,7 +52,8 @@ export function useTasks(params?: UseTasksParams): UseTasksResult {
           // Keep original task_id for API calls
           task_id: taskId,
           title: t.title,
-          status: t.status || "FAIL",
+          status: t.status || "TODO",
+          status_code: t.status_code,
           progress: t.progress || 0,
           subtask_count: t.subtask_count || t.subtasks?.length || 0,
           completed_count: t.completed_count || 0,
@@ -86,7 +92,14 @@ export function useTasks(params?: UseTasksParams): UseTasksResult {
   // Mutations
   const updateStatusMutation = useMutation({
     mutationFn: async ({ taskId, newStatus }: { taskId: string; newStatus: TaskStatus }) => {
-      const response = await apiUpdateTaskStatus(taskId, newStatus);
+      // taskId here is the UI id (namespace/TASK-XXX), need to find the actual task_id and namespace
+      const tasks = queryClient.getQueryData<TaskListItem[]>(queryKey) || [];
+      const task = tasks.find((t) => t.id === taskId);
+      const actualTaskId = task?.task_id || taskId.split("/").pop() || taskId;
+      const namespace = task?.namespace;
+      const domain = task?.domain;
+
+      const response = await apiUpdateTaskStatus(actualTaskId, newStatus, domain, namespace);
       if (!response.success) throw new Error(response.error);
       return response;
     },
@@ -101,7 +114,6 @@ export function useTasks(params?: UseTasksParams): UseTasksResult {
               ? {
                 ...task,
                 status: newStatus,
-                progress: newStatus === "OK" ? 100 : newStatus === "WARN" ? 50 : 0,
                 updated_at: new Date().toISOString(),
               }
               : task
@@ -114,20 +126,30 @@ export function useTasks(params?: UseTasksParams): UseTasksResult {
       if (context?.previousTasks) {
         queryClient.setQueryData(queryKey, context.previousTasks);
       }
-      console.error("Error updating task status:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to update task status");
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey });
     },
   });
 
-  const deleteMutation = useMutation({
-    mutationFn: async (taskId: string) => {
-      const response = await apiDeleteTask(taskId);
+	  const deleteMutation = useMutation({
+	    mutationFn: async (taskId: string) => {
+      // taskId here is the UI id (namespace/TASK-XXX), need to find the actual task_id and namespace
+      const tasks = queryClient.getQueryData<TaskListItem[]>(queryKey) || [];
+      const task = tasks.find((t) => t.id === taskId);
+      const actualTaskId = task?.task_id || taskId.split("/").pop() || taskId;
+      // Pass namespace as domain for cross-namespace operations
+      const namespace = task?.namespace;
+
+      const response = await apiDeleteTask(actualTaskId, task?.domain, namespace);
       if (!response.success) throw new Error(response.error);
-      return response;
-    },
-    onMutate: async (taskId) => {
+	      return response;
+	    },
+	    onSuccess: () => {
+	      toast.success("Task deleted");
+	    },
+	    onMutate: async (taskId) => {
       await queryClient.cancelQueries({ queryKey });
       const previousTasks = queryClient.getQueryData<TaskListItem[]>(queryKey);
 
@@ -142,7 +164,7 @@ export function useTasks(params?: UseTasksParams): UseTasksResult {
       if (context?.previousTasks) {
         queryClient.setQueryData(queryKey, context.previousTasks);
       }
-      console.error("Error deleting task:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to delete task");
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey });

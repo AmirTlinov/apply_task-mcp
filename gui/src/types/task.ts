@@ -4,7 +4,10 @@
  */
 
 /** Task status enum */
-export type TaskStatus = "OK" | "WARN" | "FAIL";
+export type TaskStatus = "TODO" | "ACTIVE" | "DONE";
+
+/** Internal backend status codes (legacy) */
+export type TaskStatusCode = "OK" | "WARN" | "FAIL";
 
 /** Phase 1: Subtask status enum */
 export type SubtaskStatus = "pending" | "in_progress" | "blocked" | "completed";
@@ -36,6 +39,17 @@ export interface SubTask {
 
   /** Dependencies/blockers */
   blockers: string[];
+
+  /** Checkpoint confirmations (from backend) */
+  criteria_confirmed?: boolean;
+  tests_confirmed?: boolean;
+  blockers_resolved?: boolean;
+  criteria_notes?: string[];
+  tests_notes?: string[];
+  blockers_notes?: string[];
+  criteria_auto_confirmed?: boolean;
+  tests_auto_confirmed?: boolean;
+  blockers_auto_resolved?: boolean;
 
   /** Whether subtask is completed */
   completed: boolean;
@@ -81,6 +95,8 @@ export interface Task {
 
   /** Current status */
   status: TaskStatus;
+  /** Internal status code (for debugging/compat) */
+  status_code?: TaskStatusCode;
 
   /** Parent task ID (or "ROOT") - may be null if no parent */
   parent: string | null;
@@ -133,6 +149,7 @@ export interface TaskListItem {
   task_id?: string;
   title: string;
   status: TaskStatus;
+  status_code?: TaskStatusCode;
   progress: number;
   subtask_count: number;
   completed_count: number;

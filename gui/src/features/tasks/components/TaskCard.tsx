@@ -1,10 +1,8 @@
-import { useState, useEffect } from "react";
-import { CheckCircle2, Circle, ChevronRight, Check, AlertTriangle, X, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { CheckCircle2, Circle, ChevronRight, Check, Clock, Trash2 } from "lucide-react";
 import type { TaskListItem, TaskStatus } from "@/types/task";
-import { showTask } from "@/lib/tauri";
-
-// DEBUG: Auto-test showTask on first card mount
-let hasTestedShowTask = false;
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
+import { TASK_STATUS_UI } from "@/lib/taskStatus";
 
 interface TaskCardProps {
   task: TaskListItem;
@@ -15,25 +13,25 @@ interface TaskCardProps {
 }
 
 const statusConfig: Record<
-  string,
+  TaskStatus,
   { bg: string; text: string; dot: string; dotClass: string }
 > = {
-  OK: {
-    bg: "var(--color-status-ok-subtle)",
-    text: "var(--color-status-ok)",
-    dot: "var(--color-status-ok)",
+  DONE: {
+    bg: TASK_STATUS_UI.DONE.colors.bg,
+    text: TASK_STATUS_UI.DONE.colors.text,
+    dot: TASK_STATUS_UI.DONE.colors.dot,
     dotClass: "status-dot status-dot-ok",
   },
-  WARN: {
-    bg: "var(--color-status-warn-subtle)",
-    text: "var(--color-status-warn)",
-    dot: "var(--color-status-warn)",
+  ACTIVE: {
+    bg: TASK_STATUS_UI.ACTIVE.colors.bg,
+    text: TASK_STATUS_UI.ACTIVE.colors.text,
+    dot: TASK_STATUS_UI.ACTIVE.colors.dot,
     dotClass: "status-dot status-dot-warn",
   },
-  FAIL: {
-    bg: "var(--color-status-fail-subtle)",
-    text: "var(--color-status-fail)",
-    dot: "var(--color-status-fail)",
+  TODO: {
+    bg: TASK_STATUS_UI.TODO.colors.bg,
+    text: TASK_STATUS_UI.TODO.colors.text,
+    dot: TASK_STATUS_UI.TODO.colors.dot,
     dotClass: "status-dot status-dot-fail",
   },
 };
@@ -61,9 +59,9 @@ interface StatusButtonProps {
 
 function StatusButton({ status, isCurrentStatus, onClick }: StatusButtonProps) {
   const configs: Record<TaskStatus, { icon: typeof Check; color: string; bgColor: string; label: string }> = {
-    OK: { icon: Check, color: "var(--color-status-ok)", bgColor: "var(--color-status-ok-subtle)", label: "Mark as Done" },
-    WARN: { icon: AlertTriangle, color: "var(--color-status-warn)", bgColor: "var(--color-status-warn-subtle)", label: "Mark In Progress" },
-    FAIL: { icon: X, color: "var(--color-status-fail)", bgColor: "var(--color-status-fail-subtle)", label: "Mark as Blocked" },
+    DONE: { icon: Check, color: TASK_STATUS_UI.DONE.colors.text, bgColor: TASK_STATUS_UI.DONE.colors.bg, label: "Mark DONE" },
+    ACTIVE: { icon: Clock, color: TASK_STATUS_UI.ACTIVE.colors.text, bgColor: TASK_STATUS_UI.ACTIVE.colors.bg, label: "Mark ACTIVE" },
+    TODO: { icon: Circle, color: TASK_STATUS_UI.TODO.colors.text, bgColor: TASK_STATUS_UI.TODO.colors.bg, label: "Mark TODO" },
   };
 
   const config = configs[status];
@@ -78,83 +76,43 @@ function StatusButton({ status, isCurrentStatus, onClick }: StatusButtonProps) {
       title={config.label}
       disabled={isCurrentStatus}
       style={{
-        width: "28px",
-        height: "28px",
-        borderRadius: "6px",
+        width: "30px",
+        height: "30px",
+        borderRadius: "8px",
         border: "none",
-        backgroundColor: isCurrentStatus ? config.bgColor : "var(--color-background)",
+        backgroundColor: isCurrentStatus ? config.bgColor : "transparent",
         cursor: isCurrentStatus ? "default" : "pointer",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        opacity: isCurrentStatus ? 0.5 : 1,
-        transition: "all 150ms ease",
+        opacity: isCurrentStatus ? 0.6 : 1,
+        transition: "all 180ms cubic-bezier(0.32, 0.72, 0, 1)",
       }}
       onMouseEnter={(e) => {
         if (!isCurrentStatus) {
           e.currentTarget.style.backgroundColor = config.bgColor;
-          e.currentTarget.style.transform = "scale(1.1)";
+          e.currentTarget.style.transform = "scale(1.08)";
         }
       }}
       onMouseLeave={(e) => {
         if (!isCurrentStatus) {
-          e.currentTarget.style.backgroundColor = "var(--color-background)";
+          e.currentTarget.style.backgroundColor = "transparent";
           e.currentTarget.style.transform = "scale(1)";
         }
       }}
     >
-      <Icon style={{ width: "14px", height: "14px", color: config.color }} />
+      <Icon style={{ width: "15px", height: "15px", color: config.color }} />
     </button>
   );
 }
 
 export function TaskCard({ task, onClick, onStatusChange, onDelete, isSelected = false }: TaskCardProps) {
   const [isHovered, setIsHovered] = useState(false);
-  const config = statusConfig[task.status] || statusConfig.FAIL;
-
-  // DEBUG: Auto-test showTask on first card mount (only once globally)
-  useEffect(() => {
-    if (!hasTestedShowTask && task.id) {
-      hasTestedShowTask = true;
-      console.log("[TaskCard] AUTO-TEST: Calling showTask for", task.id);
-      showTask(task.id)
-        .then((response) => {
-          console.log("[TaskCard] AUTO-TEST showTask SUCCESS:", response);
-        })
-        .catch((err) => {
-          console.error("[TaskCard] AUTO-TEST showTask ERROR:", err);
-        });
-    }
-  }, [task.id]);
-
-  const handleCardClick = () => {
-    console.log("[TaskCard] Card clicked, task.id:", task.id);
-
-    // DEBUG: Direct invoke test - bypasses React state chain
-    // If this shows in terminal logs, invoke works from click handlers
-    showTask(task.id)
-      .then((response) => {
-        console.log("[TaskCard] DEBUG showTask response:", response);
-      })
-      .catch((err) => {
-        console.error("[TaskCard] DEBUG showTask error:", err);
-      });
-
-    onClick?.();
-  };
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const config = statusConfig[task.status] || statusConfig.TODO;
   const progress = task.progress || 0;
   const allCompleted =
     task.completed_count === task.subtask_count && task.subtask_count > 0;
-
-  // Dynamic shadow based on state
-  const getShadow = () => {
-    if (isSelected) return "0 0 0 3px var(--color-primary-subtle)";
-    return "none";
-  };
-
-  const getHoverShadow = () => {
-    return "var(--shadow-md)";
-  };
 
   const handleStatusChange = (newStatus: TaskStatus) => {
     if (task.status !== newStatus) {
@@ -163,106 +121,111 @@ export function TaskCard({ task, onClick, onStatusChange, onDelete, isSelected =
   };
 
   return (
-    <div
-      className="task-card"
-      onClick={handleCardClick}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-      tabIndex={0}
-      role="button"
-      aria-pressed={isSelected}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onClick?.();
-        }
-      }}
-      style={{
-        padding: "16px",
-        border: `1px solid ${isSelected ? "var(--color-primary)" : "var(--color-border)"}`,
-        borderRadius: "12px",
-        backgroundColor: isSelected
-          ? "var(--color-primary-subtle)"
-          : "var(--color-background)",
-        cursor: "pointer",
-        boxShadow: isHovered ? getHoverShadow() : getShadow(),
-        borderColor: isHovered && !isSelected ? "var(--color-foreground-subtle)" : undefined,
-        position: "relative",
-        transition: "all 150ms ease",
-      }}
-    >
-      {/* Quick Actions - appear on hover */}
-      {isHovered && (onStatusChange || onDelete) && (
-        <div
-          style={{
-            position: "absolute",
-            top: "12px",
-            right: "12px",
-            display: "flex",
-            gap: "4px",
-            padding: "4px",
-            borderRadius: "8px",
-            backgroundColor: "var(--color-background-subtle)",
-            border: "1px solid var(--color-border)",
-            boxShadow: "var(--shadow-sm)",
-            zIndex: 10,
-          }}
-        >
-          {onStatusChange && (
-            <>
-              <StatusButton
-                status="OK"
-                isCurrentStatus={task.status === "OK"}
-                onClick={() => handleStatusChange("OK")}
-              />
-              <StatusButton
-                status="WARN"
-                isCurrentStatus={task.status === "WARN"}
-                onClick={() => handleStatusChange("WARN")}
-              />
-              <StatusButton
-                status="FAIL"
-                isCurrentStatus={task.status === "FAIL"}
-                onClick={() => handleStatusChange("FAIL")}
-              />
-            </>
-          )}
-          {onDelete && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                if (window.confirm(`Delete task "${task.title}"?`)) {
-                  onDelete();
-                }
-              }}
-              title="Delete task"
-              style={{
-                width: "28px",
-                height: "28px",
-                borderRadius: "6px",
-                border: "none",
-                backgroundColor: "var(--color-background)",
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                marginLeft: onStatusChange ? "4px" : 0,
-                transition: "all 150ms ease",
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = "var(--color-status-fail-subtle)";
-                e.currentTarget.style.transform = "scale(1.1)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = "var(--color-background)";
-                e.currentTarget.style.transform = "scale(1)";
-              }}
-            >
-              <Trash2 style={{ width: "14px", height: "14px", color: "var(--color-status-fail)" }} />
-            </button>
-          )}
-        </div>
-      )}
+    <>
+      <div
+        className="task-card"
+        onClick={onClick}
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
+        tabIndex={0}
+        role="button"
+        aria-pressed={isSelected}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onClick?.();
+          }
+        }}
+        style={{
+          padding: "16px",
+          border: "1px solid var(--color-border)",
+          borderRadius: "12px",
+          backgroundColor: isSelected
+            ? "var(--color-primary-subtle)"
+            : "var(--color-background)",
+          cursor: "pointer",
+          boxShadow: isSelected
+            ? "0 0 0 2px var(--color-primary)"
+            : isHovered
+              ? "var(--shadow-md)"
+              : "none",
+          position: "relative",
+          transition: "box-shadow 150ms ease, border-color 150ms ease",
+        }}
+      >
+        {/* Quick Actions - appear on hover */}
+        {isHovered && (onStatusChange || onDelete) && (
+          <div
+            className="task-card-actions"
+            style={{
+              position: "absolute",
+              top: "12px",
+              right: "12px",
+              display: "flex",
+              gap: "4px",
+              padding: "6px",
+              borderRadius: "10px",
+              backgroundColor: "rgba(255, 255, 255, 0.95)",
+              backdropFilter: "blur(8px)",
+              boxShadow: "var(--shadow-md)",
+              zIndex: 10,
+            }}
+          >
+            {onStatusChange && (
+              <>
+                <StatusButton
+                  status="DONE"
+                  isCurrentStatus={task.status === "DONE"}
+                  onClick={() => handleStatusChange("DONE")}
+                />
+                <StatusButton
+                  status="ACTIVE"
+                  isCurrentStatus={task.status === "ACTIVE"}
+                  onClick={() => handleStatusChange("ACTIVE")}
+                />
+                <StatusButton
+                  status="TODO"
+                  isCurrentStatus={task.status === "TODO"}
+                  onClick={() => handleStatusChange("TODO")}
+                />
+              </>
+            )}
+            {onDelete && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowDeleteConfirm(true);
+                }}
+                title="Delete task"
+                style={{
+                  width: "30px",
+                  height: "30px",
+                  borderRadius: "8px",
+                  border: "none",
+                  backgroundColor: "transparent",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  marginLeft: onStatusChange ? "2px" : 0,
+                  transition: "all 180ms cubic-bezier(0.32, 0.72, 0, 1)",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = "var(--color-status-fail-subtle)";
+                  e.currentTarget.style.transform = "scale(1.08)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = "transparent";
+                  e.currentTarget.style.transform = "scale(1)";
+                }}
+              >
+                <Trash2
+                  style={{ width: "15px", height: "15px", color: "var(--color-status-fail)" }}
+                />
+              </button>
+            )}
+          </div>
+        )}
 
       {/* Header: ID, Status, Updated */}
       <div
@@ -305,19 +268,19 @@ export function TaskCard({ task, onClick, onStatusChange, onDelete, isSelected =
               textTransform: "uppercase",
               letterSpacing: "0.03em",
             }}
-          >
-            <span
-              className={config.dotClass}
+	          >
+	            <span
+	              className={config.dotClass}
               style={{
                 width: "6px",
                 height: "6px",
                 borderRadius: "50%",
-                backgroundColor: config.dot,
-              }}
-            />
-            {task.status}
-          </span>
-        </div>
+	                backgroundColor: config.dot,
+	              }}
+	            />
+	            {TASK_STATUS_UI[task.status].label}
+	          </span>
+	        </div>
 
         {/* Timestamp */}
         {task.updated_at && !isHovered && (
@@ -520,6 +483,23 @@ export function TaskCard({ task, onClick, onStatusChange, onDelete, isSelected =
           }}
         />
       </div>
-    </div>
+      </div>
+
+      {onDelete && (
+        <ConfirmDialog
+          isOpen={showDeleteConfirm}
+          title={`Delete task "${task.title}"?`}
+          description="This will permanently remove the task and all its subtasks."
+          confirmLabel="Delete"
+          cancelLabel="Cancel"
+          danger
+          onCancel={() => setShowDeleteConfirm(false)}
+          onConfirm={() => {
+            onDelete();
+            setShowDeleteConfirm(false);
+          }}
+        />
+      )}
+    </>
   );
 }

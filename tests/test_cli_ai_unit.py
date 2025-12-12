@@ -25,6 +25,7 @@ from core.desktop.devtools.interface.cli_ai import (
     _get_subtask_by_path,
 )
 from core.desktop.devtools.application.task_manager import TaskManager
+from core.subtask import SubTask
 
 
 class TestAIResponse:
@@ -305,6 +306,30 @@ class TestHandleDefine:
         )
         assert resp.success is False
         assert resp.error_code == "TASK_NOT_FOUND"
+
+    def test_define_updates_title(self, tmp_path):
+        tasks_dir = tmp_path / ".tasks"
+        tasks_dir.mkdir()
+        manager = TaskManager(tasks_dir=tasks_dir)
+
+        task = manager.create_task(title="Test", priority="MEDIUM")
+        task.subtasks = [SubTask(completed=False, title="Old title")]
+        manager.save_task(task)
+
+        resp = handle_define(
+            manager,
+            {
+                "intent": "define",
+                "task": task.id,
+                "path": "0",
+                "title": "New title",
+            },
+        )
+        assert resp.success is True
+        assert resp.result["updated"]["title"] == "New title"
+        reloaded = manager.load_task(task.id)
+        assert reloaded is not None
+        assert reloaded.subtasks[0].title == "New title"
 
 
 class TestHandleVerify:
@@ -1228,7 +1253,8 @@ class TestMetaContext:
         meta = build_meta(manager, task.id)
 
         assert meta.task_id == task.id
-        assert meta.task_status == "FAIL"
+        assert meta.task_status == "TODO"
+        assert meta.task_status_code == "FAIL"
         assert isinstance(meta, Meta)
 
     def test_meta_to_dict(self):
@@ -1236,7 +1262,8 @@ class TestMetaContext:
 
         meta = Meta(
             task_id="T-1",
-            task_status="FAIL",
+            task_status="TODO",
+            task_status_code="FAIL",
             task_progress=50,
             subtasks_total=4,
             subtasks_completed=2,

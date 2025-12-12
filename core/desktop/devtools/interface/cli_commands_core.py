@@ -24,6 +24,7 @@ from infrastructure.task_file_parser import TaskFileParser
 
 from .tui_models import CLI_DEPS
 from .cli_activity import write_activity_marker
+from core.status import task_status_label
 
 
 def cmd_list(args: argparse.Namespace) -> int:
@@ -53,7 +54,7 @@ def cmd_create_guided(args: argparse.Namespace) -> int:
 
 
 def cmd_status_set(args: argparse.Namespace) -> int:
-    """Set task status (OK/WARN/FAIL)."""
+    """Set task status (TODO/ACTIVE/DONE; aliases OK/WARN/FAIL)."""
     manager = TaskManager()
     status = args.status.upper()
     task_id = normalize_task_id(args.task_id)
@@ -62,12 +63,13 @@ def cmd_status_set(args: argparse.Namespace) -> int:
         detail = manager.load_task(task_id, args.domain or "")
         payload = {"task": task_to_dict(detail, include_subtasks=True) if detail else {"id": task_id}}
         write_activity_marker(task_id, "status-set", tasks_dir=getattr(manager, "tasks_dir", None))
+        status_ui = task_status_label(status)
         return structured_response(
             "status-set",
             status="OK",
-            message=f"{task_id} → {status}",
+            message=f"{task_id} → {status_ui}",
             payload=payload,
-            summary=f"{task_id} → {status}",
+            summary=f"{task_id} → {status_ui}",
         )
     payload = {"task_id": args.task_id, "domain": args.domain or "", "status": status}
     return structured_response(
@@ -156,7 +158,8 @@ def cmd_add_dependency(args: argparse.Namespace) -> int:
     manager = TaskManager()
     domain = derive_domain_explicit(getattr(args, "domain", ""), getattr(args, "phase", None), getattr(args, "component", None))
     task_id = normalize_task_id(args.task_id)
-    if manager.add_dependency(task_id, args.dependency, domain):
+    ok = manager.add_dependency(task_id, args.dependency, domain)
+    if ok:
         payload = {"task_id": task_id, "dependency": args.dependency}
         write_activity_marker(task_id, "add-dep", tasks_dir=getattr(manager, "tasks_dir", None))
         return structured_response(
@@ -166,7 +169,8 @@ def cmd_add_dependency(args: argparse.Namespace) -> int:
             payload=payload,
             summary=f"{task_id} +dep",
         )
-    return structured_error("add-dep", f"Задача {task_id} не найдена", payload={"task_id": task_id})
+    payload = {"task_id": task_id, "dependency": args.dependency}
+    return structured_error("add-dep", "Не удалось добавить зависимость", payload=payload)
 
 
 def cmd_subtask(args: argparse.Namespace) -> int:

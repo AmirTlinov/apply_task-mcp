@@ -23,35 +23,37 @@ Configuration for Claude Desktop (~/.config/claude/claude_desktop_config.json):
 
 from __future__ import annotations
 
-import json
-import sys
 import asyncio
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+import json
+import re
+import shlex
+import subprocess
+import sys
+import time
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
-from core.desktop.devtools.application.task_manager import TaskManager
-from core.desktop.devtools.interface.cli_ai import (
-    process_intent,
-    get_project_tasks_dir,
-)
-from core.desktop.devtools.interface.serializers import task_to_dict
 from core.desktop.devtools.application.context import derive_domain_explicit, save_last_task
 from core.desktop.devtools.application.recommendations import next_recommendations
-from core.desktop.devtools.interface.cli_templates import _template_subtask_entry, _template_test_matrix, _template_docs_matrix
-from core.desktop.devtools.interface.cli_automation import _automation_template_payload, _ensure_tmp_dir
-from core.desktop.devtools.interface.projects_integration import _projects_status_payload
-import subprocess
-import shlex
-from types import SimpleNamespace
-import time
-from types import SimpleNamespace
-from core.desktop.devtools.interface.tasks_dir_resolver import resolve_project_root
+from core.desktop.devtools.application.task_manager import TaskManager
 from core.desktop.devtools.interface.ai_state import (
+    UserSignal,
     get_ai_state,
     read_user_signal,
-    UserSignal,
+    write_user_signal,
 )
+from core.desktop.devtools.interface.cli_ai import get_project_tasks_dir, process_intent
+from core.desktop.devtools.interface.cli_automation import _automation_template_payload, _ensure_tmp_dir
+from core.desktop.devtools.interface.cli_templates import (
+    _template_docs_matrix,
+    _template_subtask_entry,
+    _template_test_matrix,
+)
+from core.desktop.devtools.interface.projects_integration import _projects_status_payload
+from core.desktop.devtools.interface.serializers import task_to_dict
+from core.desktop.devtools.interface.tasks_dir_resolver import resolve_project_root
+from core.status import task_status_code, task_status_label
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -61,6 +63,32 @@ from core.desktop.devtools.interface.ai_state import (
 MCP_VERSION = "2024-11-05"
 SERVER_NAME = "tasks-mcp"
 SERVER_VERSION = "1.0.0"
+
+# Global tasks root for namespace routing
+GLOBAL_TASKS_ROOT = (Path.home() / ".tasks").resolve()
+
+# Namespace validation (no path separators / traversal)
+# Allow dots for legacy namespaces derived from https remotes.
+_NAMESPACE_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
+
+
+def sanitize_namespace(raw: str) -> str:
+    value = (raw or "").strip()
+    if not value:
+        raise ValueError("namespace is empty")
+    if ".." in value or "/" in value or "\\" in value:
+        raise ValueError("namespace contains forbidden path characters")
+    if not _NAMESPACE_PATTERN.match(value):
+        raise ValueError("namespace must match [A-Za-z0-9_-]{1,128}")
+    return value
+
+
+def namespace_dir(namespace: str) -> Path:
+    ns = sanitize_namespace(namespace)
+    candidate = (GLOBAL_TASKS_ROOT / ns).resolve()
+    if not candidate.is_relative_to(GLOBAL_TASKS_ROOT):
+        raise ValueError("namespace escapes global tasks root")
+    return candidate
 
 
 @dataclass
@@ -140,14 +168,30 @@ def get_tool_definitions() -> List[Dict[str, Any]]:
                     "type": "string",
                     "description": "Task description"
                 },
+                "context": {
+                    "type": "string",
+                    "description": "Optional extra context for the task",
+                    "default": ""
+                },
                 "priority": {
                     "type": "string",
                     "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"],
                     "default": "MEDIUM"
                 },
+                "parent": {
+                    "type": "string",
+                    "description": "Parent task ID (optional)",
+                    "default": "ROOT"
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Task tags (optional)"
+                },
                 "domain": {"type": "string", "description": "Domain for the task", "default": ""},
                 "phase": {"type": "string", "description": "Phase tag", "default": ""},
                 "component": {"type": "string", "description": "Component tag", "default": ""},
+                "namespace": {"type": "string", "description": "Storage namespace (cross-namespace create)", "default": ""},
                 "subtasks": {
                     "type": "array",
                     "description": "Initial subtasks to create",
@@ -220,6 +264,7 @@ def get_tool_definitions() -> List[Dict[str, Any]]:
                 "task": {"type": "string", "description": "Task ID"},
                 "path": {"type": "string", "description": "Subtask path (e.g., '0' or '0.1')"},
                 "domain": {"type": "string", "description": "Domain for the task", "default": ""},
+                "title": {"type": "string", "description": "Optional new subtask title"},
                 "criteria": {"type": "array", "items": {"type": "string"}, "description": "Success criteria"},
                 "tests": {"type": "array", "items": {"type": "string"}, "description": "Tests"},
                 "blockers": {"type": "array", "items": {"type": "string"}, "description": "Blockers"}
@@ -329,8 +374,8 @@ def get_tool_definitions() -> List[Dict[str, Any]]:
                 "domain": {"type": "string", "description": "Domain for the task", "default": ""},
                 "status": {
                     "type": "string",
-                    "enum": ["OK", "WARN", "FAIL"],
-                    "default": "OK"
+                    "enum": ["TODO", "ACTIVE", "DONE", "FAIL", "WARN", "OK"],
+                    "default": "DONE"
                 }
             },
             "required": ["task"]
@@ -425,6 +470,39 @@ def get_tool_definitions() -> List[Dict[str, Any]]:
         }
     })
 
+    # AI Signal setter - allow user/UI to send signals to AI
+    tools.append({
+        "name": "tasks_send_signal",
+        "description": "Send a user signal to AI (pause/resume/stop/skip/message).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "signal": {
+                    "type": "string",
+                    "enum": ["pause", "resume", "stop", "skip", "message"],
+                    "description": "Signal to send"
+                },
+                "message": {"type": "string", "description": "Optional message for signal=message", "default": ""},
+            },
+            "required": ["signal"]
+        }
+    })
+
+    # AI Plan - set/advance/clear plan for transparency
+    tools.append({
+        "name": "tasks_plan",
+        "description": "Set or update AI execution plan for a task (human-visible).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task": {"type": "string", "description": "Task ID for the plan"},
+                "steps": {"type": "array", "items": {"type": "string"}, "description": "Plan steps (human readable)"},
+                "advance": {"type": "boolean", "description": "Advance current plan step", "default": False},
+                "clear": {"type": "boolean", "description": "Clear current plan", "default": False},
+            }
+        }
+    })
+
     # Parity tools with CLI surface
     tools.append({
         "name": "tasks_list",
@@ -434,7 +512,11 @@ def get_tool_definitions() -> List[Dict[str, Any]]:
             "properties": {
                 "domain": {"type": "string", "description": "Domain filter", "default": ""},
                 "phase": {"type": "string", "description": "Phase filter", "default": ""},
-                "component": {"type": "string", "description": "Component filter", "default": ""}
+                "component": {"type": "string", "description": "Component filter", "default": ""},
+                "status": {"type": "string", "enum": ["TODO", "ACTIVE", "DONE", "FAIL", "WARN", "OK"], "description": "Status filter"},
+                "compact": {"type": "boolean", "description": "Return compact task objects", "default": True},
+                "namespace": {"type": "string", "description": "Storage namespace to list from"},
+                "all_namespaces": {"type": "boolean", "description": "Aggregate tasks from all namespaces", "default": False},
             }
         }
     })
@@ -446,7 +528,8 @@ def get_tool_definitions() -> List[Dict[str, Any]]:
             "type": "object",
             "properties": {
                 "task": {"type": "string", "description": "Task ID"},
-                "domain": {"type": "string", "description": "Domain filter", "default": ""}
+                "domain": {"type": "string", "description": "Domain filter", "default": ""},
+                "namespace": {"type": "string", "description": "Storage namespace for cross-namespace lookup", "default": ""},
             },
             "required": ["task"]
         }
@@ -573,7 +656,7 @@ def get_tool_definitions() -> List[Dict[str, Any]]:
             "type": "object",
             "properties": {
                 "task": {"type": "string"},
-                "status": {"type": "string", "enum": ["OK", "WARN", "FAIL"], "default": "WARN"},
+                "status": {"type": "string", "enum": ["TODO", "ACTIVE", "DONE", "FAIL", "WARN", "OK"], "default": "ACTIVE"},
                 "domain": {"type": "string", "default": ""},
                 "force": {"type": "boolean", "default": False}
             },
@@ -661,9 +744,11 @@ TOOL_TO_INTENT = {
     "tasks_redo": "redo",
     "tasks_history": "history",
     "tasks_storage": "storage",
+    "tasks_plan": "plan",
     # Special tools (handled directly, not via intent)
     "tasks_ai_status": "_ai_status",
     "tasks_user_signal": "_user_signal",
+    "tasks_send_signal": "_send_signal",
     "tasks_list": "_list",
     "tasks_show": "_show",
     "tasks_next": "_next",
@@ -773,6 +858,8 @@ class MCPServer:
             return self._handle_ai_status(id)
         elif intent == "_user_signal":
             return self._handle_user_signal(id)
+        elif intent == "_send_signal":
+            return self._handle_send_signal(id, arguments)
         elif intent == "_list":
             return self._handle_list(id, arguments)
         elif intent == "_show":
@@ -805,7 +892,18 @@ class MCPServer:
 
         # Process through cli_ai
         try:
-            response = process_intent(self.manager, intent_data)
+            # Explicit namespace routing (never overload domain)
+            manager = self.manager
+            ns = (arguments.get("namespace") or "").strip()
+            if ns:
+                ns_dir = namespace_dir(ns)
+                if ns_dir.exists() and ns_dir.is_dir():
+                    manager = TaskManager(tasks_dir=ns_dir, auto_sync=False)
+                else:
+                    return json_rpc_error(id, -32602, f"Namespace not found: {ns}")
+                intent_data.pop("namespace", None)
+
+            response = process_intent(manager, intent_data)
 
             # Format as MCP tool result
             result_content = {
@@ -875,46 +973,99 @@ class MCPServer:
             "isError": False
         })
 
+    def _handle_send_signal(self, id: Optional[int | str], params: Dict) -> Dict:
+        """Handle tasks_send_signal tool call."""
+        raw_signal = (params.get("signal") or "").strip().lower()
+        message = (params.get("message") or "").strip()
+        try:
+            signal = UserSignal(raw_signal)
+        except Exception:
+            return json_rpc_error(id, -32602, f"Unknown signal: {raw_signal}")
+
+        try:
+            write_user_signal(signal, message, tasks_dir=self.tasks_dir)
+            # Mirror into in-memory AI state for immediate UI visibility
+            get_ai_state().send_signal(signal, message)
+        except Exception as exc:
+            return json_rpc_error(id, -32603, f"Failed to write signal: {exc}")
+
+        result = {"success": True, "signal": signal.value, "message": message}
+        return json_rpc_response(id, {"content": [self._json_content(result)], "isError": False})
+
     def _handle_list(self, id: Optional[int | str], params: Dict) -> Dict:
         domain = params.get("domain", "") or ""
         phase = params.get("phase", "") or ""
         component = params.get("component", "") or ""
+        status_filter = (params.get("status") or "").strip()
+        ns = (params.get("namespace") or "").strip()
+        all_namespaces = bool(params.get("all_namespaces") or params.get("include_all"))
+
         domain_path = derive_domain_explicit(domain, phase, component)
-        tasks = self.manager.list_tasks(domain_path, skip_sync=True)
-        
-        # Fallback: if no tasks in current namespace and no explicit filter, aggregate from all namespaces
-        if not tasks and not domain and not phase and not component:
-            # Get all namespaces
-            global_tasks_dir = Path.home() / ".tasks"
-            if global_tasks_dir.exists():
-                all_tasks = []
-                for namespace_dir in global_tasks_dir.iterdir():
-                    if namespace_dir.is_dir() and not namespace_dir.name.startswith("."):
-                        try:
-                            ns_manager = TaskManager(tasks_dir=namespace_dir)
-                            ns_tasks = ns_manager.list_tasks("", skip_sync=True)
-                            # Add namespace info to each task for GUI lookup
-                            for t in ns_tasks:
-                                # Store namespace separately - don't overwrite task's domain
-                                t._namespace = namespace_dir.name
-                            all_tasks.extend(ns_tasks)
-                        except Exception:
-                            pass  # Skip invalid namespace dirs
-                tasks = all_tasks
-        
-        # Serialize with namespace info
+
+        def _flatten_subtasks(nodes) -> List[Any]:
+            flat: List[Any] = []
+            for st in nodes or []:
+                flat.append(st)
+                flat.extend(_flatten_subtasks(getattr(st, "children", [])))
+            return flat
+
+        tasks: List[Any] = []
+        if all_namespaces:
+            if GLOBAL_TASKS_ROOT.exists():
+                for ns_dir in GLOBAL_TASKS_ROOT.iterdir():
+                    if not ns_dir.is_dir() or ns_dir.name.startswith("."):
+                        continue
+                    try:
+                        ns_manager = TaskManager(tasks_dir=ns_dir, auto_sync=False)
+                        ns_tasks = ns_manager.list_tasks(domain_path, skip_sync=True)
+                        for t in ns_tasks:
+                            t._namespace = ns_dir.name
+                        tasks.extend(ns_tasks)
+                    except Exception:
+                        continue
+        else:
+            manager = self.manager
+            if ns:
+                ns_dir = namespace_dir(ns)
+                if not ns_dir.exists() or not ns_dir.is_dir():
+                    return json_rpc_error(id, -32602, f"Namespace not found: {ns}")
+                manager = TaskManager(tasks_dir=ns_dir, auto_sync=False)
+            tasks = manager.list_tasks(domain_path, skip_sync=True)
+            current_ns = ns or self.tasks_dir.name
+            for t in tasks:
+                t._namespace = current_ns
+
+        if status_filter:
+            try:
+                status_code = task_status_code(status_filter)
+            except ValueError:
+                return json_rpc_error(id, -32602, "Invalid status filter")
+            tasks = [t for t in tasks if (t.status or "").upper() == status_code]
+
         task_dicts = []
         for t in tasks:
+            flat = _flatten_subtasks(getattr(t, "subtasks", []))
+            total_subtasks = len(flat)
+            completed_subtasks = sum(1 for st in flat if getattr(st, "completed", False))
             d = task_to_dict(t, include_subtasks=False, compact=True)
-            # Add namespace if available (for cross-namespace task lookup)
-            if hasattr(t, '_namespace'):
-                d['namespace'] = t._namespace
+            d["subtask_count"] = total_subtasks
+            d["completed_count"] = completed_subtasks
+            d["tags"] = list(getattr(t, "tags", []) or [])
+            d["updated_at"] = getattr(t, "updated", "") or None
+            d["namespace"] = getattr(t, "_namespace", self.tasks_dir.name)
             task_dicts.append(d)
-        
+
         result = {
             "success": True,
             "tasks": task_dicts,
-            "filters": {"domain": domain_path, "phase": phase, "component": component},
+            "filters": {
+                "domain": domain_path,
+                "phase": phase,
+                "component": component,
+                "status": status_filter or None,
+                "namespace": ns or None,
+                "all_namespaces": all_namespaces,
+            },
         }
         return json_rpc_response(id, {
             "content": [
@@ -927,36 +1078,49 @@ class MCPServer:
         """Handle tasks_show tool call."""
         task_id = params.get("task")
         domain = params.get("domain", "") or ""
-        
+        namespace = params.get("namespace", "") or ""
+
         if not task_id:
             return json_rpc_error(id, -32602, "Missing 'task' argument")
 
-        # First try current namespace with domain filter
-        task = self.manager.load_task(task_id, domain)
-        
+        task = None
+
+        # If namespace provided, look directly in that namespace
+        if namespace:
+            try:
+                ns_dir = namespace_dir(namespace)
+            except Exception as exc:
+                return json_rpc_error(id, -32602, f"Invalid namespace: {exc}")
+            if ns_dir.exists() and ns_dir.is_dir():
+                ns_manager = TaskManager(tasks_dir=ns_dir, auto_sync=False)
+                task = ns_manager.load_task(task_id, domain) or ns_manager.load_task(task_id, "")
+
+        # Try current namespace with domain filter if not found in specified namespace
+        if not task:
+            task = self.manager.load_task(task_id, domain)
+
         # Fallback: search all namespaces if not found
         if not task:
-            global_tasks_dir = Path.home() / ".tasks"
-            if global_tasks_dir.exists():
-                for namespace_dir in global_tasks_dir.iterdir():
-                    if namespace_dir.is_dir() and not namespace_dir.name.startswith("."):
+            if GLOBAL_TASKS_ROOT.exists():
+                for ns_dir in GLOBAL_TASKS_ROOT.iterdir():
+                    if ns_dir.is_dir() and not ns_dir.name.startswith("."):
                         try:
-                            ns_manager = TaskManager(tasks_dir=namespace_dir)
-                            # Try with domain first, then without
-                            task = ns_manager.load_task(task_id, domain)
-                            if not task:
-                                task = ns_manager.load_task(task_id, "")
+                            ns_manager = TaskManager(tasks_dir=ns_dir, auto_sync=False)
+                            task = ns_manager.load_task(task_id, domain) or ns_manager.load_task(task_id, "")
                             if task:
+                                task._namespace = ns_dir.name
                                 break
                         except Exception:
-                            pass
+                            continue
 
         if not task:
             return json_rpc_error(id, -32602, f"Task {task_id} not found")
+
         result = {
             "success": True,
             "task": task_to_dict(task, include_subtasks=True),
             "domain": task.domain or domain,
+            "namespace": getattr(task, "_namespace", namespace or self.tasks_dir.name),
         }
         return json_rpc_response(id, {
             "content": [
@@ -1023,6 +1187,16 @@ class MCPServer:
         if not task or path is None:
             return json_rpc_error(id, -32602, "task and path are required")
         domain = params.get("domain", "") or ""
+        ns = (params.get("namespace") or "").strip()
+        manager = self.manager
+        if ns:
+            try:
+                ns_dir = namespace_dir(ns)
+            except Exception as exc:
+                return json_rpc_error(id, -32602, f"Invalid namespace: {exc}")
+            if not ns_dir.exists() or not ns_dir.is_dir():
+                return json_rpc_error(id, -32602, f"Namespace not found: {ns}")
+            manager = TaskManager(tasks_dir=ns_dir, auto_sync=False)
         note_ops = []
         for field, checkpoint in (("criteria_note", "criteria"), ("tests_note", "tests"), ("blockers_note", "blockers")):
             val = params.get(field)
@@ -1036,7 +1210,7 @@ class MCPServer:
                 })
         done_op = {"intent": "done", "task": task, "path": path, "domain": domain, "force": params.get("force", False)}
         batch_ops = note_ops + [done_op]
-        resp = process_intent(self.manager, {"intent": "batch", "task": task, "operations": batch_ops, "atomic": True, "domain": domain})
+        resp = process_intent(manager, {"intent": "batch", "task": task, "operations": batch_ops, "atomic": True, "domain": domain})
         content = resp.result if resp.success else {"error": resp.error.to_dict() if resp.error else "unknown"}
         return json_rpc_response(id, {"content": [self._json_content(content)], "isError": not resp.success})
 
@@ -1048,6 +1222,16 @@ class MCPServer:
         if not all([task, path, checkpoint, note]):
             return json_rpc_error(id, -32602, "task, path, checkpoint, note are required")
         domain = params.get("domain", "") or ""
+        ns = (params.get("namespace") or "").strip()
+        manager = self.manager
+        if ns:
+            try:
+                ns_dir = namespace_dir(ns)
+            except Exception as exc:
+                return json_rpc_error(id, -32602, f"Invalid namespace: {exc}")
+            if not ns_dir.exists() or not ns_dir.is_dir():
+                return json_rpc_error(id, -32602, f"Namespace not found: {ns}")
+            manager = TaskManager(tasks_dir=ns_dir, auto_sync=False)
         op = {
             "intent": "verify",
             "task": task,
@@ -1055,7 +1239,7 @@ class MCPServer:
             "domain": domain,
             "checkpoints": {checkpoint: {"confirmed": not params.get("undo", False), "note": note}},
         }
-        resp = process_intent(self.manager, op)
+        resp = process_intent(manager, op)
         content = resp.result if resp.success else {"error": resp.error.to_dict() if resp.error else "unknown"}
         return json_rpc_response(id, {"content": [self._json_content(content)], "isError": not resp.success})
 
@@ -1063,19 +1247,52 @@ class MCPServer:
         operations = params.get("operations", [])
         task = params.get("task")
         domain = params.get("domain", "") or ""
+        ns = (params.get("namespace") or "").strip()
+        manager = self.manager
+        if ns:
+            try:
+                ns_dir = namespace_dir(ns)
+            except Exception as exc:
+                return json_rpc_error(id, -32602, f"Invalid namespace: {exc}")
+            if not ns_dir.exists() or not ns_dir.is_dir():
+                return json_rpc_error(id, -32602, f"Namespace not found: {ns}")
+            manager = TaskManager(tasks_dir=ns_dir, auto_sync=False)
         atomic = params.get("atomic", False)
-        resp = process_intent(self.manager, {"intent": "batch", "task": task, "domain": domain, "operations": operations, "atomic": atomic})
+        resp = process_intent(manager, {"intent": "batch", "task": task, "domain": domain, "operations": operations, "atomic": atomic})
         content = resp.result if resp.success else {"error": resp.error.to_dict() if resp.error else "unknown"}
         return json_rpc_response(id, {"content": [self._json_content(content)], "isError": not resp.success})
 
     def _handle_macro_update(self, id: Optional[int | str], params: Dict) -> Dict:
         task = params.get("task")
-        status = params.get("status", "WARN")
+        status = params.get("status", "ACTIVE")
         domain = params.get("domain", "") or ""
         if not task:
             return json_rpc_error(id, -32602, "task is required")
-        ok, err = self.manager.update_task_status(task, status, domain, force=params.get("force", False))
-        payload = {"task": task, "status": status, "domain": domain, "updated": ok}
+        ns = (params.get("namespace") or "").strip()
+        manager = self.manager
+        if ns:
+            try:
+                ns_dir = namespace_dir(ns)
+            except Exception as exc:
+                return json_rpc_error(id, -32602, f"Invalid namespace: {exc}")
+            if not ns_dir.exists() or not ns_dir.is_dir():
+                return json_rpc_error(id, -32602, f"Namespace not found: {ns}")
+            manager = TaskManager(tasks_dir=ns_dir, auto_sync=False)
+
+        try:
+            status_code = task_status_code(status)
+        except ValueError:
+            return json_rpc_error(id, -32602, "Invalid status")
+
+        ok, err = manager.update_task_status(task, status, domain, force=params.get("force", False))
+        payload = {
+            "task": task,
+            "status": task_status_label(status_code),
+            "status_code": status_code,
+            "domain": domain,
+            "namespace": ns or None,
+            "updated": ok,
+        }
         if not ok:
             payload["error"] = err
         return json_rpc_response(id, {"content": [self._json_content(payload)], "isError": not ok})

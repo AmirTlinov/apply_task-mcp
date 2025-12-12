@@ -75,7 +75,7 @@ def test_preview_warn_and_fail_status_chunks():
 
     warn_text = "".join(chunk[1] for chunk in build_side_preview_text(DummyTUI(warn_detail)))
     fail_text = "".join(chunk[1] for chunk in build_side_preview_text(DummyTUI(fail_detail)))
-    assert "INPR" in warn_text and "BACK" in fail_text
+    assert "ACTV" in warn_text and "TODO" in fail_text
 
 
 def test_preview_loads_from_file_and_handles_parse_failure(monkeypatch, tmp_path):

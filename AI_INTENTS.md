@@ -101,8 +101,7 @@ Create a new task programmatically.
   "title": "Task title #tag",
   "parent": "ROOT",
   "description": "Detailed description",
-  "tests": ["pytest tests/", "coverage >= 85%"],
-  "risks": ["risk1", "risk2"],
+  "tags": ["ui", "mcp"],            // optional
   "subtasks": [
     {
       "title": "Subtask one",
@@ -114,6 +113,8 @@ Create a new task programmatically.
   "domain": "core/api",           // optional
   "phase": "sprint-1",            // optional
   "component": "auth",            // optional
+  "context": "Any additional context", // optional
+  "namespace": "owner_repo",      // optional: store in another namespace
   "idempotency_key": "unique-123", // optional: prevent duplicates
   "dry_run": true                  // optional: validate only
 }
@@ -149,22 +150,21 @@ Add subtasks to an existing task.
 
 ### define
 
-Update task properties.
+Define/overwrite subtask fields (criteria/tests/blockers).
 
 **Request:**
 ```json
 {
   "intent": "define",
   "task": "TASK-001",
-  "description": "Updated description",
-  "tests": ["new tests"],
-  "risks": ["new risks"],
-  "dependencies": ["TASK-002"],
-  "next_steps": ["step 1"]
+  "path": "0",                  // required: subtask path
+  "criteria": ["criterion 1"],  // optional
+  "tests": ["pytest -q ..."],   // optional
+  "blockers": ["blocker"]       // optional
 }
 ```
 
-**Use case:** Refining task details, adding context.
+**Use case:** Setting acceptance criteria/tests/blockers for a subtask.
 
 ---
 
@@ -229,6 +229,26 @@ Toggle subtask completion status.
 
 ---
 
+### plan
+
+Set or advance a human-visible execution plan for transparency.
+
+**Request:**
+```json
+{
+  "intent": "plan",
+  "task": "TASK-001",
+  "steps": ["Step 1", "Step 2"], // optional: replace full plan
+  "current": 0,                 // optional: set current step index
+  "advance": true,              // optional: advance current step by 1
+  "clear": false                // optional: clear plan when true
+}
+```
+
+**Use case:** Keep humans synced with AI work plan in GUI/TUI.
+
+---
+
 ### delete
 
 Delete a task or subtask.
@@ -248,14 +268,14 @@ Delete a task or subtask.
 
 ### complete
 
-Complete an entire task (all subtasks done → task status OK).
+Complete an entire task (all subtasks done → task status DONE).
 
 **Request:**
 ```json
 {
   "intent": "complete",
   "task": "TASK-001",
-  "status": "OK"            // optional: explicit status
+  "status": "DONE"          // optional: explicit status (aliases: OK/WARN/FAIL)
 }
 ```
 

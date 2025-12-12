@@ -26,10 +26,11 @@ interface MetricCardProps {
   subtitle?: string;
   icon: typeof BarChart3;
   color: string;
+  bgColor: string;
   trend?: { value: number; isUp: boolean };
 }
 
-function MetricCard({ title, value, subtitle, icon: Icon, color, trend }: MetricCardProps) {
+function MetricCard({ title, value, subtitle, icon: Icon, color, bgColor, trend }: MetricCardProps) {
   return (
     <div
       style={{
@@ -48,7 +49,7 @@ function MetricCard({ title, value, subtitle, icon: Icon, color, trend }: Metric
             width: "40px",
             height: "40px",
             borderRadius: "10px",
-            backgroundColor: `${color}15`,
+            backgroundColor: bgColor,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -148,11 +149,11 @@ export function DashboardView({ tasks, projectName, isLoading = false }: Dashboa
 
   // Calculate metrics
   const total = tasks.length;
-  const completed = tasks.filter((t) => t.status === "OK").length;
-  const inProgress = tasks.filter((t) => t.status === "WARN").length;
-  const blocked = tasks.filter((t) => t.status === "FAIL").length;
+  const done = tasks.filter((t) => t.status === "DONE").length;
+  const active = tasks.filter((t) => t.status === "ACTIVE").length;
+  const todo = tasks.filter((t) => t.status === "TODO").length;
 
-  const overallProgress = total > 0 ? Math.round((completed / total) * 100) : 0;
+  const overallProgress = total > 0 ? Math.round((done / total) * 100) : 0;
   const _avgProgress = total > 0
     ? Math.round(tasks.reduce((sum, t) => sum + (t.progress || 0), 0) / total)
     : 0;
@@ -205,35 +206,39 @@ export function DashboardView({ tasks, projectName, isLoading = false }: Dashboa
           gap: "16px",
         }}
       >
-        <MetricCard
-          title="Total Tasks"
-          value={total}
-          subtitle="All project tasks"
-          icon={Target}
-          color="var(--color-primary)"
-        />
-        <MetricCard
-          title="Completed"
-          value={completed}
-          subtitle={`${overallProgress}% of total`}
-          icon={CheckCircle2}
-          color="var(--color-status-ok)"
-        />
-        <MetricCard
-          title="In Progress"
-          value={inProgress}
-          subtitle="Currently active"
-          icon={Clock}
-          color="var(--color-status-warn)"
-        />
-        <MetricCard
-          title="Blocked"
-          value={blocked}
-          subtitle="Need attention"
-          icon={AlertCircle}
-          color="var(--color-status-fail)"
-        />
-      </div>
+	        <MetricCard
+	          title="Total Tasks"
+	          value={total}
+	          subtitle="All project tasks"
+	          icon={Target}
+	          color="var(--color-primary)"
+	          bgColor="var(--color-primary-subtle)"
+	        />
+	        <MetricCard
+	          title="DONE"
+	          value={done}
+	          subtitle={`${overallProgress}% of total`}
+	          icon={CheckCircle2}
+	          color="var(--color-status-ok)"
+	          bgColor="var(--color-status-ok-subtle)"
+	        />
+	        <MetricCard
+	          title="ACTIVE"
+	          value={active}
+	          subtitle="Currently active"
+	          icon={Clock}
+	          color="var(--color-primary)"
+	          bgColor="var(--color-primary-subtle)"
+	        />
+	        <MetricCard
+	          title="TODO"
+	          value={todo}
+	          subtitle="Not started"
+	          icon={AlertCircle}
+	          color="var(--color-foreground-muted)"
+	          bgColor="var(--color-background-muted)"
+	        />
+	      </div>
 
       {/* Charts Section */}
       <div
@@ -259,26 +264,26 @@ export function DashboardView({ tasks, projectName, isLoading = false }: Dashboa
             </h3>
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-            <ProgressBar
-              label="Completed"
-              value={completed}
-              total={total}
-              color="var(--color-status-ok)"
-            />
-            <ProgressBar
-              label="In Progress"
-              value={inProgress}
-              total={total}
-              color="var(--color-status-warn)"
-            />
-            <ProgressBar
-              label="Blocked"
-              value={blocked}
-              total={total}
-              color="var(--color-status-fail)"
-            />
-          </div>
+	          <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+	            <ProgressBar
+	              label="DONE"
+	              value={done}
+	              total={total}
+	              color="var(--color-status-ok)"
+	            />
+	            <ProgressBar
+	              label="ACTIVE"
+	              value={active}
+	              total={total}
+	              color="var(--color-primary)"
+	            />
+	            <ProgressBar
+	              label="TODO"
+	              value={todo}
+	              total={total}
+	              color="var(--color-foreground-subtle)"
+	            />
+	          </div>
 
           {/* Overall progress ring */}
           <div
@@ -324,12 +329,12 @@ export function DashboardView({ tasks, projectName, isLoading = false }: Dashboa
               <div style={{ fontSize: "14px", fontWeight: 500, color: "var(--color-foreground)" }}>
                 Overall Progress
               </div>
-              <div style={{ fontSize: "12px", color: "var(--color-foreground-muted)" }}>
-                {completed} of {total} tasks completed
-              </div>
-            </div>
-          </div>
-        </div>
+	              <div style={{ fontSize: "12px", color: "var(--color-foreground-muted)" }}>
+	                {done} of {total} tasks done
+	              </div>
+	            </div>
+	          </div>
+	        </div>
 
         {/* Tags Distribution */}
         <div

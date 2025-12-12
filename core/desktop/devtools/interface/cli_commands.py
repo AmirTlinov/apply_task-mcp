@@ -4,6 +4,7 @@ from typing import Any, Callable, Dict, List
 
 from core.task_detail import TaskDetail
 from core.desktop.devtools.interface.cli_io import structured_error, structured_response
+from core.status import task_status_code
 
 
 TaskManagerFactory = Callable[[], Any]
@@ -67,7 +68,8 @@ def cmd_list(args, deps: CliDeps) -> int:
 
     # Status filter
     if getattr(args, "status", None):
-        tasks = [t for t in tasks if t.status == args.status]
+        status_code = task_status_code(args.status)
+        tasks = [t for t in tasks if t.status == status_code]
 
     # Component filter
     if getattr(args, "component", None):
@@ -158,7 +160,7 @@ def cmd_analyze(args, deps: CliDeps) -> int:
         payload["tip"] = "Добавь подзадачи через apply_task subtask TASK --add ..."
     return structured_response(
         "analyze",
-        status=task.status,
+        status="OK",
         message="Анализ завершён",
         payload=payload,
         summary=f"{task.id}: {task.title}",

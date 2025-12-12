@@ -22,8 +22,8 @@ def _status_chunk(detail) -> List:
     if detail.status == "OK":
         return [("class:icon.check", "DONE ")]
     if detail.status == "WARN":
-        return [("class:icon.warn", "INPR ")]
-    return [("class:icon.fail", "BACK ")]
+        return [("class:icon.warn", "ACTV ")]
+    return [("class:icon.fail", "TODO ")]
 
 
 def build_side_preview_text(tui) -> FormattedText:

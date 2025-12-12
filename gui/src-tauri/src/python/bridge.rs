@@ -158,7 +158,18 @@ impl PythonBridge {
             }
         }
 
-        // Check if apply_task is in PATH (installed via pip/uv)
+        // Prefer local repo entry points (keeps GUI in lockstep with bundled code)
+        let local_apply_task = self.apply_task_root.join("apply_task");
+        if local_apply_task.exists() {
+            return Ok(vec![local_apply_task.to_string_lossy().to_string()]);
+        }
+
+        let tasks_py = self.apply_task_root.join("tasks.py");
+        if tasks_py.exists() {
+            return Ok(vec![tasks_py.to_string_lossy().to_string()]);
+        }
+
+        // Fallback: apply_task in PATH (installed via pip/uv)
         if let Ok(output) = Command::new("which").arg("apply_task").output() {
             if output.status.success() {
                 let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -166,12 +177,6 @@ impl PythonBridge {
                     return Ok(vec![path]);
                 }
             }
-        }
-
-        // Check tasks.py in apply_task root
-        let tasks_py = self.apply_task_root.join("tasks.py");
-        if tasks_py.exists() {
-            return Ok(vec![tasks_py.to_string_lossy().to_string()]);
         }
 
         // Use Python module directly: python -m core.desktop.devtools.interface.mcp_server

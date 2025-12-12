@@ -203,8 +203,15 @@ def cmd_smart_create(args) -> int:
         return err
 
     task.tags = [t.strip() for t in args.tags.split(",")] if args.tags else auto_tags
-    deps = [d.strip() for d in args.dependencies.split(",")] if args.dependencies else auto_deps
-    task.dependencies = deps
+
+    # Smart title @TASK-xxx -> depends_on (blocking deps), unless explicitly overridden
+    if auto_deps and not task.depends_on:
+        err = _validate_depends_on(task.id, auto_deps, manager, args, kind="task")
+        if err:
+            return err
+        task.depends_on = auto_deps
+        for dep_id in auto_deps:
+            task.events.append(TaskEvent.dependency_added(dep_id))
 
     template_desc, template_tests = load_template(task.tags[0] if task.tags else "default", manager)
     if not task.description:

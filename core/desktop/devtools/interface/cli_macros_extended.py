@@ -14,6 +14,7 @@ from core.desktop.devtools.application.task_manager import TaskManager
 from core.desktop.devtools.interface.cli_io import structured_error, structured_response
 from core.desktop.devtools.interface.i18n import translate
 from core.desktop.devtools.interface.serializers import subtask_to_dict, task_to_dict
+from core.status import task_status_code, task_status_label
 
 
 def _parse_status_and_task(args) -> Tuple[Optional[str], Optional[str]]:
@@ -22,10 +23,10 @@ def _parse_status_and_task(args) -> Tuple[Optional[str], Optional[str]]:
     for candidate in (getattr(args, "arg1", None), getattr(args, "arg2", None)):
         if not candidate:
             continue
-        value = candidate.upper()
-        if value in ("OK", "WARN", "FAIL"):
-            status = value
-        else:
+        try:
+            task_status_code(candidate)
+            status = candidate.upper()
+        except ValueError:
             task_id = normalize_task_id(candidate)
     return status, task_id
 
@@ -59,13 +60,14 @@ def cmd_update(args) -> int:
     if ok:
         save_last_task(task_id, domain)
         detail = manager.load_task(task_id, domain)
+        status_ui = task_status_label(status)
         payload = {"task": task_to_dict(detail, include_subtasks=True) if detail else {"id": task_id}}
         return structured_response(
             "update",
-            status=status,
+            status=status_ui,
             message=translate("MSG_STATUS_UPDATED", task_id=task_id),
             payload=payload,
-            summary=f"{task_id} → {status}",
+            summary=f"{task_id} → {status_ui}",
         )
 
     payload = {"task_id": task_id, "domain": domain}
@@ -315,4 +317,150 @@ def cmd_quick(args) -> int:
     )
 
 
-__all__ = ["cmd_update", "cmd_ok", "cmd_note", "cmd_suggest", "cmd_quick"]
+def _get_subtask_by_path(subtasks: List, path: str):
+    """Navigate to subtask by dotted path (0, 0.1, 0.1.2)."""
+    if not path:
+        return None
+    parts = path.split(".")
+    current = subtasks
+    target = None
+    for part in parts:
+        try:
+            idx = int(part)
+        except ValueError:
+            return None
+        if idx < 0 or idx >= len(current):
+            return None
+        target = current[idx]
+        current = getattr(target, "subtasks", []) or []
+    return target
+
+
+def cmd_progress_note(args) -> int:
+    """Add a progress note to a subtask without marking it complete.
+
+    Usage:
+        progress-note TASK-001 0 "Implemented auth logic"
+        progress-note TASK-001 0.1 "Added error handling"
+    """
+    from datetime import datetime
+
+    manager = TaskManager()
+    try:
+        task_id, domain = resolve_task_reference(
+            getattr(args, "task_id", None),
+            getattr(args, "domain", None),
+            getattr(args, "phase", None),
+            getattr(args, "component", None),
+        )
+    except ValueError as exc:
+        return structured_error("progress-note", str(exc))
+
+    path = getattr(args, "path", None)
+    note = getattr(args, "note", "") or ""
+
+    if not path:
+        return structured_error("progress-note", "Требуется указать путь подзадачи", payload={"task_id": task_id})
+
+    if not note:
+        return structured_error("progress-note", "Требуется указать текст заметки", payload={"task_id": task_id, "path": path})
+
+    detail = manager.load_task(task_id, domain)
+    if not detail:
+        return structured_error("progress-note", f"Задача {task_id} не найдена", payload={"task_id": task_id})
+
+    subtask = _get_subtask_by_path(detail.subtasks, str(path))
+    if not subtask:
+        return structured_error("progress-note", f"Подзадача {path} не найдена", payload={"task_id": task_id, "path": path})
+
+    # Add note to progress_notes
+    subtask.progress_notes.append(note)
+
+    # Auto-set started_at if not set
+    if not getattr(subtask, "started_at", None):
+        subtask.started_at = datetime.now().isoformat()
+
+    manager.save_task(detail)
+    save_last_task(task_id, domain)
+
+    payload: Dict[str, Any] = {
+        "task": task_to_dict(detail, include_subtasks=True),
+        "path": path,
+        "note": note,
+        "total_notes": len(subtask.progress_notes),
+    }
+
+    return structured_response(
+        "progress-note",
+        status="OK",
+        message=f"Заметка добавлена к подзадаче {path}",
+        payload=payload,
+        summary=f"{task_id} path={path} note added",
+    )
+
+
+def cmd_block(args) -> int:
+    """Block or unblock a subtask with optional reason.
+
+    Usage:
+        block TASK-001 0 --reason "Waiting for API"
+        block TASK-001 0.1 --unblock
+    """
+    manager = TaskManager()
+    try:
+        task_id, domain = resolve_task_reference(
+            getattr(args, "task_id", None),
+            getattr(args, "domain", None),
+            getattr(args, "phase", None),
+            getattr(args, "component", None),
+        )
+    except ValueError as exc:
+        return structured_error("block", str(exc))
+
+    path = getattr(args, "path", None)
+    reason = getattr(args, "reason", "") or ""
+    unblock = getattr(args, "unblock", False)
+
+    if not path:
+        return structured_error("block", "Требуется указать путь подзадачи", payload={"task_id": task_id})
+
+    detail = manager.load_task(task_id, domain)
+    if not detail:
+        return structured_error("block", f"Задача {task_id} не найдена", payload={"task_id": task_id})
+
+    subtask = _get_subtask_by_path(detail.subtasks, str(path))
+    if not subtask:
+        return structured_error("block", f"Подзадача {path} не найдена", payload={"task_id": task_id, "path": path})
+
+    # Update blocked status
+    blocked = not unblock
+    subtask.blocked = blocked
+    subtask.block_reason = reason.strip() if blocked else ""
+
+    manager.save_task(detail)
+    save_last_task(task_id, domain)
+
+    payload: Dict[str, Any] = {
+        "task": task_to_dict(detail, include_subtasks=True),
+        "path": path,
+        "blocked": blocked,
+        "reason": subtask.block_reason,
+    }
+
+    if blocked:
+        msg = f"Подзадача {path} заблокирована" + (f": {reason}" if reason else "")
+        summary = f"{task_id} path={path} BLOCKED"
+    else:
+        msg = f"Подзадача {path} разблокирована"
+        summary = f"{task_id} path={path} UNBLOCKED"
+
+    return structured_response(
+        "block",
+        status="OK",
+        message=msg,
+        payload=payload,
+        summary=summary,
+    )
+
+
+__all__ = ["cmd_update", "cmd_ok", "cmd_note", "cmd_suggest", "cmd_quick", "cmd_progress_note", "cmd_block"]

@@ -3,7 +3,7 @@
  * Uses zustand store for persistent settings
  */
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import {
   Settings,
   Palette,
@@ -199,12 +199,9 @@ function ShortcutsModal({ isOpen, onClose }: ShortcutsModalProps) {
   const shortcuts = [
     { key: "⌘ K", action: "Open command palette" },
     { key: "⌘ N", action: "Create new task" },
-    { key: "⌘ /", action: "Toggle AI chat" },
-    { key: "j / k", action: "Navigate up/down" },
-    { key: "Enter", action: "Open/confirm" },
-    { key: "Space", action: "Toggle completion" },
-    { key: "e", action: "Edit" },
-    { key: "Esc", action: "Back/close" },
+    { key: "j / k", action: "Navigate tasks (List)" },
+    { key: "Enter", action: "Open selected task (List)" },
+    { key: "Esc", action: "Close modal" },
     { key: "g b", action: "Go to Board" },
     { key: "g l", action: "Go to List" },
     { key: "g t", action: "Go to Timeline" },
@@ -303,9 +300,21 @@ export function SettingsView({ isLoading = false }: SettingsViewProps) {
     setSoundEffects,
     setAutoSave,
     setVimMode,
+    setCacheSize,
     clearCache,
     exportData,
   } = useSettingsStore();
+
+  // Calculate cache size on mount and after clear
+  useEffect(() => {
+    let total = 0;
+    for (const key in localStorage) {
+      if (Object.prototype.hasOwnProperty.call(localStorage, key)) {
+        total += localStorage[key].length * 2; // UTF-16 = 2 bytes per char
+      }
+    }
+    setCacheSize(total);
+  }, [setCacheSize]);
 
   const handleClearCache = useCallback(async () => {
     setIsClearing(true);

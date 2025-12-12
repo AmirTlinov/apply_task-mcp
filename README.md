@@ -27,11 +27,11 @@ apply_task tui
 
 ```
 +------+----------------------------------------------+-----+-----+
-| ● OK | TASK-022 · Core-Lab · Mixed policies runtime |100% |3/3  |
-| ● IP | TASK-023 · Core-Lab · Prompt blending engine | 65% |2/3  |
-| ○ BL | TASK-024 · Tools · Streaming tracer          | 20% |0/3  |
+| ● DONE | TASK-022 · Core-Lab · Mixed policies runtime |100% |3/3  |
+| ● ACTV | TASK-023 · Core-Lab · Prompt blending engine | 65% |2/3  |
+| ○ TODO | TASK-024 · Tools · Streaming tracer          | 20% |0/3  |
 +------+----------------------------------------------+-----+-----+
-Legend: ● Done   ● In Progress   ○ Backlog | % progress | Σ subtasks
+Legend: ● DONE   ● ACTIVE   ○ TODO | % progress | Σ subtasks
 Mouse: wheel scrolls viewport, click selects, double-click opens details.
 ```
 
@@ -41,7 +41,7 @@ Mouse: wheel scrolls viewport, click selects, double-click opens details.
 +====================================================================+
 | [← Back]                                                           |
 +--------------------------------------------------------------------+
-| SUBTASK 2   ● IN PROGRESS                                          |
+| SUBTASK 2   ● ACTIVE                                               |
 +--------------------------------------------------------------------+
 | Title: Wire policy mixer across runtime injections                 |
 | [• • ·]  Criteria/Test/Blockers checkpoints                        |
@@ -55,6 +55,16 @@ Mouse: wheel scrolls viewport, click selects, double-click opens details.
 +====================================================================+
 ```
 
+## Screenshots
+
+| Tasks | Task detail |
+| --- | --- |
+| <img src="docs/screenshots/tasks.png" alt="Tasks view" width="520" /> | <img src="docs/screenshots/task-detail.png" alt="Task detail modal" width="520" /> |
+
+| Board | Dashboard |
+| --- | --- |
+| <img src="docs/screenshots/board.png" alt="Board view" width="520" /> | <img src="docs/screenshots/dashboard.png" alt="Dashboard view" width="520" /> |
+
 ## Why this tool
 
 - **Single file** — copy `tasks.py` into any repo, no external service.
@@ -63,7 +73,7 @@ Mouse: wheel scrolls viewport, click selects, double-click opens details.
 - **Keyboard & mouse parity** — dual-language hotkeys plus wheel + click navigation.
 - **Nested subtasks tree** — detail pane renders recursive subtasks with `--path` prefixes (e.g., `0.1.2`), all actions honor the tree; use `←/→` in detail view to collapse/expand.
 - **Domain discipline** — tasks live in domain folders inside `.tasks/` (see [DOMAIN_STRUCTURE.md](DOMAIN_STRUCTURE.md)).
-- **Guided quality gates** — criteria/tests/blockers must be proven before OK status.
+- **Guided quality gates** — criteria/tests/blockers must be proven before DONE status.
 - **Templates & validators** — `apply_task template subtasks --count N` generates JSON stubs, flagship validation guarantees ≥3 detailed subtasks, ≥85% coverage.
 
 ## Deterministic command surface
@@ -82,7 +92,8 @@ Every non-interactive command prints structured JSON:
       {
         "id": "TASK-022",
         "title": "Mixed policies runtime",
-        "status": "WARN",
+        "status": "ACTIVE",
+        "status_code": "WARN",
         "progress": 65,
         "subtasks": [
           {
@@ -124,8 +135,8 @@ apply_task edit TASK-001 --description "New scope" --priority HIGH \
   --depends-on TASK-002 --phase sprint-2
 
 # Status updates
-apply_task update TASK-001 WARN   # start work (FAIL → WARN)
-apply_task update TASK-001 OK     # complete (WARN → OK)
+apply_task update TASK-001 ACTIVE # start work (TODO → ACTIVE)
+apply_task update TASK-001 DONE   # complete (ACTIVE → DONE)
 
 # Checkpoints
 apply_task ok TASK-001 0 --criteria-note "..." --tests-note "..."
@@ -142,6 +153,10 @@ apply_task bulk --input plan.json   # batch checkpoints from JSON
 
 # TUI
 apply_task tui --theme dark-contrast   # TUI with alternative palette
+
+# GUI (desktop, Tauri)
+make gui-dev
+make gui-build
 ```
 
 ## Keyboard & mouse quick reference
@@ -182,7 +197,7 @@ apply_task ai '{"intent": "create", "title": "Task", "parent": "ROOT", ...}'
 apply_task ai '{"intent": "batch", "task": "TASK-001", "atomic": true, "operations": [...]}'
 ```
 
-**Available intents:** `context`, `resume`, `create`, `decompose`, `define`, `verify`, `done`, `progress`, `delete`, `complete`, `batch`, `undo`, `redo`, `history`, `storage`, `migrate`.
+**Available intents:** `context`, `resume`, `create`, `decompose`, `define`, `verify`, `done`, `progress`, `plan`, `delete`, `complete`, `batch`, `undo`, `redo`, `history`, `storage`, `migrate`.
 
 All responses follow a consistent structure:
 
@@ -203,7 +218,11 @@ For Claude Code and other AI assistants:
 apply_task mcp  # Start MCP stdio server
 ```
 
-Available tools: `tasks_list`, `tasks_show`, `tasks_context`, `tasks_create`, `tasks_done`, `tasks_macro_ok`, `tasks_macro_note`, `tasks_macro_bulk`.
+Available tools (core): `tasks_context`, `tasks_list`, `tasks_show`, `tasks_create`, `tasks_decompose`, `tasks_define`, `tasks_verify`, `tasks_done`, `tasks_progress`, `tasks_delete`, `tasks_complete`, `tasks_batch`, `tasks_history`, `tasks_storage`, `tasks_next`.
+
+AI transparency/tools: `tasks_ai_status`, `tasks_plan`, `tasks_user_signal`, `tasks_send_signal`, `tasks_template_subtasks`.
+
+Macros/automation: `tasks_macro_ok`, `tasks_macro_note`, `tasks_macro_bulk`, `tasks_macro_update`, `tasks_macro_suggest`, `tasks_macro_quick`, `tasks_automation_task_template`, `tasks_automation_health`, `tasks_automation_projects_health`.
 
 Configure in Claude Desktop:
 ```json
@@ -213,7 +232,7 @@ Configure in Claude Desktop:
 ## Data layout / storage
 
 - All tasks for a git project live in the global directory `~/.tasks/<namespace>`, where `namespace` is derived from the git remote (or folder name if no remote). The tool ignores any local `.tasks` inside the repo.
-- `todo.machine.md` — human overview (`- [x] Title | OK | note >> .tasks/TASK-001.task`).
+- `todo.machine.md` — human overview (`- [x] Title | DONE | note >> .tasks/TASK-001.task`).
 - `.tasks/TASK-###.task` — YAML front matter + Markdown body (description, subtasks, risks, tests, blockers, notes).
 - `.last` — stores the last `TASK@domain` context for shorthand commands.
 
@@ -254,9 +273,9 @@ apply_task tui
      status:
        name: Status
        options:
-         OK: Done
-         WARN: "In Progress"
-         FAIL: Backlog
+         DONE: Done
+         ACTIVE: "In Progress"
+         TODO: Backlog
      progress:
        name: Progress
      domain:

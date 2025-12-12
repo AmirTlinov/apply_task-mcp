@@ -3,6 +3,7 @@
 from typing import Any, Dict
 
 from core import SubTask, TaskDetail
+from core.status import task_status_label
 
 
 def subtask_to_dict(subtask: SubTask, path: str = "0", compact: bool = False) -> Dict[str, Any]:
@@ -42,7 +43,7 @@ def subtask_to_dict(subtask: SubTask, path: str = "0", compact: bool = False) ->
         return d
 
     # Full representation
-    return {
+    data: Dict[str, Any] = {
         "path": path,
         "title": subtask.title,
         "completed": subtask.completed,
@@ -52,6 +53,9 @@ def subtask_to_dict(subtask: SubTask, path: str = "0", compact: bool = False) ->
         "criteria_confirmed": subtask.criteria_confirmed,
         "tests_confirmed": subtask.tests_confirmed,
         "blockers_resolved": subtask.blockers_resolved,
+        "criteria_auto_confirmed": getattr(subtask, "criteria_auto_confirmed", False),
+        "tests_auto_confirmed": getattr(subtask, "tests_auto_confirmed", False),
+        "blockers_auto_resolved": getattr(subtask, "blockers_auto_resolved", False),
         "criteria_notes": list(subtask.criteria_notes),
         "tests_notes": list(subtask.tests_notes),
         "blockers_notes": list(subtask.blockers_notes),
@@ -63,6 +67,11 @@ def subtask_to_dict(subtask: SubTask, path: str = "0", compact: bool = False) ->
         "block_reason": getattr(subtask, "block_reason", ""),
         "computed_status": getattr(subtask, "computed_status", "pending"),
     }
+    if getattr(subtask, "children", None):
+        data["subtasks"] = [
+            subtask_to_dict(ch, f"{path}.{i}") for i, ch in enumerate(subtask.children)
+        ]
+    return data
 
 
 def task_to_dict(
@@ -74,10 +83,12 @@ def task_to_dict(
     compact=False: full output with all fields
     """
     if compact:
+        raw_status = task.status
         data: Dict[str, Any] = {
             "id": task.id,
             "title": task.title,
-            "status": task.status,
+            "status": task_status_label(raw_status),
+            "status_code": raw_status,
             "progress": task.calculate_progress(),
         }
         # Include domain for GUI task disambiguation
@@ -93,10 +104,12 @@ def task_to_dict(
         return data
 
     # Full representation
+    raw_status = task.status
     data = {
         "id": task.id,
         "title": task.title,
-        "status": task.status,
+        "status": task_status_label(raw_status),
+        "status_code": raw_status,
         "progress": task.calculate_progress(),
         "priority": task.priority,
         "domain": task.domain,

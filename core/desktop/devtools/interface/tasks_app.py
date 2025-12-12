@@ -58,7 +58,7 @@ from .mcp_server import run_stdio_server as _mcp_run
 from .tui_app import cmd_tui, TaskTrackerTUI
 from .tui_themes import THEMES, DEFAULT_THEME
 from .tui_models import Task, CLI_DEPS, CHECKLIST_SECTIONS, InteractiveFormattedTextControl
-from core.desktop.devtools.interface.cli_macros_extended import cmd_update, cmd_ok, cmd_note, cmd_suggest, cmd_quick
+from core.desktop.devtools.interface.cli_macros_extended import cmd_update, cmd_ok, cmd_note, cmd_suggest, cmd_quick, cmd_progress_note, cmd_block
 
 # Additional exports for backward compatibility and tests
 from core import Status, SubTask, TaskDetail

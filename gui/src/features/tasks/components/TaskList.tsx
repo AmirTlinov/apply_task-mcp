@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { TaskCard } from "./TaskCard";
 import { TaskListSkeleton } from "@/components/common/Skeleton";
 import { EmptyState } from "@/components/common/EmptyState";
@@ -7,6 +7,8 @@ import type { TaskListItem, TaskStatus } from "@/types/task";
 interface TaskListProps {
   tasks: TaskListItem[];
   onTaskClick?: (taskId: string) => void;
+  focusedTaskId?: string | null;
+  onFocusChange?: (taskId: string | null) => void;
   onNewTask?: () => void;
   onStatusChange?: (taskId: string, status: TaskStatus) => void;
   onDelete?: (taskId: string) => void;
@@ -17,6 +19,8 @@ interface TaskListProps {
 export function TaskList({
   tasks,
   onTaskClick,
+  focusedTaskId,
+  onFocusChange,
   onNewTask,
   onStatusChange,
   onDelete,
@@ -24,11 +28,19 @@ export function TaskList({
   searchQuery,
 }: TaskListProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const effectiveSelectedId = focusedTaskId ?? selectedId;
 
   const handleClick = (taskId: string) => {
     setSelectedId(taskId);
+    onFocusChange?.(taskId);
     onTaskClick?.(taskId);
   };
+
+  useEffect(() => {
+    if (!effectiveSelectedId) return;
+    const el = document.querySelector<HTMLElement>(`[data-task-id="${effectiveSelectedId}"]`);
+    el?.scrollIntoView({ block: "nearest" });
+  }, [effectiveSelectedId]);
 
   // Skeleton loading state
   if (isLoading) {
@@ -83,14 +95,15 @@ export function TaskList({
       }}
     >
       {tasks.map((task) => (
-        <TaskCard
-          key={task.id}
-          task={task}
-          onClick={() => handleClick(task.id)}
-          onStatusChange={onStatusChange ? (status) => onStatusChange(task.id, status) : undefined}
-          onDelete={onDelete ? () => onDelete(task.id) : undefined}
-          isSelected={selectedId === task.id}
-        />
+        <div key={task.id} data-task-id={task.id}>
+          <TaskCard
+            task={task}
+            onClick={() => handleClick(task.id)}
+            onStatusChange={onStatusChange ? (status) => onStatusChange(task.id, status) : undefined}
+            onDelete={onDelete ? () => onDelete(task.id) : undefined}
+            isSelected={effectiveSelectedId === task.id}
+          />
+        </div>
       ))}
     </div>
   );

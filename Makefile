@@ -17,7 +17,14 @@ smoke:
 test:
 	pytest -q
 
+# GUI (Tauri) helpers — for humans
+gui-dev:
+	cd gui && pnpm install && pnpm tauri dev
+
+gui-build:
+	cd gui && pnpm install && pnpm tauri build
+
 checksums:
 	cd dist && find . -maxdepth 1 -type f -print0 | xargs -0 sha256sum > SHA256SUMS
 
-.PHONY: build zipapp smoke test checksums
+.PHONY: build zipapp smoke test checksums gui-dev gui-build

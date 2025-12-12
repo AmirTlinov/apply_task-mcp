@@ -42,44 +42,27 @@ class FileTaskRepository(TaskRepository):
     def load(self, task_id: str, domain: str = "") -> Optional[TaskDetail]:
         """Load a task by ID, optionally from a specific domain buffer."""
         path = self._resolve_path(task_id, domain)
-        with open("/tmp/debug_mcp.log", "a") as f:
-             f.write(f"[_repo_load] task_id={task_id}, domain={domain}, resolved_path={path}\n")
-             
         if path.exists():
             task = TaskFileParser.parse(path)
             if task:
                 self._assign_domain(task, path)
             return task
 
-        # Fallback: search everywhere
-        with open("/tmp/debug_mcp.log", "a") as f:
-             f.write(f"[_repo_load] Path not found. Trying rglob for {task_id}.task in {self.tasks_dir}\n")
-             
-        # Case-insensitive search using rglob is tricky, but we assume exact match for now
-        # or use glob pattern
+        # Fallback: search everywhere within this tasks_dir
         candidates = list(self.tasks_dir.rglob(f"{task_id}.task"))
-        
-        with open("/tmp/debug_mcp.log", "a") as f:
-             f.write(f"[_repo_load] Candidates found: {candidates}\n")
-             
         if not candidates:
             return None
-        
-        # Iterate through candidates to find the first parsable one
-        # This handles cases where duplicates exist and one might be corrupt/invalid
+
+        # Return the first parsable candidate
         for candidate in candidates:
-             try:
-                 task = TaskFileParser.parse(candidate)
-                 if task:
-                     self._assign_domain(task, candidate)
-                     with open("/tmp/debug_mcp.log", "a") as f:
-                        f.write(f"[_repo_load] Loaded parsing candidate: {candidate}\n")
-                     return task
-             except Exception as e:
-                 with open("/tmp/debug_mcp.log", "a") as f:
-                    f.write(f"[_repo_load] Failed to parse candidate {candidate}: {e}\n")
-                 continue
-        
+            try:
+                task = TaskFileParser.parse(candidate)
+                if task:
+                    self._assign_domain(task, candidate)
+                    return task
+            except Exception:
+                continue
+
         return None
 
     def save(self, task: TaskDetail) -> None:
@@ -106,7 +89,8 @@ class FileTaskRepository(TaskRepository):
             if ".snapshots" in f.parts:
                 continue
             try:
-                sig ^= int(f.stat().st_mtime_ns)
+                st = f.stat()
+                sig ^= int(st.st_mtime_ns) ^ int(st.st_size)
             except OSError:
                 continue
         return sig if sig else int(time.time_ns())

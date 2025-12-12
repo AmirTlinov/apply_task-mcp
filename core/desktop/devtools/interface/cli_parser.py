@@ -36,7 +36,7 @@ def build_parser(commands: Any, themes: Mapping[str, Any], default_theme: str, a
 
     # list
     lp = sub.add_parser("list", help="Список задач")
-    lp.add_argument("--status", choices=["OK", "WARN", "FAIL"])
+    lp.add_argument("--status", choices=["TODO", "ACTIVE", "DONE", "FAIL", "WARN", "OK"])
     lp.add_argument("--tag", help="Фильтр по тегу")
     lp.add_argument("--blocked", action="store_true", help="Только заблокированные зависимостями")
     lp.add_argument("--stale", type=int, metavar="DAYS", help="Без активности N дней")
@@ -53,7 +53,7 @@ def build_parser(commands: Any, themes: Mapping[str, Any], default_theme: str, a
     # create
     cp = sub.add_parser("create", help="Создать задачу")
     cp.add_argument("title")
-    cp.add_argument("--status", default="FAIL", choices=["OK", "WARN", "FAIL"])
+    cp.add_argument("--status", default="TODO", choices=["TODO", "ACTIVE", "DONE", "FAIL", "WARN", "OK"])
     cp.add_argument("--priority", default="MEDIUM", choices=["LOW", "MEDIUM", "HIGH"])
     cp.add_argument("--parent", required=True)
     cp.add_argument("--description", "-d", required=True)
@@ -85,7 +85,7 @@ def build_parser(commands: Any, themes: Mapping[str, Any], default_theme: str, a
         ),
     )
     tp.add_argument("title")
-    tp.add_argument("--status", default="FAIL", choices=["OK", "WARN", "FAIL"])
+    tp.add_argument("--status", default="TODO", choices=["TODO", "ACTIVE", "DONE", "FAIL", "WARN", "OK"])
     tp.add_argument("--priority", default="MEDIUM", choices=["LOW", "MEDIUM", "HIGH"])
     tp.add_argument("--parent", required=True)
     tp.add_argument("--description", "-d", required=True)
@@ -116,9 +116,9 @@ def build_parser(commands: Any, themes: Mapping[str, Any], default_theme: str, a
         "update",
         help="Обновить статус задачи",
         description=(
-            "Обновляет статус задачи на OK/WARN/FAIL.\n"
-            "Вызовы поддерживают оба порядка: `update TASK-005 OK` или `update OK TASK-005`.\n"
-            "Перед переводом в OK убедись, что все подзадачи закрыты и есть доказательства тестов."
+            "Обновляет статус задачи на TODO/ACTIVE/DONE (алиасы: FAIL/WARN/OK).\n"
+            "Вызовы поддерживают оба порядка: `update TASK-005 DONE` или `update DONE TASK-005`.\n"
+            "Перед переводом в DONE убедись, что все подзадачи закрыты и есть доказательства тестов."
         ),
     )
     up.add_argument("arg1")
@@ -195,6 +195,23 @@ def build_parser(commands: Any, themes: Mapping[str, Any], default_theme: str, a
     add_context_args(notep)
     notep.set_defaults(func=commands.cmd_note)
 
+    # progress-note - add progress note without completion (Phase 1)
+    pnote = sub.add_parser("progress-note", help="Добавить progress note к подзадаче (без завершения)")
+    pnote.add_argument("task_id", help="Task ID (e.g., TASK-001)")
+    pnote.add_argument("path", help="Путь подзадачи (0, 0.1, 0.1.2)")
+    pnote.add_argument("note", help="Текст progress note")
+    add_context_args(pnote)
+    pnote.set_defaults(func=commands.cmd_progress_note)
+
+    # block - block/unblock subtask (Phase 1)
+    blockp = sub.add_parser("block", help="Заблокировать/разблокировать подзадачу")
+    blockp.add_argument("task_id", help="Task ID (e.g., TASK-001)")
+    blockp.add_argument("path", help="Путь подзадачи (0, 0.1, 0.1.2)")
+    blockp.add_argument("--reason", "-r", help="Причина блокировки")
+    blockp.add_argument("--unblock", "-u", action="store_true", help="Снять блокировку")
+    add_context_args(blockp)
+    blockp.set_defaults(func=commands.cmd_block)
+
     # bulk macro
     blp = sub.add_parser("bulk", help="Выполнить набор чекпоинтов из JSON payload")
     blp.add_argument("--input", "-i", default="-", help="Источник JSON (строка, @file, '-'=STDIN)")
@@ -228,9 +245,9 @@ def build_parser(commands: Any, themes: Mapping[str, Any], default_theme: str, a
     sync_cmd.set_defaults(func=commands.cmd_projects_sync_cli)
     status_cmd = proj_sub.add_parser("status", help="Показать текущее состояние Projects sync")
     status_cmd.set_defaults(func=commands.cmd_projects_status)
-    status_set_cmd = proj_sub.add_parser("status-set", help="Установить статус задачи (OK/WARN/FAIL) — единообразно с TUI")
+    status_set_cmd = proj_sub.add_parser("status-set", help="Установить статус задачи (TODO/ACTIVE/DONE; алиасы OK/WARN/FAIL) — единообразно с TUI")
     status_set_cmd.add_argument("task_id", help="TASK-xxx")
-    status_set_cmd.add_argument("status", choices=["OK", "WARN", "FAIL"])
+    status_set_cmd.add_argument("status", choices=["TODO", "ACTIVE", "DONE", "FAIL", "WARN", "OK"])
     add_domain_arg(status_set_cmd)
     status_set_cmd.set_defaults(func=commands.cmd_status_set)
     autosync_cmd = proj_sub.add_parser("autosync", help="Включить или выключить auto_sync без редактирования конфигов")
@@ -311,7 +328,7 @@ def build_parser(commands: Any, themes: Mapping[str, Any], default_theme: str, a
     # clean
     cl = sub.add_parser("clean", help="Удалить задачи по фильтрам")
     cl.add_argument("--tag", help="тег без #")
-    cl.add_argument("--status", choices=["OK", "WARN", "FAIL"], help="фильтр по статусу")
+    cl.add_argument("--status", choices=["TODO", "ACTIVE", "DONE", "FAIL", "WARN", "OK"], help="фильтр по статусу")
     cl.add_argument("--phase", help="фаза/итерация")
     cl.add_argument("--glob", help="glob-шаблон (.tasks relative), например 'phase1/*.task'")
     cl.add_argument("--dry-run", action="store_true", help="только показать задачи без удаления")
@@ -363,7 +380,7 @@ def build_parser(commands: Any, themes: Mapping[str, Any], default_theme: str, a
     auto_create.add_argument("--coverage", type=int, default=85)
     auto_create.add_argument("--sla", default="p95<=200ms")
     auto_create.add_argument("--subtasks", default=str(automation_tmp / "subtasks.template.json"))
-    auto_create.add_argument("--status", default="FAIL", choices=["OK", "WARN", "FAIL"])
+    auto_create.add_argument("--status", default="TODO", choices=["TODO", "ACTIVE", "DONE", "FAIL", "WARN", "OK"])
     auto_create.add_argument("--priority", default="MEDIUM", choices=["LOW", "MEDIUM", "HIGH"])
     auto_create.add_argument("--context")
     auto_create.add_argument("--tags")

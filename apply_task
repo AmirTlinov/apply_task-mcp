@@ -182,6 +182,7 @@ FORWARD_COMMANDS = {
     "analyze": "analyze",
     "add-subtask": "add-subtask",
     "add-dep": "add-dep",
+    "gui": "gui",
 }
 
 STATUS_COMMANDS = {"done": "OK", "start": "WARN", "fail": "FAIL"}

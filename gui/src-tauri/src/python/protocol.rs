@@ -33,32 +33,6 @@ pub struct JsonRpcError {
     pub data: Option<Value>,
 }
 
-impl JsonRpcError {
-    pub fn internal(message: &str) -> Self {
-        Self {
-            code: -32603,
-            message: message.to_string(),
-            data: None,
-        }
-    }
-
-    pub fn parse_error(message: &str) -> Self {
-        Self {
-            code: -32700,
-            message: message.to_string(),
-            data: None,
-        }
-    }
-
-    pub fn method_not_found(method: &str) -> Self {
-        Self {
-            code: -32601,
-            message: format!("Method not found: {}", method),
-            data: None,
-        }
-    }
-}
-
 /// JSON-RPC 2.0 response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcResponse {
@@ -68,39 +42,6 @@ pub struct JsonRpcResponse {
     pub result: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<JsonRpcError>,
-}
-
-impl JsonRpcResponse {
-    pub fn success(id: u64, result: Value) -> Self {
-        Self {
-            jsonrpc: "2.0".to_string(),
-            id,
-            result: Some(result),
-            error: None,
-        }
-    }
-
-    pub fn error(id: u64, error: JsonRpcError) -> Self {
-        Self {
-            jsonrpc: "2.0".to_string(),
-            id,
-            result: None,
-            error: Some(error),
-        }
-    }
-
-    pub fn is_success(&self) -> bool {
-        self.error.is_none()
-    }
-}
-
-/// JSON-RPC 2.0 notification (no id, no response expected)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JsonRpcNotification {
-    pub jsonrpc: String,
-    pub method: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub params: Option<Value>,
 }
 
 #[cfg(test)]
@@ -118,15 +59,28 @@ mod tests {
 
     #[test]
     fn test_response_success() {
-        let resp = JsonRpcResponse::success(1, json!({"tasks": []}));
-        assert!(resp.is_success());
+        let resp = JsonRpcResponse {
+            jsonrpc: "2.0".to_string(),
+            id: 1,
+            result: Some(json!({"tasks": []})),
+            error: None,
+        };
+        assert!(resp.error.is_none());
         assert!(resp.result.is_some());
     }
 
     #[test]
     fn test_response_error() {
-        let resp = JsonRpcResponse::error(1, JsonRpcError::internal("test error"));
-        assert!(!resp.is_success());
+        let resp = JsonRpcResponse {
+            jsonrpc: "2.0".to_string(),
+            id: 1,
+            result: None,
+            error: Some(JsonRpcError {
+                code: -32603,
+                message: "test error".to_string(),
+                data: None,
+            }),
+        };
         assert!(resp.error.is_some());
     }
 }
