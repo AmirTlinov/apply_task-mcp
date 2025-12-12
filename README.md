@@ -57,6 +57,8 @@ Mouse: wheel scrolls viewport, click selects, double-click opens details.
 
 ## Screenshots
 
+### GUI
+
 | Tasks | Task detail |
 | --- | --- |
 | <img src="docs/screenshots/tasks.png" alt="Tasks view" width="520" /> | <img src="docs/screenshots/task-detail.png" alt="Task detail modal" width="520" /> |
@@ -64,6 +66,16 @@ Mouse: wheel scrolls viewport, click selects, double-click opens details.
 | Board | Dashboard |
 | --- | --- |
 | <img src="docs/screenshots/board.png" alt="Board view" width="520" /> | <img src="docs/screenshots/dashboard.png" alt="Dashboard view" width="520" /> |
+
+### TUI
+
+| Project picker | Tasks list |
+| --- | --- |
+| <img src="docs/screenshots/tui-projects.png" alt="TUI project picker" width="520" /> | <img src="docs/screenshots/tui-tasks.png" alt="TUI task list" width="520" /> |
+
+| Task detail |
+| --- |
+| <img src="docs/screenshots/tui-detail.png" alt="TUI task detail" width="1040" /> |
 
 ## Why this tool
 
