@@ -1,5 +1,9 @@
 # Task Tracker — single-file CLI + TUI
 
+<p align="center">
+  <img src="docs/screenshots/hero.png" alt="Apply Task GUI — Tasks view" width="1040" />
+</p>
+
 Task Tracker (`apply_task`) is a single self-contained CLI/TUI that keeps your backlog deterministic and AI-friendly. Every non-interactive command returns structured JSON, while the TUI gives instant visibility into objectives, subtasks, tests, and blockers.
 
 **Start here**
@@ -21,51 +25,17 @@ pipx install .
 apply_task tui
 ```
 
-## ASCII screen previews
-
-### Board view (list of tasks)
-
-```
-+------+----------------------------------------------+-----+-----+
-| ● DONE | TASK-022 · Core-Lab · Mixed policies runtime |100% |3/3  |
-| ● ACTV | TASK-023 · Core-Lab · Prompt blending engine | 65% |2/3  |
-| ○ TODO | TASK-024 · Tools · Streaming tracer          | 20% |0/3  |
-+------+----------------------------------------------+-----+-----+
-Legend: ● DONE   ● ACTIVE   ○ TODO | % progress | Σ subtasks
-Mouse: wheel scrolls viewport, click selects, double-click opens details.
-```
-
-### Detail view with back button
-
-```
-+====================================================================+
-| [← Back]                                                           |
-+--------------------------------------------------------------------+
-| SUBTASK 2   ● ACTIVE                                               |
-+--------------------------------------------------------------------+
-| Title: Wire policy mixer across runtime injections                 |
-| [• • ·]  Criteria/Test/Blockers checkpoints                        |
-|  > 1. Collect policy graph stats                                   |
-|    [• • ·]                                                         |
-|  > 2. Simulate mixer latency                                       |
-|                                                                   |
-| Notes:                                                             |
-|  - pytest -k mixer_latency                                         |
-|  - attach tracing IDs                                              |
-+====================================================================+
-```
-
 ## Screenshots
 
 ### GUI
 
-| Tasks | Task detail |
+| Task detail | Board |
 | --- | --- |
-| <img src="docs/screenshots/tasks.png" alt="Tasks view" width="520" /> | <img src="docs/screenshots/task-detail.png" alt="Task detail modal" width="520" /> |
+| <img src="docs/screenshots/task-detail.png" alt="Task detail modal" width="520" /> | <img src="docs/screenshots/board.png" alt="Board view" width="520" /> |
 
-| Board | Dashboard |
-| --- | --- |
-| <img src="docs/screenshots/board.png" alt="Board view" width="520" /> | <img src="docs/screenshots/dashboard.png" alt="Dashboard view" width="520" /> |
+| Dashboard |
+| --- |
+| <img src="docs/screenshots/dashboard.png" alt="Dashboard view" width="1040" /> |
 
 ### TUI
 
