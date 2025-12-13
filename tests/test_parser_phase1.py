@@ -18,7 +18,7 @@ def test_parse_progress_notes(tmp_path: Path):
         """---
 id: test-1
 title: Test Task
-status: FAIL
+status: TODO
 ---
 
 ## Подзадачи
@@ -45,7 +45,7 @@ def test_parse_started_at(tmp_path: Path):
         """---
 id: test-2
 title: Test Task
-status: FAIL
+status: TODO
 ---
 
 ## Подзадачи
@@ -68,7 +68,7 @@ def test_parse_blocked_yes_with_reason(tmp_path: Path):
         """---
 id: test-3
 title: Test Task
-status: FAIL
+status: TODO
 ---
 
 ## Подзадачи
@@ -92,7 +92,7 @@ def test_parse_blocked_no(tmp_path: Path):
         """---
 id: test-4
 title: Test Task
-status: FAIL
+status: TODO
 ---
 
 ## Подзадачи
@@ -116,7 +116,7 @@ def test_parse_blocked_russian_da(tmp_path: Path):
         """---
 id: test-5
 title: Test Task
-status: FAIL
+status: TODO
 ---
 
 ## Подзадачи
@@ -140,7 +140,7 @@ def test_parse_blocked_english_yes(tmp_path: Path):
         """---
 id: test-6
 title: Test Task
-status: FAIL
+status: TODO
 ---
 
 ## Подзадачи
@@ -164,7 +164,7 @@ def test_parse_all_phase1_fields_together(tmp_path: Path):
         """---
 id: test-7
 title: Test Task
-status: FAIL
+status: TODO
 ---
 
 ## Подзадачи
@@ -209,7 +209,7 @@ def test_parse_empty_progress_notes(tmp_path: Path):
         """---
 id: test-8
 title: Test Task
-status: FAIL
+status: TODO
 ---
 
 ## Подзадачи
@@ -232,7 +232,7 @@ def test_parse_empty_started_at(tmp_path: Path):
         """---
 id: test-9
 title: Test Task
-status: FAIL
+status: TODO
 ---
 
 ## Подзадачи
@@ -255,7 +255,7 @@ def test_parse_blocked_without_reason(tmp_path: Path):
         """---
 id: test-10
 title: Test Task
-status: FAIL
+status: TODO
 ---
 
 ## Подзадачи
@@ -279,7 +279,7 @@ def test_backward_compatibility(tmp_path: Path):
         """---
 id: test-11
 title: Legacy Task
-status: OK
+status: DONE
 ---
 
 ## Описание
@@ -336,7 +336,7 @@ def test_parse_nested_subtasks_with_phase1_fields(tmp_path: Path):
         """---
 id: test-12
 title: Test Task
-status: FAIL
+status: TODO
 ---
 
 ## Подзадачи
@@ -384,7 +384,7 @@ def test_parse_progress_notes_with_semicolons_in_text(tmp_path: Path):
         """---
 id: test-13
 title: Test Task
-status: FAIL
+status: TODO
 ---
 
 ## Подзадачи
@@ -411,7 +411,7 @@ def test_parse_blocked_case_insensitive(tmp_path: Path):
         """---
 id: test-14
 title: Test Task
-status: FAIL
+status: TODO
 ---
 
 ## Подзадачи
@@ -456,7 +456,7 @@ def test_parse_whitespace_handling(tmp_path: Path):
         """---
 id: test-15
 title: Test Task
-status: FAIL
+status: TODO
 ---
 
 ## Подзадачи
@@ -486,7 +486,7 @@ def test_parse_blocked_reason_without_да_prefix(tmp_path: Path):
         """---
 id: test-16
 title: Test Task
-status: FAIL
+status: TODO
 ---
 
 ## Подзадачи

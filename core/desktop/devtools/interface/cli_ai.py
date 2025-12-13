@@ -421,7 +421,7 @@ class Meta:
 
     task_id: Optional[str] = None
     task_status: Optional[str] = None  # TODO / ACTIVE / DONE
-    task_status_code: Optional[str] = None  # legacy aliases: FAIL / WARN / OK
+    task_status_code: Optional[str] = None
     task_progress: int = 0
     subtasks_total: int = 0
     subtasks_completed: int = 0
@@ -2162,7 +2162,7 @@ def handle_complete(
     try:
         status_code = task_status_code(status)
     except ValueError:
-        return error_response("complete", "INVALID_STATUS", "status должен быть TODO, ACTIVE или DONE (алиасы OK, WARN, FAIL)")
+        return error_response("complete", "INVALID_STATUS", "status должен быть TODO, ACTIVE или DONE")
     status_ui = task_status_label(status_code)
 
     task = _load_task(manager, task_id, domain_path)
@@ -3291,7 +3291,7 @@ def _dry_run_validate(
             task_status_code(status)
         except ValueError:
             result["would_execute"] = False
-            result["reason"] = "status должен быть TODO, ACTIVE или DONE (алиасы OK, WARN, FAIL)"
+            result["reason"] = "status должен быть TODO, ACTIVE или DONE"
 
     elif intent == "create":
         title = data.get("title")

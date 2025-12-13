@@ -21,26 +21,11 @@ TaskStatusCode = Literal["TODO", "ACTIVE", "DONE"]
 
 _CANONICAL_CODES: Final[frozenset[str]] = frozenset({"TODO", "ACTIVE", "DONE"})
 
-_ALIASES_TO_CODE: Final[dict[str, TaskStatusCode]] = {
-    # Canonical task statuses
-    "TODO": "TODO",
-    "ACTIVE": "ACTIVE",
-    "DONE": "DONE",
-    # Legacy internal codes (backward compatible input)
-    "FAIL": "TODO",
-    "WARN": "ACTIVE",
-    "OK": "DONE",
-    # Older UI wording
-    "IN_PROGRESS": "ACTIVE",
-    "BACKLOG": "TODO",
-}
-
 
 def normalize_task_status(value: str, *, allow_unknown: bool = False) -> str:
     """Normalize task status input to internal status code.
 
     Canonical task statuses: TODO, ACTIVE, DONE.
-    Accepted aliases: OK/WARN/FAIL (legacy), plus IN_PROGRESS/BACKLOG for compatibility.
 
     When allow_unknown=True, returns the normalized token (uppercased, spaces→underscores)
     even if it is not a known status.
@@ -48,7 +33,6 @@ def normalize_task_status(value: str, *, allow_unknown: bool = False) -> str:
     token = (value or "").strip().upper().replace(" ", "_")
     if not token:
         return token
-    token = _ALIASES_TO_CODE.get(token, token)
     if token in _CANONICAL_CODES:
         return token
     if allow_unknown:

@@ -143,7 +143,7 @@ def test_clean_filtered(tmp_path: Path):
     t2.status = "TODO"
     repo.save(t2)
 
-    matched, removed = repo.clean_filtered(tag="alpha", status="OK")
+    matched, removed = repo.clean_filtered(tag="alpha", status="DONE")
     assert matched == ["TASK-201"]
     assert removed == 1
     assert repo.load("TASK-201") is None

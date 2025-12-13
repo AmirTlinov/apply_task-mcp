@@ -125,7 +125,7 @@ def build_parser(commands: Any, themes: Mapping[str, Any], default_theme: str, a
         "update",
         help="Обновить статус задачи",
         description=(
-            "Обновляет статус задачи на TODO/ACTIVE/DONE (алиасы: FAIL/WARN/OK).\n"
+            "Обновляет статус задачи на TODO/ACTIVE/DONE.\n"
             "Вызовы поддерживают оба порядка: `update TASK-005 DONE` или `update DONE TASK-005`.\n"
             "Перед переводом в DONE убедись, что все подзадачи закрыты и есть доказательства тестов."
         ),
@@ -254,7 +254,7 @@ def build_parser(commands: Any, themes: Mapping[str, Any], default_theme: str, a
     sync_cmd.set_defaults(func=commands.cmd_projects_sync_cli)
     status_cmd = proj_sub.add_parser("status", help="Показать текущее состояние Projects sync")
     status_cmd.set_defaults(func=commands.cmd_projects_status)
-    status_set_cmd = proj_sub.add_parser("status-set", help="Установить статус задачи (TODO/ACTIVE/DONE; алиасы OK/WARN/FAIL) — единообразно с TUI")
+    status_set_cmd = proj_sub.add_parser("status-set", help="Установить статус задачи (TODO/ACTIVE/DONE) — единообразно с TUI")
     status_set_cmd.add_argument("task_id", help="TASK-xxx")
     status_set_cmd.add_argument("status", type=_parse_task_status, choices=["TODO", "ACTIVE", "DONE"])
     add_domain_arg(status_set_cmd)

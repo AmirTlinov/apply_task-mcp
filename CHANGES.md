@@ -4,7 +4,7 @@
 
 - Added command palette (`Cmd/Ctrl+K`) for navigation + quick actions and task search.
 - Added keyboard navigation in Tasks list (`j/k`, `Enter`) with selection highlighting.
-- Task status labels now unified across GUI/TUI/CLI/MCP as `TODO` / `ACTIVE` / `DONE` (legacy aliases `OK`/`WARN`/`FAIL` are accepted on input and normalized).
+- Task status labels now unified across GUI/TUI/CLI/MCP as `TODO` / `ACTIVE` / `DONE`.
 - Replaced `window.confirm` with consistent confirm dialogs for destructive actions.
 - Added inline subtask title editing (double-click) via `define` intent support for `title`.
 - Timeline items are clickable and open task details.

@@ -120,11 +120,11 @@ def test_update_task_status_accepts_human_labels(tmp_path):
     assert ok and err is None
     assert manager.load_task("TASK-010H").status == "DONE"
 
-    ok, err = manager.update_task_status("TASK-010H", "WARN")
+    ok, err = manager.update_task_status("TASK-010H", "ACTIVE")
     assert ok and err is None
     assert manager.load_task("TASK-010H").status == "ACTIVE"
 
-    ok, err = manager.update_task_status("TASK-010H", "FAIL")
+    ok, err = manager.update_task_status("TASK-010H", "TODO")
     assert ok and err is None
     assert manager.load_task("TASK-010H").status == "TODO"
 

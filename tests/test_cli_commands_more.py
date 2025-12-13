@@ -30,7 +30,7 @@ def _deps(tasks):
 
 def test_cmd_list_filters_by_status(capsys):
     tasks = [DummyTask("A", status="DONE"), DummyTask("B", status="TODO")]
-    args = SimpleNamespace(domain="", phase=None, component=None, status="OK", progress=False)
+    args = SimpleNamespace(domain="", phase=None, component=None, status="DONE", progress=False)
     rc = cmds.cmd_list(args, _deps(tasks))
     assert rc == 0
     out = capsys.readouterr().out

@@ -54,7 +54,7 @@ def cmd_create_guided(args: argparse.Namespace) -> int:
 
 
 def cmd_status_set(args: argparse.Namespace) -> int:
-    """Set task status (TODO/ACTIVE/DONE; aliases OK/WARN/FAIL)."""
+    """Set task status (TODO/ACTIVE/DONE)."""
     manager = TaskManager()
     status = args.status.upper()
     task_id = normalize_task_id(args.task_id)

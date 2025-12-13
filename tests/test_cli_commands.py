@@ -54,7 +54,7 @@ def test_cmd_list_filters_and_summary():
         _task("TASK-1", status="DONE", phase="p1"),
         _task("TASK-2", status="TODO", phase="p2"),
     ])
-    args = SimpleNamespace(domain="", phase="p1", component="", status="OK", progress=False)
+    args = SimpleNamespace(domain="", phase="p1", component="", status="DONE", progress=False)
     rc = cmds.cmd_list(args, _deps(manager))
     assert rc == 0
     assert manager.list_calls == 1

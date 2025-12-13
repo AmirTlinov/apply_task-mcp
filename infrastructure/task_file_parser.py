@@ -24,10 +24,12 @@ class TaskFileParser:
         metadata = yaml.safe_load(parts[1]) or {}
         body = parts[2].strip()
 
+        progress = int(metadata.get("progress", 0) or 0)
+        blocked = bool(metadata.get("blocked", False))
         task = TaskDetail(
             id=metadata.get("id", ""),
             title=metadata.get("title", ""),
-            status=cls._parse_status(metadata.get("status", "TODO")),
+            status=cls._parse_status(metadata.get("status", "TODO"), progress=progress, blocked=blocked),
             status_manual=bool(metadata.get("status_manual", False)),
             domain=metadata.get("domain", "") or "",
             phase=metadata.get("phase", "") or "",
@@ -38,8 +40,8 @@ class TaskFileParser:
             updated=metadata.get("updated", ""),
             tags=metadata.get("tags", []),
             assignee=metadata.get("assignee", "ai"),
-            progress=metadata.get("progress", 0),
-            blocked=metadata.get("blocked", False),
+            progress=progress,
+            blocked=blocked,
             blockers=metadata.get("blockers", []),
             project_item_id=metadata.get("project_item_id"),
             project_draft_id=metadata.get("project_draft_id"),
@@ -83,10 +85,16 @@ class TaskFileParser:
         return task
 
     @staticmethod
-    def _parse_status(raw: str) -> str:
+    def _parse_status(raw: str, *, progress: int, blocked: bool) -> str:
         try:
             return task_status_code(raw or "TODO")
         except ValueError:
+            if blocked:
+                return "TODO"
+            if progress >= 100:
+                return "DONE"
+            if progress > 0:
+                return "ACTIVE"
             return "TODO"
 
     @classmethod

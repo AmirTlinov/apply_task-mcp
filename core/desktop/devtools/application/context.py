@@ -58,7 +58,7 @@ def derive_domain_explicit(domain: Optional[str], phase: Optional[str], componen
 
 
 def derive_folder_explicit(domain: Optional[str], phase: Optional[str], component: Optional[str]) -> str:
-    """Compatibility alias for legacy tests."""
+    """Alias for derive_domain_explicit (kept for call-site clarity)."""
     return derive_domain_explicit(domain, phase, component)
 
 

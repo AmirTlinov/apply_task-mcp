@@ -20,7 +20,7 @@ def test_move_glob_cli(tmp_path: Path):
     tasks_dir.mkdir(exist_ok=True)
     (tasks_dir / "phase1").mkdir(exist_ok=True)
     for i in range(2):
-        (tasks_dir / "phase1" / f"TASK-10{i}.task").write_text(f"---\nid: TASK-10{i}\ntitle: Demo {i}\nstatus: FAIL\nupdated: now\ncreated: now\n---\n")
+        (tasks_dir / "phase1" / f"TASK-10{i}.task").write_text(f"---\nid: TASK-10{i}\ntitle: Demo {i}\nstatus: TODO\nupdated: now\ncreated: now\n---\n")
 
     payload = _run_apply(root, tmp_path, ["move", "--glob", "phase1/TASK-10*.task", "--to", "phase2"])
     assert payload["status"] == "OK"
@@ -33,7 +33,7 @@ def test_clean_glob_cli(tmp_path: Path):
     tasks_dir = tmp_path / ".tasks"
     tasks_dir.mkdir(exist_ok=True)
     (tasks_dir / "phaseX").mkdir(exist_ok=True)
-    (tasks_dir / "phaseX" / "TASK-999.task").write_text("---\nid: TASK-999\ntitle: Demo\nstatus: FAIL\ncreated: now\nupdated: now\n---\n")
+    (tasks_dir / "phaseX" / "TASK-999.task").write_text("---\nid: TASK-999\ntitle: Demo\nstatus: TODO\ncreated: now\nupdated: now\n---\n")
 
     payload = _run_apply(root, tmp_path, ["clean", "--glob", "phaseX/TASK-*.task"])
     assert payload["status"] == "OK"

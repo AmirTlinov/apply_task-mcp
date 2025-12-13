@@ -516,7 +516,7 @@ def get_tool_definitions() -> List[Dict[str, Any]]:
                 "status": {
                     "type": "string",
                     "enum": ["TODO", "ACTIVE", "DONE"],
-                    "description": "Status filter (aliases OK/WARN/FAIL are accepted)"
+                    "description": "Status filter"
                 },
                 "compact": {"type": "boolean", "description": "Return compact task objects", "default": True},
                 "namespace": {"type": "string", "description": "Storage namespace to list from"},

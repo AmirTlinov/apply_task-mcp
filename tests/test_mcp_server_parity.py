@@ -67,7 +67,7 @@ def test_mcp_returns_text_content(monkeypatch, tmp_path):
         jsonrpc="2.0",
         method="tools/call",
         id=5,
-        params={"name": "tasks_macro_update", "arguments": {"task": task.id, "status": "OK", "force": True}},
+        params={"name": "tasks_macro_update", "arguments": {"task": task.id, "status": "DONE", "force": True}},
     ))
     upd_data = _parse_content(upd_resp["result"]["content"][0])
     assert upd_data["updated"]

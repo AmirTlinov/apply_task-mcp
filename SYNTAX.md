@@ -74,7 +74,7 @@ Automatically extracts:
 apply_task show           # last task from .last
 apply_task show 001       # TASK-001
 apply_task list           # backlog summary
-apply_task list --status ACTIVE   # filter by task status (legacy aliases OK/WARN/FAIL accepted)
+apply_task list --status ACTIVE   # filter by task status
 apply_task list --tag feature     # filter by tag
 apply_task list --blocked         # only tasks blocked by dependencies
 apply_task list --stale 7         # inactive for 7+ days

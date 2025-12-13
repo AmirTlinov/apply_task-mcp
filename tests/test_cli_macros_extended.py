@@ -23,11 +23,11 @@ def test_cmd_update_uses_last_task(monkeypatch, capsys):
     monkeypatch.setattr(macros, "task_to_dict", lambda detail, include_subtasks=True: {"id": detail.id, "domain": detail.domain})
     monkeypatch.setattr(macros, "translate", lambda key, **kwargs: key)
 
-    exit_code = macros.cmd_update(SimpleNamespace(arg1="OK", arg2=None, domain=None, phase=None, component=None))
+    exit_code = macros.cmd_update(SimpleNamespace(arg1="DONE", arg2=None, domain=None, phase=None, component=None))
     captured = capsys.readouterr().out
     assert exit_code == 0
     assert "TASK-123" in captured
-    assert calls["args"] == ("TASK-123", "OK", "dom")
+    assert calls["args"] == ("TASK-123", "DONE", "dom")
 
 
 def test_cmd_note_handles_index_error(monkeypatch, capsys):
@@ -100,7 +100,7 @@ def test_cmd_update_requires_status(monkeypatch, capsys):
 def test_cmd_update_requires_task(monkeypatch, capsys):
     monkeypatch.setattr(macros, "translate", lambda key, **kwargs: key)
     monkeypatch.setattr(macros, "get_last_task", lambda: (None, None))
-    exit_code = macros.cmd_update(SimpleNamespace(arg1="OK", arg2=None, domain=None, phase=None, component=None))
+    exit_code = macros.cmd_update(SimpleNamespace(arg1="DONE", arg2=None, domain=None, phase=None, component=None))
     assert exit_code == 1
     assert "ERR_NO_TASK_AND_LAST" in capsys.readouterr().out
 
@@ -114,7 +114,7 @@ def test_cmd_update_handles_not_found(monkeypatch, capsys):
     monkeypatch.setattr(macros, "translate", lambda key, **kwargs: key)
     monkeypatch.setattr(macros, "derive_domain_explicit", lambda *args, **kwargs: "")
     monkeypatch.setattr(macros, "get_last_task", lambda: (None, ""))
-    exit_code = macros.cmd_update(SimpleNamespace(arg1="OK", arg2="TASK-1", domain=None, phase=None, component=None))
+    exit_code = macros.cmd_update(SimpleNamespace(arg1="DONE", arg2="TASK-1", domain=None, phase=None, component=None))
     assert exit_code == 1
     assert "oops" in capsys.readouterr().out
 

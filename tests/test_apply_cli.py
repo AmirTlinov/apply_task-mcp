@@ -638,7 +638,7 @@ def test_sub_ok_alias():
                 "---",
                 f"id: {task_id}",
                 "title: Alias test",
-                "status: FAIL",
+                "status: TODO",
                 "priority: MEDIUM",
                 f"created: {now}",
                 f"updated: {now}",
@@ -737,7 +737,7 @@ def test_e2e_create_subtask_done_and_clean_with_filters():
     dry_payload = _json_body(dry_run_res)
     assert task_id in dry_payload["payload"]["matched"]
 
-    clean_res = _run_apply_cmd(["clean", "--tag", "manual", "--status", "OK", "--phase", "manual-phase"])
+    clean_res = _run_apply_cmd(["clean", "--tag", "manual", "--status", "DONE", "--phase", "manual-phase"])
     assert clean_res.returncode == 0
     clean_payload = _json_body(clean_res)
     assert clean_payload["payload"]["removed"] >= 1

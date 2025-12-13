@@ -275,7 +275,7 @@ Complete an entire task (all subtasks done → task status DONE).
 {
   "intent": "complete",
   "task": "TASK-001",
-  "status": "DONE"          // optional: explicit status (legacy aliases: OK/WARN/FAIL)
+  "status": "DONE"          // optional: explicit status
 }
 ```
 
