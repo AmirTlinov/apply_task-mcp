@@ -26,15 +26,11 @@ jobs:
           PIPX_HOME: /tmp/pipxhome
           PIPX_BIN_DIR: /tmp/pipxbin
         run: |
-          VERSION=$(python - <<'PY'
-import configparser
-cfg=configparser.ConfigParser(); cfg.read('setup.cfg'); print(cfg['metadata']['version'])
-PY
-          )
           /usr/bin/python -m pipx install --force dist/*.whl
           PATH=/tmp/pipxbin:$PATH apply_task --help
           PATH=/tmp/pipxbin:$PATH apply_task --version
-          PATH=/tmp/pipxbin:$PATH apply_task tui --help || true
+          PATH=/tmp/pipxbin:$PATH apply_task tui --help
+          $PIPX_HOME/venvs/apply-task/bin/python -c "import tasks; import apply_task; print('imports-ok')"
       - name: Zipapp
         run: |
           VERSION=$(python - <<'PY'
