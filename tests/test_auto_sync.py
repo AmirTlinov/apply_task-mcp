@@ -13,8 +13,8 @@ from core.desktop.devtools.application import task_manager as task_manager_mod
 
 
 class DummyProjects(projects_sync.ProjectsSync):
-    def __init__(self):
-        super().__init__(config_path=Path("dummy.yaml"))
+    def __init__(self, config_path: Path):
+        super().__init__(config_path=config_path)
         self.config = projects_sync.ProjectConfig(project_type="repository", owner="octo", repo="demo", number=1)
         self.enabled_flag = True
         self.calls = []
@@ -51,7 +51,7 @@ def test_auto_sync_all(monkeypatch, tmp_path):
     tasks_dir.mkdir()
     _write_task(tasks_dir / "TASK-001.task", "TASK-001")
 
-    dummy_sync = DummyProjects()
+    dummy_sync = DummyProjects(config_path=tmp_path / "dummy.yaml")
     monkeypatch.setattr(task_manager_mod, "get_projects_sync", lambda: dummy_sync)
     monkeypatch.setattr(tasks.TaskManager, "_make_parallel_sync", lambda self, base_sync: dummy_sync)
     monkeypatch.setattr(tasks.TaskManager, "load_config", staticmethod(lambda: {"auto_sync": True}))
@@ -70,7 +70,7 @@ def test_auto_sync_disabled(monkeypatch, tmp_path):
     tasks_dir.mkdir()
     _write_task(tasks_dir / "TASK-001.task", "TASK-001")
 
-    dummy_sync = DummyProjects()
+    dummy_sync = DummyProjects(config_path=tmp_path / "dummy.yaml")
     monkeypatch.setattr(task_manager_mod, "get_projects_sync", lambda: dummy_sync)
     monkeypatch.setattr(tasks.TaskManager, "load_config", staticmethod(lambda: {"auto_sync": False}))
 
@@ -86,7 +86,7 @@ def test_pool_size_respects_config(monkeypatch, tmp_path):
     _write_task(tasks_dir / "TASK-001.task", "TASK-001")
     _write_task(tasks_dir / "TASK-002.task", "TASK-002")
 
-    dummy_sync = DummyProjects()
+    dummy_sync = DummyProjects(config_path=tmp_path / "dummy.yaml")
     dummy_sync.config.workers = 1
     monkeypatch.setattr(task_manager_mod, "get_projects_sync", lambda: dummy_sync)
     monkeypatch.setattr(tasks.TaskManager, "load_config", staticmethod(lambda: {"auto_sync": True}))
