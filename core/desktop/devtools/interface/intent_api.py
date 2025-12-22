@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from core import PlanNode, Step, TaskDetail, TaskNode, Attachment, VerificationCheck, StepEvent
+from core.evidence import redact, redact_text
 from core.desktop.devtools.application.context import (
     clear_last_task,
     get_last_task,
@@ -43,6 +44,7 @@ from core.desktop.devtools.application.scaffolding import (
 )
 from core.desktop.devtools.application.task_manager import TaskManager, _find_step_by_path, _find_task_by_path
 from core.desktop.devtools.application.linting import lint_item
+from core.desktop.devtools.interface.artifacts_store import write_artifact
 from core.desktop.devtools.interface.evidence_collectors import collect_auto_verification_checks
 from core.desktop.devtools.interface.operation_history import OperationHistory
 from core.desktop.devtools.interface.serializers import plan_to_dict, plan_node_to_dict, step_to_dict, task_to_dict, task_node_to_dict
@@ -52,6 +54,8 @@ from core.desktop.devtools.interface.tasks_dir_resolver import resolve_project_r
 MAX_STRING_LENGTH = 500
 MAX_ARRAY_LENGTH = 200
 MAX_NESTING_DEPTH = 24
+MAX_ARTIFACT_BYTES = 256_000
+MAX_EVIDENCE_ITEMS = 20
 
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _PATH_PATTERN = re.compile(r"^s:\d+(\.t:\d+\.s:\d+)*(\.t:\d+)?$")
@@ -273,6 +277,15 @@ def _step_needs_for_completion(step: Step) -> List[str]:
     return needs
 
 
+def _truncate_utf8(text: str, *, max_bytes: int) -> Tuple[str, bool, int]:
+    raw = str(text or "").encode("utf-8")
+    original = len(raw)
+    if original <= int(max_bytes):
+        return str(text or ""), False, original
+    truncated = raw[: int(max_bytes)].decode("utf-8", errors="ignore")
+    return truncated, True, original
+
+
 def _contract_summary(value: Any) -> Dict[str, Any]:
     """Compact contract summary for Radar View (1 screen → 1 truth)."""
     if not isinstance(value, dict):
@@ -338,6 +351,7 @@ _FOCUSABLE_MUTATING_INTENTS: set[str] = {
     "task_delete",
     "define",
     "verify",
+    "evidence_capture",
     "done",
     "close_step",
     "progress",
@@ -355,6 +369,7 @@ _TASK_ONLY_INTENTS: set[str] = {
     "task_delete",
     "define",
     "verify",
+    "evidence_capture",
     "done",
     "close_step",
     "progress",
@@ -2916,6 +2931,247 @@ def handle_verify(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
     )
 
 
+def handle_evidence_capture(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
+    """Capture evidence artifacts (cmd_output/url/diff) and attach them to a step.
+
+    Unlike `verify`, this intent does NOT confirm checkpoints. It only appends evidence
+    (attachments/checks) in a safe-by-default, redacted form.
+    """
+    task_id = data.get("task")
+    if not task_id:
+        return error_response(
+            "evidence_capture",
+            "MISSING_TASK",
+            "task обязателен",
+            recovery="Передай task=TASK-### или установи focus через focus_set.",
+            suggestions=_missing_target_suggestions(manager, want="TASK-"),
+        )
+    err = validate_task_id(task_id)
+    if err:
+        return error_response(
+            "evidence_capture",
+            "INVALID_TASK",
+            err,
+            recovery="Проверь id через context(include_all=true).",
+            suggestions=_missing_target_suggestions(manager, want="TASK-"),
+        )
+    task_id = str(task_id)
+
+    task = manager.load_task(task_id, skip_sync=True)
+    if not task:
+        return error_response(
+            "evidence_capture",
+            "NOT_FOUND",
+            f"Не найдено: {task_id}",
+            recovery="Проверь id через context(include_all=true).",
+            suggestions=_missing_target_suggestions(manager, want="TASK-"),
+            result={"task": task_id},
+        )
+    if getattr(task, "kind", "task") != "task":
+        return error_response("evidence_capture", "NOT_A_TASK", "evidence_capture применим только к заданиям (TASK-###)")
+
+    path, path_err = _resolve_step_path(manager, task, data)
+    if path_err:
+        code, message = path_err
+        return error_response(
+            "evidence_capture",
+            code,
+            message,
+            recovery="Возьми корректный path/step_id через radar/mirror.",
+            suggestions=_path_help_suggestions(task_id),
+        )
+
+    st, _, _ = _find_step_by_path(task.steps, path)
+    if not st:
+        return error_response(
+            "evidence_capture",
+            "PATH_NOT_FOUND",
+            f"Шаг path={path} не найден",
+            recovery="Возьми корректный path/step_id через radar/mirror.",
+            suggestions=_path_help_suggestions(task_id),
+            result={"task_id": task_id, "path": path},
+        )
+
+    artifacts_raw = data.get("artifacts")
+    if artifacts_raw is None and isinstance(data.get("items"), list):
+        artifacts_raw = data.get("items")
+    attachments_raw = data.get("attachments")
+    checks_raw = data.get("checks") or data.get("verification_checks")
+
+    if artifacts_raw is None and attachments_raw is None and checks_raw is None:
+        return error_response(
+            "evidence_capture",
+            "MISSING_EVIDENCE",
+            "Нужно передать хотя бы одно из: artifacts|attachments|checks",
+            recovery="Передай artifacts для cmd_output/url/diff или attachments/checks как в verify (без confirmed).",
+            suggestions=_path_help_suggestions(task_id),
+            result={"task_id": task_id, "path": path},
+        )
+
+    # Parse checks (optional)
+    checks_added: List[Dict[str, Any]] = []
+    if checks_raw is not None:
+        if not isinstance(checks_raw, list):
+            return error_response("evidence_capture", "INVALID_CHECKS", "checks должен быть массивом")
+        try:
+            parsed_checks = [VerificationCheck.from_dict(c) for c in checks_raw if isinstance(c, dict)]
+        except Exception:
+            return error_response("evidence_capture", "INVALID_CHECKS", "checks содержит некорректные элементы")
+        existing = {str(getattr(x, "digest", "") or "").strip() for x in (st.verification_checks or []) if getattr(x, "digest", "")}
+        for check in parsed_checks:
+            digest = str(getattr(check, "digest", "") or "").strip()
+            if digest and digest in existing:
+                continue
+            st.verification_checks.append(check)
+            if digest:
+                existing.add(digest)
+            checks_added.append(check.to_dict())
+
+    # Parse plain attachments (optional, already-referenced)
+    attachments_added: List[Dict[str, Any]] = []
+    if attachments_raw is not None:
+        if not isinstance(attachments_raw, list):
+            return error_response("evidence_capture", "INVALID_ATTACHMENTS", "attachments должен быть массивом")
+        try:
+            parsed_attachments = [Attachment.from_dict(a) for a in attachments_raw if isinstance(a, dict)]
+        except Exception:
+            return error_response("evidence_capture", "INVALID_ATTACHMENTS", "attachments содержит некорректные элементы")
+        existing = {str(getattr(x, "digest", "") or "").strip() for x in (st.attachments or []) if getattr(x, "digest", "")}
+        for att in parsed_attachments:
+            digest = str(getattr(att, "digest", "") or "").strip()
+            if digest and digest in existing:
+                continue
+            st.attachments.append(att)
+            if digest:
+                existing.add(digest)
+            attachments_added.append(att.to_dict())
+
+    # Capture artifacts (optional): create attachment + store blob in tasks_dir/.artifacts when needed.
+    artifacts_written: List[Dict[str, Any]] = []
+    if artifacts_raw is not None:
+        if not isinstance(artifacts_raw, list):
+            return error_response("evidence_capture", "INVALID_ARTIFACTS", "artifacts должен быть массивом")
+        if len(artifacts_raw) > MAX_EVIDENCE_ITEMS:
+            return error_response(
+                "evidence_capture",
+                "TOO_MANY_ARTIFACTS",
+                f"artifacts слишком большой (max {MAX_EVIDENCE_ITEMS})",
+            )
+        existing = {str(getattr(x, "digest", "") or "").strip() for x in (st.attachments or []) if getattr(x, "digest", "")}
+        for item in artifacts_raw:
+            if not isinstance(item, dict):
+                return error_response("evidence_capture", "INVALID_ARTIFACTS", "artifacts должен содержать объекты")
+            kind = str(item.get("kind", "") or "").strip()
+            meta_in = item.get("meta")
+            meta_value: Dict[str, Any] = dict(meta_in) if isinstance(meta_in, dict) else {}
+
+            if kind == "url":
+                url = str(item.get("url", "") or item.get("external_uri", "") or "").strip()
+                if not url:
+                    return error_response("evidence_capture", "MISSING_URL", "url обязателен", result={"artifact": item})
+                att = Attachment.from_dict({"kind": "url", "external_uri": url, "meta": meta_value})
+                digest = str(getattr(att, "digest", "") or "").strip()
+                if digest and digest in existing:
+                    continue
+                st.attachments.append(att)
+                if digest:
+                    existing.add(digest)
+                attachments_added.append(att.to_dict())
+                continue
+
+            if kind == "diff":
+                diff_text = str(item.get("diff", "") or item.get("content", "") or "").strip()
+                if not diff_text:
+                    return error_response("evidence_capture", "MISSING_DIFF", "diff обязателен", result={"artifact": item})
+                redacted = redact_text(diff_text)
+                truncated_text, truncated, original_size = _truncate_utf8(redacted, max_bytes=MAX_ARTIFACT_BYTES)
+                blob = truncated_text.encode("utf-8")
+                uri, size, sha = write_artifact(Path(manager.tasks_dir), content=blob, ext="patch")
+                meta_value.update({"artifact_sha256": sha, "truncated": truncated, "original_size": original_size})
+                att = Attachment.from_dict({"kind": "diff", "uri": uri, "size": size, "meta": meta_value})
+                digest = str(getattr(att, "digest", "") or "").strip()
+                if digest and digest in existing:
+                    continue
+                st.attachments.append(att)
+                if digest:
+                    existing.add(digest)
+                attachments_added.append(att.to_dict())
+                artifacts_written.append({"kind": "diff", "uri": uri, "size": size, "sha256": sha, "truncated": truncated, "original_size": original_size})
+                continue
+
+            if kind == "cmd_output":
+                command = str(item.get("command", "") or "").strip()
+                stdout = str(item.get("stdout", "") or item.get("output", "") or "")
+                stderr = str(item.get("stderr", "") or "")
+                exit_code = item.get("exit_code", None)
+                if not (command or stdout or stderr):
+                    return error_response("evidence_capture", "MISSING_OUTPUT", "cmd_output требует command и/или stdout/stderr", result={"artifact": item})
+                payload = {
+                    "command": command,
+                    "exit_code": exit_code,
+                    "stdout": stdout,
+                    "stderr": stderr,
+                    "meta": meta_value,
+                }
+                safe_payload = redact(payload)
+                text = json.dumps(safe_payload, ensure_ascii=False, sort_keys=True, indent=2)
+                truncated_text, truncated, original_size = _truncate_utf8(text, max_bytes=MAX_ARTIFACT_BYTES)
+                blob = truncated_text.encode("utf-8")
+                uri, size, sha = write_artifact(Path(manager.tasks_dir), content=blob, ext="json")
+                safe_command = redact_text(command)
+                meta_value.update(
+                    {
+                        "artifact_sha256": sha,
+                        "command": safe_command,
+                        "exit_code": exit_code,
+                        "truncated": truncated,
+                        "original_size": original_size,
+                    }
+                )
+                att = Attachment.from_dict({"kind": "cmd_output", "uri": uri, "size": size, "meta": meta_value})
+                digest = str(getattr(att, "digest", "") or "").strip()
+                if digest and digest in existing:
+                    continue
+                st.attachments.append(att)
+                if digest:
+                    existing.add(digest)
+                attachments_added.append(att.to_dict())
+                artifacts_written.append(
+                    {"kind": "cmd_output", "uri": uri, "size": size, "sha256": sha, "truncated": truncated, "original_size": original_size}
+                )
+                continue
+
+            return error_response(
+                "evidence_capture",
+                "INVALID_ARTIFACT_KIND",
+                f"Неизвестный artifact.kind: {kind}",
+                recovery="kind должен быть одним из: cmd_output|diff|url",
+                result={"artifact": item},
+            )
+
+    if checks_added or attachments_added or artifacts_written:
+        manager.save_task(task, skip_sync=True)
+
+    updated = manager.load_task(task_id, task.domain, skip_sync=True) or task
+    st1, _, _ = _find_step_by_path((updated or task).steps, path)
+    return AIResponse(
+        success=True,
+        intent="evidence_capture",
+        result={
+            "task_id": task_id,
+            "path": path,
+            "captured": {
+                "artifacts_written": artifacts_written,
+                "attachments_added": attachments_added,
+                "checks_added": checks_added,
+            },
+            "step": step_to_dict(st1, path=path, compact=False) if st1 else None,
+            "task": task_to_dict(updated or task, include_steps=True, compact=False),
+        },
+        context={"task_id": task_id},
+    )
+
+
 def _handle_close_step_like(manager: TaskManager, data: Dict[str, Any], *, intent_name: str) -> AIResponse:
     """Atomic verify(step) -> done(step) in a single call."""
     task_id = data.get("task")
@@ -4745,6 +5001,7 @@ INTENT_HANDLERS: Dict[str, Callable[[TaskManager, Dict[str, Any]], AIResponse]] 
     "task_delete": handle_task_delete,
     "define": handle_define,
     "verify": handle_verify,
+    "evidence_capture": handle_evidence_capture,
     "done": handle_done,
     "close_step": handle_close_step,
     "progress": handle_progress,
@@ -4773,6 +5030,7 @@ _MUTATING_INTENTS = {
     "task_delete",
     "define",
     "verify",
+    "evidence_capture",
     "done",
     "close_step",
     "progress",

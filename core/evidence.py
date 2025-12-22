@@ -73,6 +73,16 @@ def _redact(value: Any, *, depth: int = 6) -> Any:
     return value
 
 
+def redact_text(text: str) -> str:
+    """Redact secrets from free-form text (best-effort, safe-by-default)."""
+    return _redact_text(text)
+
+
+def redact(value: Any, *, depth: int = 6) -> Any:
+    """Redact secrets from structured data (best-effort, safe-by-default)."""
+    return _redact(value, depth=depth)
+
+
 def _digest_for_check(kind: str, spec: str, outcome: str, preview: str, details: Dict[str, Any]) -> str:
     payload = {"kind": kind, "spec": spec, "outcome": outcome, "preview": preview, "details": details}
     return _sha256_hex(_canonical_json(payload))

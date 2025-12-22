@@ -342,6 +342,22 @@ _TOOL_SPECS: Dict[str, Dict[str, Any]] = {
             "required": ["checkpoints"],
         },
     },
+    "evidence_capture": {
+        "description": "Capture evidence and attach it to a step (cmd_output/url/diff artifacts and/or checks/attachments). Does not confirm checkpoints.",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "task": {"type": "string", "description": "Task id (TASK-###). Uses focus if omitted."},
+                "path": {"type": "string", "description": _step_path_description()},
+                "step_id": {"type": "string", "description": "Stable step id (STEP-...)."},
+                "artifacts": {"type": "array", "description": "Artifacts to capture (kind=cmd_output|diff|url)."},
+                "items": {"type": "array", "description": "Alias for artifacts."},
+                "attachments": {"type": "array", "description": "Optional plain attachments (same shape as verify attachments)."},
+                "checks": {"type": "array", "description": "Optional verification checks (same shape as verify checks)."},
+            },
+            "required": [],
+        },
+    },
     "done": {
         "description": "Close a step. If auto_verify=true, this becomes atomic verify(step)->done(step) (requires checkpoints.*.confirmed=true). Optional note is saved as a progress note first.",
         "schema": {

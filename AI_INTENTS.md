@@ -273,6 +273,18 @@ Optional evidence (step only):
 Auto evidence (step only, best-effort):
 - When a checkpoint is confirmed, apply_task may append `checks` of kind `ci` (GitHub Actions) and/or `git` (HEAD state), deduped by `digest`.
 
+### evidence_capture
+
+Capture evidence for a step without confirming checkpoints.
+
+This is the canonical way to attach:
+- artifacts: `cmd_output` / `diff` / `url` (stored under `<tasks_dir>/.artifacts/` when needed, referenced via `attachment.uri`)
+- plain `attachments[]` and/or `checks[]` (same shapes as in `verify`)
+
+```json
+{"intent":"evidence_capture","task":"TASK-001","path":"s:0","artifacts":[{"kind":"cmd_output","command":"pytest -q","stdout":"..."}]}
+```
+
 ### progress
 
 Set step completion (respects checkpoints unless `force=true`).
