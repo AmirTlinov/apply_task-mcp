@@ -559,12 +559,13 @@ class TaskManager:
             raise ValueError("parent must be a plan id (PLAN-###)")
         parent_plan = None
         try:
-            for candidate in self.list_all_tasks(skip_sync=True):
-                if candidate.id == parent:
-                    parent_plan = candidate
-                    break
+            candidates = self.repo.list("", skip_sync=True)
         except Exception:
-            parent_plan = None
+            candidates = []
+        for candidate in candidates:
+            if getattr(candidate, "id", None) == parent:
+                parent_plan = candidate
+                break
         if not parent_plan:
             raise ValueError(f"parent plan not found: {parent}")
         if getattr(parent_plan, "kind", "task") != "plan":

@@ -34,6 +34,13 @@ from core.desktop.devtools.application.context import (
     save_last_task,
 )
 from core.desktop.devtools.application.plan_semantics import append_contract_version_if_changed
+from core.desktop.devtools.application.scaffolding import (
+    apply_preview_ids,
+    build_plan_from_template,
+    build_task_from_template,
+    get_template,
+    list_templates,
+)
 from core.desktop.devtools.application.task_manager import TaskManager, _find_step_by_path, _find_task_by_path
 from core.desktop.devtools.application.linting import lint_item
 from core.desktop.devtools.interface.evidence_collectors import collect_auto_verification_checks
@@ -1522,6 +1529,300 @@ def handle_lint(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         context={"task_id": focus_id},
         suggestions=suggestions,
     )
+
+
+def handle_templates_list(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
+    templates = [t.to_dict() for t in list_templates()]
+    return AIResponse(success=True, intent="templates_list", result={"templates": templates})
+
+
+def handle_scaffold(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
+    template_id = str(data.get("template", "") or "").strip().lower()
+    if not template_id:
+        return error_response(
+            "scaffold",
+            "MISSING_TEMPLATE",
+            "template обязателен",
+            recovery="Сначала вызови templates_list и выбери template id.",
+            suggestions=[
+                Suggestion(
+                    action="templates_list",
+                    target="tasks_templates_list",
+                    reason="Показать доступные шаблоны.",
+                    priority="high",
+                )
+            ],
+        )
+    template = get_template(template_id)
+    if not template:
+        return error_response(
+            "scaffold",
+            "UNKNOWN_TEMPLATE",
+            f"Неизвестный template: {template_id}",
+            recovery="Вызови templates_list и выбери корректный template id.",
+            suggestions=[
+                Suggestion(
+                    action="templates_list",
+                    target="tasks_templates_list",
+                    reason="Показать доступные шаблоны.",
+                    priority="high",
+                )
+            ],
+        )
+
+    kind = str(data.get("kind", "") or "").strip().lower()
+    if kind not in {"plan", "task"}:
+        return error_response(
+            "scaffold",
+            "INVALID_KIND",
+            "kind должен быть 'plan' или 'task'",
+            recovery="Передай kind=plan|task явно (без угадываний).",
+            result={"kind": kind, "template": template.to_dict()},
+        )
+
+    title = str(data.get("title", "") or "").strip()
+    if not title:
+        return error_response("scaffold", "MISSING_TITLE", "title обязателен")
+    title_err = validate_string(title, "title")
+    if title_err:
+        return error_response("scaffold", "INVALID_TITLE", title_err)
+
+    dry_run = bool(data.get("dry_run", True))
+    priority = str(data.get("priority", "MEDIUM") or "MEDIUM")
+
+    used_focus_parent = False
+    parent_source: str = "explicit"
+    parent: Optional[str] = data.get("parent")
+    if parent is not None:
+        err = validate_task_id(parent)
+        if err:
+            return error_response("scaffold", "INVALID_PARENT", err, result={"parent": parent})
+        parent = str(parent)
+
+    if kind == "task":
+        if not parent:
+            last_id, _last_domain = get_last_task()
+            focus_id: Optional[str] = None
+            if last_id:
+                try:
+                    focus_id = normalize_task_id(str(last_id))
+                except Exception:
+                    focus_id = str(last_id).strip() or None
+            if focus_id and focus_id.startswith("PLAN-"):
+                parent = focus_id
+                used_focus_parent = True
+                parent_source = "focus_plan"
+            elif focus_id and focus_id.startswith("TASK-"):
+                focus_task = manager.load_task(focus_id, skip_sync=True)
+                inferred = str(getattr(focus_task, "parent", "") or "").strip()
+                if inferred.startswith("PLAN-"):
+                    parent = inferred
+                    used_focus_parent = True
+                    parent_source = "focus_task_parent"
+
+        if not parent:
+            return error_response(
+                "scaffold",
+                "MISSING_PARENT",
+                "Для kind=task нужен parent=PLAN-### (или focus на PLAN-###/TASK-### с parent).",
+                recovery="Передай parent=PLAN-### явно или установи focus через focus_set.",
+                suggestions=_missing_target_suggestions(manager, want="PLAN-"),
+            )
+        if not str(parent).startswith("PLAN-"):
+            return error_response("scaffold", "INVALID_PARENT", "parent должен быть PLAN-###", result={"parent": parent})
+
+        if template.task is None:
+            return error_response(
+                "scaffold",
+                "UNSUPPORTED_KIND",
+                f"template не поддерживает kind=task: {template.template_id}",
+                result={"template": template.to_dict()},
+            )
+        try:
+            task = build_task_from_template(manager, template, title=title, parent=str(parent), priority=priority)
+        except ValueError as exc:
+            msg = str(exc) or "Invalid parent"
+            code = "PARENT_NOT_FOUND" if "not found" in msg.lower() else "INVALID_PARENT"
+            return error_response(
+                "scaffold",
+                code,
+                msg,
+                recovery="Проверь parent через context(include_all=true) или установи focus на план.",
+                suggestions=_missing_target_suggestions(manager, want="PLAN-"),
+                result={"parent": str(parent)},
+            )
+        if dry_run:
+            apply_preview_ids(task)
+            return AIResponse(
+                success=True,
+                intent="scaffold",
+                result={
+                    "dry_run": True,
+                    "would_execute": True,
+                    "kind": "task",
+                    "template": template.to_dict(),
+                    "parent": str(parent),
+                    "parent_source": parent_source,
+                    "task_id": task.id,
+                    "task": task_to_dict(task, include_steps=True, compact=False),
+                },
+                context={"used_focus_parent": used_focus_parent} if used_focus_parent else {},
+                suggestions=[
+                    Suggestion(
+                        action="scaffold",
+                        target="tasks_scaffold",
+                        reason="Создать задание по шаблону (dry_run=false).",
+                        priority="high",
+                        params={
+                            "template": template.template_id,
+                            "kind": "task",
+                            "title": title,
+                            "parent": str(parent),
+                            "priority": priority,
+                            "dry_run": False,
+                        },
+                    )
+                ],
+            )
+
+        if dict(getattr(task, "contract_data", {}) or {}) or str(getattr(task, "contract", "") or "").strip() or list(getattr(task, "success_criteria", []) or []):
+            append_contract_version_if_changed(task, note="scaffold")
+        manager.save_task(task, skip_sync=True)
+
+        # Create-like operation: record without snapshots (undo for create is non-trivial).
+        history = OperationHistory(storage_dir=Path(manager.tasks_dir))
+        try:
+            payload = dict(data)
+            payload["created_id"] = task.id
+            op = history.record(intent="scaffold", task_id=task.id, data=payload, task_file=None, result=None)
+        except Exception:
+            op = None
+
+        resp = AIResponse(
+            success=True,
+            intent="scaffold",
+            result={
+                "dry_run": False,
+                "kind": "task",
+                "template": template.to_dict(),
+                "parent": str(parent),
+                "parent_source": parent_source,
+                "task_id": task.id,
+                "task": task_to_dict(task, include_steps=True, compact=False),
+            },
+            context={"task_id": task.id, "used_focus_parent": used_focus_parent} if used_focus_parent else {"task_id": task.id},
+            suggestions=[
+                Suggestion(
+                    action="focus_set",
+                    target=str(task.id),
+                    reason="Установить focus на созданное задание.",
+                    priority="high",
+                    params={"task": str(task.id), "domain": str(getattr(task, "domain", "") or "")},
+                ),
+                Suggestion(
+                    action="radar",
+                    target="tasks_radar",
+                    reason="Открыть Radar View для нового задания.",
+                    priority="high",
+                    params={"task": str(task.id), "limit": 3},
+                ),
+                Suggestion(
+                    action="lint",
+                    target="tasks_lint",
+                    reason="Предполётная проверка дисциплины (criteria/tests/atomicity/deps).",
+                    priority="normal",
+                    params={"task": str(task.id)},
+                ),
+            ],
+        )
+        if op and getattr(op, "id", None):
+            resp.meta = dict(resp.meta or {})
+            resp.meta["operation_id"] = str(op.id)
+        return resp
+
+    # kind == plan
+    if template.plan is None:
+        return error_response(
+            "scaffold",
+            "UNSUPPORTED_KIND",
+            f"template не поддерживает kind=plan: {template.template_id}",
+            result={"template": template.to_dict()},
+        )
+    plan = build_plan_from_template(manager, template, title=title, priority=priority)
+    if dry_run:
+        return AIResponse(
+            success=True,
+            intent="scaffold",
+            result={
+                "dry_run": True,
+                "would_execute": True,
+                "kind": "plan",
+                "template": template.to_dict(),
+                "plan_id": plan.id,
+                "plan": plan_to_dict(plan, compact=False),
+            },
+            suggestions=[
+                Suggestion(
+                    action="scaffold",
+                    target="tasks_scaffold",
+                    reason="Создать план по шаблону (dry_run=false).",
+                    priority="high",
+                    params={"template": template.template_id, "kind": "plan", "title": title, "priority": priority, "dry_run": False},
+                )
+            ],
+        )
+
+    if dict(getattr(plan, "contract_data", {}) or {}) or str(getattr(plan, "contract", "") or "").strip() or list(getattr(plan, "success_criteria", []) or []):
+        append_contract_version_if_changed(plan, note="scaffold")
+    manager.save_task(plan, skip_sync=True)
+
+    history = OperationHistory(storage_dir=Path(manager.tasks_dir))
+    try:
+        payload = dict(data)
+        payload["created_id"] = plan.id
+        op = history.record(intent="scaffold", task_id=plan.id, data=payload, task_file=None, result=None)
+    except Exception:
+        op = None
+
+    resp = AIResponse(
+        success=True,
+        intent="scaffold",
+        result={
+            "dry_run": False,
+            "kind": "plan",
+            "template": template.to_dict(),
+            "plan_id": plan.id,
+            "plan": plan_to_dict(plan, compact=False),
+        },
+        context={"task_id": plan.id},
+        suggestions=[
+            Suggestion(
+                action="focus_set",
+                target=str(plan.id),
+                reason="Установить focus на созданный план.",
+                priority="high",
+                params={"task": str(plan.id), "domain": str(getattr(plan, "domain", "") or "")},
+            ),
+            Suggestion(
+                action="radar",
+                target="tasks_radar",
+                reason="Открыть Radar View для плана (Now/Why/Verify/Next).",
+                priority="high",
+                params={"plan": str(plan.id), "limit": 3},
+            ),
+            Suggestion(
+                action="scaffold",
+                target="tasks_scaffold",
+                reason="Создать первое задание под планом по шаблону (task).",
+                priority="normal",
+                params={"template": template.template_id, "kind": "task", "title": "<first task>", "parent": str(plan.id), "dry_run": True},
+            ),
+        ],
+    )
+    if op and getattr(op, "id", None):
+        resp.meta = dict(resp.meta or {})
+        resp.meta["operation_id"] = str(op.id)
+    return resp
 
 
 def handle_create(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
@@ -3876,6 +4177,8 @@ INTENT_HANDLERS: Dict[str, Callable[[TaskManager, Dict[str, Any]], AIResponse]] 
     "radar": handle_radar,
     "resume": handle_resume,
     "lint": handle_lint,
+    "templates_list": handle_templates_list,
+    "scaffold": handle_scaffold,
     "create": handle_create,
     "decompose": handle_decompose,
     "task_add": handle_task_add,
@@ -4065,6 +4368,8 @@ __all__ = [
     "handle_context",
     "handle_resume",
     "handle_lint",
+    "handle_templates_list",
+    "handle_scaffold",
     "handle_create",
     "handle_decompose",
     "handle_define",
