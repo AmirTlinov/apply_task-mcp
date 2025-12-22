@@ -35,6 +35,7 @@ from core.desktop.devtools.application.context import (
 )
 from core.desktop.devtools.application.plan_semantics import append_contract_version_if_changed
 from core.desktop.devtools.application.task_manager import TaskManager, _find_step_by_path, _find_task_by_path
+from core.desktop.devtools.application.linting import lint_item
 from core.desktop.devtools.interface.evidence_collectors import collect_auto_verification_checks
 from core.desktop.devtools.interface.operation_history import OperationHistory
 from core.desktop.devtools.interface.serializers import plan_to_dict, plan_node_to_dict, step_to_dict, task_to_dict, task_node_to_dict
@@ -1420,6 +1421,106 @@ def handle_resume(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         result=result,
         context={"task_id": focus_id},
         suggestions=generate_suggestions(manager, focus_id),
+    )
+
+
+def handle_lint(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
+    focus = data.get("task") or data.get("plan")
+    if focus is None:
+        last_id, _domain = get_last_task()
+        focus = last_id
+    if not focus:
+        return error_response(
+            "lint",
+            "MISSING_ID",
+            "Не указан task/plan и нет focus",
+            recovery="Передай task=TASK-###|plan=PLAN-### или установи focus через focus_set.",
+            suggestions=_missing_target_suggestions(manager, want=["TASK-", "PLAN-"]),
+        )
+    err = validate_task_id(focus)
+    if err:
+        return error_response(
+            "lint",
+            "INVALID_ID",
+            err,
+            recovery="Проверь id через context(include_all=true) или установи focus через focus_set.",
+            suggestions=_missing_target_suggestions(manager, want=["TASK-", "PLAN-"]),
+        )
+    focus_id = str(focus)
+    detail = manager.load_task(focus_id, skip_sync=True)
+    if not detail:
+        return error_response(
+            "lint",
+            "NOT_FOUND",
+            f"Не найдено: {focus_id}",
+            recovery="Проверь id через context(include_all=true) или установи focus заново.",
+            suggestions=_missing_target_suggestions(manager, want="PLAN-" if focus_id.startswith("PLAN-") else "TASK-"),
+            result={"task": focus_id},
+        )
+
+    # Read-only: avoid TaskManager.list_all_tasks (may auto-clean DONE tasks depending on user config).
+    all_items = manager.repo.list("", skip_sync=True)
+    report = lint_item(manager, detail, all_items)
+
+    # Actionable fixes (top 3, deterministic).
+    suggestions: List[Suggestion] = []
+    for issue in list(getattr(report, "issues", []) or []):
+        code = str(getattr(issue, "code", "") or "")
+        target = dict(getattr(issue, "target", {}) or {})
+        if code in {"STEP_SUCCESS_CRITERIA_MISSING", "STEP_TESTS_MISSING", "STEP_BLOCKERS_MISSING"} and target.get("path"):
+            path = str(target.get("path") or "")
+            ops: List[Dict[str, Any]] = []
+            if code == "STEP_SUCCESS_CRITERIA_MISSING":
+                ops.append({"op": "set", "field": "success_criteria", "value": ["<define measurable outcome>"]})
+            if code == "STEP_TESTS_MISSING":
+                ops.append({"op": "set", "field": "tests", "value": ["<how to verify (cmd/test)>"]})
+            if code == "STEP_BLOCKERS_MISSING":
+                ops.append({"op": "set", "field": "blockers", "value": ["<dependency/assumption>"]})
+            if ops:
+                suggestions.append(
+                    Suggestion(
+                        action="patch",
+                        target="tasks_patch",
+                        reason="Заполни поля шага через patch (diff-oriented).",
+                        priority="high" if code == "STEP_SUCCESS_CRITERIA_MISSING" else "normal",
+                        params={"task": focus_id, "kind": "step", "path": path, "ops": ops},
+                    )
+                )
+        elif code == "TASK_SUCCESS_CRITERIA_MISSING":
+            suggestions.append(
+                Suggestion(
+                    action="patch",
+                    target="tasks_patch",
+                    reason="Добавь root success_criteria (иначе done будет заблокирован).",
+                    priority="high",
+                    params={"task": focus_id, "kind": "task_detail", "ops": [{"op": "set", "field": "success_criteria", "value": ["<definition of done>"]}]},
+                )
+            )
+        elif code in {"INVALID_DEPENDENCIES", "CIRCULAR_DEPENDENCY", "DEPENDS_ON_INVALID"}:
+            suggestions.append(
+                Suggestion(
+                    action="context",
+                    target="tasks_context",
+                    reason="Проверь существующие TASK-### и статусы зависимостей перед правкой depends_on.",
+                    priority="high",
+                    params={"include_all": True, "compact": True},
+                )
+            )
+        if len(suggestions) >= 3:
+            break
+
+    result = report.to_dict()
+    result["links"] = {
+        "radar": {"intent": "radar", "task": focus_id, "limit": 3},
+        "resume": {"intent": "resume", "task": focus_id},
+        "mirror": {"intent": "mirror", "task": focus_id, "limit": 10},
+    }
+    return AIResponse(
+        success=True,
+        intent="lint",
+        result=result,
+        context={"task_id": focus_id},
+        suggestions=suggestions,
     )
 
 
@@ -3774,6 +3875,7 @@ INTENT_HANDLERS: Dict[str, Callable[[TaskManager, Dict[str, Any]], AIResponse]] 
     "focus_clear": handle_focus_clear,
     "radar": handle_radar,
     "resume": handle_resume,
+    "lint": handle_lint,
     "create": handle_create,
     "decompose": handle_decompose,
     "task_add": handle_task_add,
@@ -3962,6 +4064,7 @@ __all__ = [
     "process_intent",
     "handle_context",
     "handle_resume",
+    "handle_lint",
     "handle_create",
     "handle_decompose",
     "handle_define",
