@@ -117,6 +117,7 @@ Compact “Radar View” snapshot for the current work:
 Notes:
 - `result.why.contract` may include a compact summary from structured `contract_data` (goal/done/checks/constraints/risks).
 - `result.links` contains small “expand” payloads (resume/mirror/context/history).
+- For tasks, `result.verify.evidence` includes a compact “black box” summary for the active step (counts + kinds + last observed timestamps).
 
 ### context
 
@@ -154,6 +155,9 @@ Result highlights:
 - `result.summary`: counts of errors/warnings
 - `result.issues[]`: structured issues with `code`, `severity`, `message`, and `target` (task/step/plan/deps)
 - `result.links`: small “expand” payloads (radar/resume/mirror)
+
+Common warning:
+- `EVIDENCE_MISSING`: step is ready/completed but has no evidence (`verification_outcome`, `checks`, `attachments`). Attach evidence via `verify` (step only).
 
 ### templates_list
 
