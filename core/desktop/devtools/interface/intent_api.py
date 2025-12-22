@@ -280,6 +280,134 @@ def validate_task_id(value: Any) -> Optional[str]:
     return None
 
 
+def _focus_pointer() -> Tuple[Optional[str], str]:
+    """Return (focus_id, focus_domain) from `.last` pointer (best-effort)."""
+    last_id, last_domain = get_last_task()
+    focus_id: Optional[str] = None
+    if last_id:
+        try:
+            focus_id = normalize_task_id(str(last_id))
+        except Exception:
+            focus_id = str(last_id).strip() or None
+    return focus_id, str(last_domain or "")
+
+
+# Focus is convenience, never magic: only used when explicit target ids are omitted.
+_FOCUSABLE_MUTATING_INTENTS: set[str] = {
+    # Task/Plan item mutations
+    "edit",
+    "patch",
+    "complete",
+    "delete",
+    # Task-only step tree mutations
+    "decompose",
+    "task_add",
+    "task_define",
+    "task_delete",
+    "define",
+    "verify",
+    "done",
+    "progress",
+    "note",
+    "block",
+    # Plan-specific mutations
+    "contract",
+    "plan",
+}
+
+_TASK_ONLY_INTENTS: set[str] = {
+    "decompose",
+    "task_add",
+    "task_define",
+    "task_delete",
+    "define",
+    "verify",
+    "done",
+    "progress",
+    "note",
+    "block",
+}
+
+_PLAN_ONLY_INTENTS: set[str] = {"contract", "plan"}
+
+
+def _apply_focus_to_mutation(manager: TaskManager, *, intent: str, data: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any], Optional[AIResponse]]:
+    """Fill missing target ids from focus for mutating intents (explicit > focus).
+
+    Returns: (payload, context_additions, error_response_or_none).
+    """
+    payload: Dict[str, Any] = dict(data or {})
+    if intent not in _FOCUSABLE_MUTATING_INTENTS:
+        return payload, {}, None
+
+    # Explicit addressing always wins.
+    has_explicit = payload.get("task") is not None or payload.get("plan") is not None
+    if has_explicit:
+        return payload, {"target_resolution": {"source": "explicit"}}, None
+
+    focus_id, focus_domain = _focus_pointer()
+    if not focus_id:
+        return (
+            payload,
+            {"target_resolution": {"source": "missing", "focus": None}},
+            error_response(
+                intent,
+                "MISSING_TARGET",
+                "Не указан target id и нет focus",
+                recovery="Передай task=TASK-###|PLAN-### (или plan=PLAN-### для plan/contract) либо установи focus через focus_set.",
+                suggestions=_missing_target_suggestions(manager, want=["TASK-", "PLAN-"]),
+            ),
+        )
+
+    # Plan-only intents: accept focus plan, or derive parent plan from focus task.
+    if intent in _PLAN_ONLY_INTENTS:
+        if focus_id.startswith("PLAN-"):
+            payload["plan"] = focus_id
+            return payload, {"target_resolution": {"source": "focus", "focus": focus_id, "plan": focus_id, "domain": focus_domain}}, None
+        if focus_id.startswith("TASK-"):
+            focus_task = manager.load_task(focus_id, skip_sync=True)
+            parent = str(getattr(focus_task, "parent", "") or "").strip()
+            if parent.startswith("PLAN-"):
+                payload["plan"] = parent
+                return (
+                    payload,
+                    {"target_resolution": {"source": "focus_task_parent", "focus": focus_id, "plan": parent, "domain": focus_domain}},
+                    None,
+                )
+        return (
+            payload,
+            {"target_resolution": {"source": "focus_incompatible", "focus": focus_id, "domain": focus_domain}},
+            error_response(
+                intent,
+                "FOCUS_INCOMPATIBLE",
+                f"focus={focus_id} не подходит для intent={intent} (нужен PLAN-###)",
+                recovery="Установи focus на PLAN-### через focus_set или передай plan=PLAN-### явно.",
+                suggestions=_missing_target_suggestions(manager, want="PLAN-"),
+            ),
+        )
+
+    # Task-only intents: require TASK focus.
+    if intent in _TASK_ONLY_INTENTS:
+        if not focus_id.startswith("TASK-"):
+            return (
+                payload,
+                {"target_resolution": {"source": "focus_incompatible", "focus": focus_id, "domain": focus_domain}},
+                error_response(
+                    intent,
+                    "FOCUS_INCOMPATIBLE",
+                    f"focus={focus_id} не подходит для intent={intent} (нужен TASK-###)",
+                    recovery="Установи focus на TASK-### через focus_set или передай task=TASK-### явно.",
+                    suggestions=_missing_target_suggestions(manager, want="TASK-"),
+                ),
+            )
+        payload["task"] = focus_id
+        return payload, {"target_resolution": {"source": "focus", "focus": focus_id, "task": focus_id, "domain": focus_domain}}, None
+
+    # Item-level (TASK or PLAN) intents: accept any focus id.
+    payload["task"] = focus_id
+    return payload, {"target_resolution": {"source": "focus", "focus": focus_id, "task": focus_id, "domain": focus_domain}}, None
+
+
 def validate_node_id(value: Any, field_name: str = "id") -> Optional[str]:
     err = validate_task_id(value)
     if not err:
@@ -4331,9 +4459,16 @@ def process_intent(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             suggestions=_missing_target_suggestions(manager, want=["TASK-", "PLAN-"]),
         )
 
+    payload, ctx_add, early_error = _apply_focus_to_mutation(manager, intent=intent, data=data)
+    if early_error:
+        if ctx_add:
+            early_error.context = dict(early_error.context or {})
+            early_error.context.update(ctx_add)
+        return early_error
+
     # History tracking: snapshot root task file before mutation.
     history = OperationHistory(storage_dir=Path(manager.tasks_dir))
-    task_id = data.get("task") or data.get("plan")
+    task_id = payload.get("task") or payload.get("plan")
 
     if expected_revision is not None and intent in _TARGETED_MUTATING_INTENTS and task_id:
         norm_err = validate_task_id(task_id)
@@ -4354,20 +4489,24 @@ def process_intent(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         norm = validate_task_id(task_id)
         if norm is None:
             # Best-effort: domain might be present, otherwise infer from disk.
-            domain = str(data.get("domain", "") or "")
+            domain = str(payload.get("domain", "") or "")
             if not domain:
                 existing = manager.load_task(str(task_id), skip_sync=True)
                 domain = str(getattr(existing, "domain", "") or "") if existing else ""
             task_file = _task_file_for(manager, str(task_id), domain)
 
     try:
-        resp = handler(manager, data)
+        resp = handler(manager, payload)
     except Exception as exc:  # pragma: no cover
         return error_response(intent, "INTERNAL_ERROR", f"internal error: {exc}")
 
-    if intent in _MUTATING_INTENTS and resp.success and not bool(data.get("dry_run", False)):
+    if ctx_add:
+        resp.context = dict(resp.context or {})
+        resp.context.update(ctx_add)
+
+    if intent in _MUTATING_INTENTS and resp.success and not bool(payload.get("dry_run", False)):
         try:
-            op = history.record(intent=intent, task_id=str(task_id) if task_id else None, data=dict(data), task_file=task_file, result=resp.to_dict())
+            op = history.record(intent=intent, task_id=str(task_id) if task_id else None, data=dict(payload), task_file=task_file, result=resp.to_dict())
             # Make delta-chaining trivial for agents: every mutating response carries the op id.
             if op and getattr(op, "id", None):
                 resp.meta = dict(resp.meta or {})
