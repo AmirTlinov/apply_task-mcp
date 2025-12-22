@@ -45,6 +45,22 @@ class Operation:
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
+    def to_summary_dict(self) -> Dict[str, Any]:
+        """Return a compact, agent-friendly operation summary.
+
+        Delta updates should be lightweight by default; callers can opt into full
+        payloads via `to_dict()`.
+        """
+        return {
+            "id": self.id,
+            "timestamp": self.timestamp,
+            "intent": self.intent,
+            "task_id": self.task_id,
+            "task_file": self.task_file,
+            "undone": self.undone,
+            "has_result": self.result is not None,
+        }
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Operation":
         payload = dict(data or {})

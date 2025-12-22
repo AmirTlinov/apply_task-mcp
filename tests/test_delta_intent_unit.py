@@ -54,6 +54,15 @@ def test_delta_returns_operations_after_since(tmp_path):
     assert resp.result["latest_id"] == history.operations[-1].id
     assert [op["intent"] for op in resp.result["operations"]] == ["verify", "progress"]
     assert resp.result["can_undo"] is True
+    # Delta is lightweight by default (summary only).
+    assert "data" not in resp.result["operations"][0]
+    assert "result" not in resp.result["operations"][0]
+
+    resp_full = handle_delta(manager, {"intent": "delta", "since": since_id, "task": "TASK-001", "limit": 50, "include_details": True})
+    assert resp_full.success is True
+    assert resp_full.result["include_details"] is True
+    assert "data" in resp_full.result["operations"][0]
+    assert "result" in resp_full.result["operations"][0]
 
 
 def test_delta_errors_when_since_not_found(tmp_path):

@@ -286,6 +286,97 @@ def _truncate_utf8(text: str, *, max_bytes: int) -> Tuple[str, bool, int]:
     return truncated, True, original
 
 
+def _apply_radar_budget(result: Dict[str, Any], *, max_chars: int) -> None:
+    """Enforce a hard output budget for Radar View (agent-friendly, compact-by-default).
+
+    The budget is applied as UTF-8 bytes of the JSON rendering. The function is
+    deterministic: it applies reductions in a stable order and never removes the
+    main Radar keys (now/why/verify/next/blockers/open_checkpoints).
+    """
+
+    def _json_bytes(value: Any) -> int:
+        try:
+            raw = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            return len(raw)
+        except Exception:
+            return 0
+
+    max_bytes = int(max_chars)
+    if max_bytes <= 0:
+        return
+
+    original = _json_bytes(result)
+    truncated = False
+    if original > max_bytes:
+        truncated = True
+
+        # 1) Keep next suggestions short.
+        if isinstance(result.get("next"), list):
+            result["next"] = list(result["next"])[:1]
+
+        # 2) Drop auxiliary navigation links first.
+        if _json_bytes(result) > max_bytes:
+            result.pop("links", None)
+
+        # 3) Cap verify commands.
+        verify = result.get("verify")
+        if isinstance(verify, dict):
+            cmds = verify.get("commands")
+            if isinstance(cmds, list):
+                verify["commands"] = [_preview_text(str(c or ""), max_len=180) for c in list(cmds)[:5]]
+
+        # 4) Cap contract preview (why).
+        why = result.get("why")
+        if isinstance(why, dict) and why.get("contract_preview") is not None:
+            why["contract_preview"] = _preview_text(str(why.get("contract_preview") or ""), max_len=140)
+
+        # 5) Drop contract summary (still available via resume/context).
+        if _json_bytes(result) > max_bytes and isinstance(why, dict):
+            why.pop("contract", None)
+
+        # 6) Drop heavy evidence details.
+        if _json_bytes(result) > max_bytes and isinstance(verify, dict):
+            verify.pop("evidence", None)
+            verify.pop("missing", None)
+
+        # 7) Last resort: shrink focus title.
+        focus = result.get("focus")
+        if _json_bytes(result) > max_bytes and isinstance(focus, dict):
+            focus["title"] = _preview_text(str(focus.get("title") or ""), max_len=80)
+
+        # 8) Shrink now title and drop next if still above budget.
+        if _json_bytes(result) > max_bytes:
+            now = result.get("now")
+            if isinstance(now, dict) and now.get("title") is not None:
+                now["title"] = _preview_text(str(now.get("title") or ""), max_len=80)
+        if _json_bytes(result) > max_bytes and isinstance(result.get("next"), list):
+            result["next"] = []
+
+        # 9) Hard clamp: if still too large, return a minimal stable skeleton.
+        if _json_bytes(result) > max_bytes:
+            focus = result.get("focus") if isinstance(result.get("focus"), dict) else {}
+            minimal = {
+                "focus": {
+                    "id": str((focus or {}).get("id") or ""),
+                    "kind": str((focus or {}).get("kind") or ""),
+                    "revision": int((focus or {}).get("revision") or 0),
+                    "domain": str((focus or {}).get("domain") or ""),
+                    "title": _preview_text(str((focus or {}).get("title") or ""), max_len=80),
+                },
+                "now": {},
+                "why": {},
+                "verify": {"commands": [], "open_checkpoints": [], "ready": None, "needs": None},
+                "next": [],
+                "blockers": {"blocked": False, "blockers": [], "depends_on": [], "unresolved_depends_on": []},
+                "open_checkpoints": [],
+            }
+            result.clear()
+            result.update(minimal)
+
+    used = _json_bytes(result)
+    result["budget"] = {"max_chars": int(max_chars), "used_chars": int(used), "truncated": bool(truncated or used > max_bytes)}
+
+
 def _contract_summary(value: Any) -> Dict[str, Any]:
     """Compact contract summary for Radar View (1 screen → 1 truth)."""
     if not isinstance(value, dict):
@@ -1174,29 +1265,68 @@ def generate_suggestions(manager: TaskManager, focus_id: Optional[str] = None) -
     if focus_id and focus_id.startswith("TASK-"):
         task = manager.load_task(focus_id, skip_sync=True)
         if task and task.steps:
-            checkpoints = _compute_checkpoint_status(task)
-            if checkpoints["pending"]:
-                step_id = checkpoints.get("pending_ids", [""])[0] if isinstance(checkpoints.get("pending_ids"), list) else ""
+            items = _mirror_items_from_steps(list(getattr(task, "steps", []) or []))
+            _normalize_mirror_progress(items)
+            now = next((i for i in items if i.get("status") == "in_progress"), items[0] if items else None)
+            if not now or not now.get("path"):
+                return []
+            path = str(now.get("path") or "").strip()
+            step_id = str(now.get("id", "") or "").strip() or None
+            st, _, _ = _find_step_by_path(list(getattr(task, "steps", []) or []), path)
+
+            ready = bool(getattr(st, "ready_for_completion", lambda: False)()) if st else False
+            needs = _step_needs_for_completion(st) if st and not ready else []
+            missing_checkpoints = [n for n in needs if n in {"criteria", "tests"}]
+            checkpoints_payload: Dict[str, Any] = {k: {"confirmed": True} for k in missing_checkpoints}
+
+            # Radar suggestions are executable-by-shape: provide a canonical atomic batch skeleton
+            # for the common "did work → attach evidence → close step" loop.
+            if ready:
                 return [
                     Suggestion(
-                        action="verify",
-                        target=checkpoints["pending"][0],
-                        reason="Есть шаги без подтверждённых чекпоинтов (criteria/tests).",
-                        priority="normal",
-                        params={"task": focus_id, "path": checkpoints["pending"][0], "step_id": step_id or None},
+                        action="batch",
+                        target=path,
+                        reason="Золотой путь: приложи evidence и заверши шаг одной атомарной пачкой.",
+                        priority="high",
+                        params={
+                            "atomic": True,
+                            "task": focus_id,
+                            "expected_target_id": focus_id,
+                            "expected_kind": "task",
+                            "strict_targeting": True,
+                            "operations": [
+                                {"intent": "evidence_capture", "path": path, "artifacts": []},
+                                {"intent": "done", "path": path, "step_id": step_id},
+                            ],
+                        },
                     )
                 ]
-            if checkpoints["ready"]:
-                step_id = checkpoints.get("ready_ids", [""])[0] if isinstance(checkpoints.get("ready_ids"), list) else ""
-                return [
-                    Suggestion(
-                        action="done",
-                        target=checkpoints["ready"][0],
-                        reason="Есть шаги готовые к завершению.",
-                        priority="normal",
-                        params={"task": focus_id, "path": checkpoints["ready"][0], "step_id": step_id or None},
-                    )
-                ]
+
+            return [
+                Suggestion(
+                    action="batch",
+                    target=path,
+                    reason="Золотой путь: приложи evidence, подтверди чекпоинты и заверши шаг одной атомарной пачкой.",
+                    priority="high",
+                    params={
+                        "atomic": True,
+                        "task": focus_id,
+                        "expected_target_id": focus_id,
+                        "expected_kind": "task",
+                        "strict_targeting": True,
+                        "operations": [
+                            {"intent": "evidence_capture", "path": path, "artifacts": []},
+                            {
+                                "intent": "close_step",
+                                "path": path,
+                                "step_id": step_id,
+                                "note": "",
+                                "checkpoints": checkpoints_payload or {"criteria": {"confirmed": True}},
+                            },
+                        ],
+                    },
+                )
+            ]
     return []
 
 
@@ -1437,6 +1567,12 @@ def handle_radar(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         return error_response("radar", "INVALID_LIMIT", "limit должен быть числом")
     limit = max(0, min(limit, 10))
 
+    try:
+        max_chars = int(data.get("max_chars", 12_000) or 12_000)
+    except Exception:
+        return error_response("radar", "INVALID_MAX_CHARS", "max_chars должен быть числом")
+    max_chars = max(1_000, min(max_chars, 50_000))
+
     focus_payload = {
         "id": focus_id,
         "kind": str(getattr(detail, "kind", "task") or "task"),
@@ -1450,7 +1586,12 @@ def handle_radar(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
     focus_key = "plan" if getattr(detail, "kind", "task") == "plan" else "task"
     result: Dict[str, Any] = {
         "focus": focus_payload,
+        "now": {},
+        "why": {},
+        "verify": {"commands": [], "ready": None, "needs": None},
         "next": [s.to_dict() for s in next_suggestions],
+        "blockers": {"blocked": False, "blockers": [], "depends_on": [], "unresolved_depends_on": []},
+        "open_checkpoints": [],
         "links": {
             "resume": {"intent": "resume", focus_key: focus_id},
             "mirror": {"intent": "mirror", focus_key: focus_id, "limit": 10},
@@ -1467,7 +1608,14 @@ def handle_radar(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         current = max(0, min(current, len(steps)))
         title = steps[current] if current < len(steps) else ""
         status = "completed" if steps and current >= len(steps) else ("in_progress" if steps else "pending")
-        result["now"] = {"kind": "plan_step", "index": current, "title": title, "total": len(steps), "status": status}
+        result["now"] = {
+            "kind": "plan_step",
+            "index": current,
+            "title": title,
+            "total": len(steps),
+            "status": status,
+            "queue": {"remaining": max(0, len(steps) - current), "total": len(steps)},
+        }
         why_payload: Dict[str, Any] = {
             "plan_id": focus_id,
             "contract_preview": _preview_text(str(getattr(detail, "contract", "") or "")),
@@ -1475,23 +1623,36 @@ def handle_radar(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         if contract_summary:
             why_payload["contract"] = contract_summary
         result["why"] = why_payload
-        result["verify"] = {
-            "checks": list(getattr(detail, "tests", []) or []),
-            "criteria_confirmed": bool(getattr(detail, "criteria_confirmed", False)),
-            "tests_confirmed": bool(getattr(detail, "tests_confirmed", False)),
-        }
         open_checkpoints: List[str] = []
         if list(getattr(detail, "success_criteria", []) or []) and not bool(getattr(detail, "criteria_confirmed", False)):
             open_checkpoints.append("criteria")
         tests_auto = bool(getattr(detail, "tests_auto_confirmed", False))
         if list(getattr(detail, "tests", []) or []) and not (bool(getattr(detail, "tests_confirmed", False)) or tests_auto):
             open_checkpoints.append("tests")
-        result["open_checkpoints"] = open_checkpoints
-        result["how_to_verify"] = {
-            "commands": _dedupe_strs(list(contract_summary.get("checks", []) or []) + list(getattr(detail, "tests", []) or [])),
+        commands = _dedupe_strs(list(contract_summary.get("checks", []) or []) + list(getattr(detail, "tests", []) or []))
+        result["verify"] = {
+            "commands": commands[:10],
             "open_checkpoints": open_checkpoints,
+            "criteria_confirmed": bool(getattr(detail, "criteria_confirmed", False)),
+            "tests_confirmed": bool(getattr(detail, "tests_confirmed", False)),
+            "ready": None,
+            "needs": None,
         }
-        result["blockers"] = {"blocked": bool(getattr(detail, "blocked", False)), "blockers": list(getattr(detail, "blockers", []) or [])}
+        result["open_checkpoints"] = open_checkpoints
+        result["how_to_verify"] = {"commands": result["verify"]["commands"], "open_checkpoints": open_checkpoints}
+        deps = [str(d or "").strip() for d in list(getattr(detail, "depends_on", []) or []) if str(d or "").strip()]
+        unresolved: List[str] = []
+        for dep_id in deps:
+            dep = manager.load_task(dep_id, skip_sync=True)
+            if not dep or str(getattr(dep, "status", "") or "").upper() != "DONE":
+                unresolved.append(dep_id)
+        result["blockers"] = {
+            "blocked": bool(getattr(detail, "blocked", False)),
+            "blockers": list(getattr(detail, "blockers", []) or []),
+            "depends_on": deps,
+            "unresolved_depends_on": unresolved,
+        }
+        _apply_radar_budget(result, max_chars=max_chars)
         return AIResponse(
             success=True,
             intent="radar",
@@ -1504,7 +1665,19 @@ def handle_radar(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
     items = _mirror_items_from_steps(list(getattr(task, "steps", []) or []))
     _normalize_mirror_progress(items)
     now = next((i for i in items if i.get("status") == "in_progress"), items[0] if items else None)
-    result["now"] = now
+    queue = _compute_checkpoint_status(task)
+    queue_summary = {
+        "pending": len(list(queue.get("pending", []) or [])),
+        "ready": len(list(queue.get("ready", []) or [])),
+        "next_pending": (list(queue.get("pending", []) or [])[:1] or [None])[0],
+        "next_ready": (list(queue.get("ready", []) or [])[:1] or [None])[0],
+    }
+    now_payload = dict(now or {})
+    if now_payload:
+        now_payload.setdefault("queue", queue_summary)
+    else:
+        now_payload = {"kind": "step", "status": "missing", "queue": queue_summary}
+    result["now"] = now_payload
 
     plan_id = str(getattr(task, "parent", "") or "").strip()
     plan = manager.load_task(plan_id, skip_sync=True) if plan_id else None
@@ -1518,23 +1691,42 @@ def handle_radar(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
     result["why"] = why_payload
     result["how_to_verify"] = {"commands": list(plan_contract_summary.get("checks", []) or [])}
 
-    if now and now.get("path"):
-        path = str(now.get("path") or "")
+    verify_payload: Dict[str, Any] = {
+        "commands": _dedupe_strs(list(plan_contract_summary.get("checks", []) or []))[:10],
+        "open_checkpoints": [],
+    }
+    open_checkpoints: List[str] = []
+    if now_payload.get("path"):
+        path = str(now_payload.get("path") or "")
         st, _, _ = _find_step_by_path(list(getattr(task, "steps", []) or []), path)
         if st:
+            ready = bool(st.ready_for_completion())
+            needs = [] if ready else _step_needs_for_completion(st)
             missing: List[Dict[str, Any]] = []
-            if not bool(getattr(st, "criteria_confirmed", False)):
+            if "criteria" in needs:
                 missing.append({"checkpoint": "criteria", "path": path})
-            if not (bool(getattr(st, "tests_confirmed", False)) or bool(getattr(st, "tests_auto_confirmed", False))):
+                open_checkpoints.append("criteria")
+            if "tests" in needs:
                 missing.append({"checkpoint": "tests", "path": path})
-            if bool(getattr(st, "blocked", False)):
+                open_checkpoints.append("tests")
+            if "blocked" in needs:
                 missing.append({"checkpoint": "unblocked", "path": path})
+                open_checkpoints.append("unblocked")
+            if "plan_tasks" in needs:
+                missing.append({"checkpoint": "plan_tasks", "path": path})
+                open_checkpoints.append("plan_tasks")
             checks = list(getattr(st, "verification_checks", []) or [])
             attachments = list(getattr(st, "attachments", []) or [])
-            result["verify"] = {
+            commands = _dedupe_strs(list(plan_contract_summary.get("checks", []) or []) + list(getattr(st, "tests", []) or []))
+            verify_payload = {
                 "path": path,
                 "step_id": str(getattr(st, "id", "") or ""),
-                "tests": list(getattr(st, "tests", []) or []),
+                "commands": commands[:10],
+                "open_checkpoints": [],
+                "missing_checkpoints": [],
+                "tests": list(getattr(st, "tests", []) or [])[:10],
+                "ready": ready,
+                "needs": needs,
                 "missing": missing,
                 "evidence": {
                     "verification_outcome": str(getattr(st, "verification_outcome", "") or ""),
@@ -1553,9 +1745,15 @@ def handle_radar(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             result["how_to_verify"] = {
                 "path": path,
                 "step_id": str(getattr(st, "id", "") or ""),
-                "commands": _dedupe_strs(list(plan_contract_summary.get("checks", []) or []) + list(getattr(st, "tests", []) or [])),
+                "commands": commands[:10],
                 "missing_checkpoints": [m.get("checkpoint") for m in missing if m.get("checkpoint")],
             }
+            verify_payload["open_checkpoints"] = list(open_checkpoints)
+            verify_payload["missing_checkpoints"] = [m.get("checkpoint") for m in missing if m.get("checkpoint")]
+    if isinstance(verify_payload, dict) and "open_checkpoints" in verify_payload:
+        verify_payload["open_checkpoints"] = list(open_checkpoints)
+    result["verify"] = verify_payload
+    result["open_checkpoints"] = open_checkpoints
 
     deps = [str(d or "").strip() for d in list(getattr(task, "depends_on", []) or []) if str(d or "").strip()]
     unresolved: List[str] = []
@@ -1569,7 +1767,7 @@ def handle_radar(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         "depends_on": deps,
         "unresolved_depends_on": unresolved,
     }
-    result["open_checkpoints"] = _compute_checkpoint_status(task)
+    _apply_radar_budget(result, max_chars=max_chars)
 
     return AIResponse(
         success=True,
@@ -4741,11 +4939,44 @@ def handle_batch(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         return error_response("batch", "INVALID_OPERATIONS", "operations должен быть непустым массивом")
     atomic = bool(data.get("atomic", False))
     default_task = data.get("task")
+    expected_revision, expected_err = _parse_expected_revision(data)
+    if expected_err:
+        return error_response(
+            "batch",
+            "INVALID_EXPECTED_REVISION",
+            expected_err,
+            recovery="Передай expected_revision как целое число (etag-like). Чтобы узнать текущую revision — вызови radar/resume.",
+        )
     if default_task is not None:
         err = validate_task_id(default_task)
         if err:
             return error_response("batch", "INVALID_TASK", err)
         default_task = str(default_task)
+
+    # Batch-level safe write defaults (optional).
+    batch_expected_target_id = data.get("expected_target_id")
+    batch_expected_kind = data.get("expected_kind")
+    batch_strict_targeting = bool(data.get("strict_targeting", False))
+
+    # Batch-level optimistic concurrency preflight applies to the default task only.
+    if expected_revision is not None:
+        if not default_task:
+            return error_response(
+                "batch",
+                "MISSING_TASK_FOR_EXPECTED_REVISION",
+                "task обязателен при expected_revision на batch",
+                recovery="Передай task=TASK-###|PLAN-### на уровне batch, либо перенеси expected_revision в конкретную операцию.",
+            )
+        current_detail = manager.load_task(default_task, skip_sync=True)
+        if current_detail:
+            current_revision = int(getattr(current_detail, "revision", 0) or 0)
+            if current_revision != int(expected_revision):
+                return _revision_mismatch_response(
+                    "batch",
+                    task_id=default_task,
+                    expected=int(expected_revision),
+                    current=current_revision,
+                )
 
     try:
         history_before = OperationHistory(storage_dir=Path(manager.tasks_dir))
@@ -4785,13 +5016,18 @@ def handle_batch(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
 
     # If everything was filtered out (e.g., only empty paths), return a stable no-op response.
     if not expanded_ops:
-        return AIResponse(success=True, intent="batch", result={"total": 0, "completed": 0, "results": [], "latest_id": initial_latest_id})
+        return AIResponse(
+            success=True,
+            intent="batch",
+            result={"total": 0, "completed": 0, "results": [], "latest_id": initial_latest_id, "operation_ids": []},
+        )
 
     ops = expanded_ops
     total = len(ops)
 
     completed = 0
     results: List[Dict[str, Any]] = []
+    operation_ids: List[str] = []
 
     backup_dir: Optional[Path] = None
     if atomic:
@@ -4805,25 +5041,43 @@ def handle_batch(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             op_payload = dict(op)
             if default_task and "task" not in op_payload and op_payload.get("intent") not in {"context", "storage", "history"}:
                 op_payload["task"] = default_task
+            if batch_expected_target_id is not None and "expected_target_id" not in op_payload:
+                op_payload["expected_target_id"] = batch_expected_target_id
+            if batch_expected_kind is not None and "expected_kind" not in op_payload:
+                op_payload["expected_kind"] = batch_expected_kind
+            if batch_strict_targeting and "strict_targeting" not in op_payload:
+                op_payload["strict_targeting"] = True
             resp = process_intent(manager, op_payload)
             if not resp.success:
                 if atomic and backup_dir:
                     _restore_dir(backup_dir, Path(manager.tasks_dir))
                     latest_id = initial_latest_id
+                    rolled_back = True
                 else:
                     try:
                         history_now = OperationHistory(storage_dir=Path(manager.tasks_dir))
                         latest_id = history_now.operations[-1].id if history_now.operations else None
                     except Exception:
                         latest_id = None
+                    rolled_back = False
                 return AIResponse(
                     success=False,
                     intent="batch",
-                    result={"total": total, "completed": completed, "results": results, "latest_id": latest_id},
+                    result={
+                        "total": total,
+                        "completed": completed,
+                        "results": results,
+                        "latest_id": latest_id,
+                        "operation_ids": operation_ids,
+                        "rolled_back": rolled_back,
+                    },
                     error_code=resp.error_code or "BATCH_FAILED",
                     error_message=resp.error_message or "Batch failed",
                 )
             results.append(resp.to_dict())
+            op_id = str((resp.meta or {}).get("operation_id") or "").strip()
+            if op_id:
+                operation_ids.append(op_id)
             completed += 1
         try:
             history_after = OperationHistory(storage_dir=Path(manager.tasks_dir))
@@ -4833,7 +5087,7 @@ def handle_batch(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         return AIResponse(
             success=True,
             intent="batch",
-            result={"total": total, "completed": completed, "results": results, "latest_id": latest_id},
+            result={"total": total, "completed": completed, "results": results, "latest_id": latest_id, "operation_ids": operation_ids},
         )
     finally:
         if atomic and backup_dir:
@@ -4875,6 +5129,7 @@ def handle_delta(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         return error_response("delta", "INVALID_LIMIT", "limit должен быть числом")
     limit = max(0, min(limit, 500))
     include_undone = bool(data.get("include_undone", True))
+    include_details = bool(data.get("include_details", False))
 
     ops = list(history.operations or [])
     start_idx = 0
@@ -4895,6 +5150,7 @@ def handle_delta(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         sliced = [op for op in sliced if str(getattr(op, "task_id", "") or "") == task_filter]
     if not include_undone:
         sliced = [op for op in sliced if not bool(getattr(op, "undone", False))]
+    has_more = bool(limit and len(sliced) > limit)
     sliced = sliced[:limit] if limit else []
 
     latest_id = ops[-1].id if ops else None
@@ -4905,7 +5161,9 @@ def handle_delta(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             "since": since or None,
             "task": task_filter or None,
             "latest_id": latest_id,
-            "operations": [op.to_dict() for op in sliced],
+            "include_details": include_details,
+            "operations": [op.to_dict() if include_details else op.to_summary_dict() for op in sliced],
+            "has_more": has_more,
             "can_undo": history.can_undo(),
             "can_redo": history.can_redo(),
         },
@@ -5145,6 +5403,94 @@ def process_intent(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             early_error.context = dict(early_error.context or {})
             early_error.context.update(ctx_add)
         return early_error
+
+    # Safe writes (explicit > focus): prevent silent mis-target when the caller expects a specific target.
+    if intent in _FOCUSABLE_MUTATING_INTENTS:
+        expected_target_id = payload.get("expected_target_id", None)
+        if expected_target_id is not None:
+            err = validate_node_id(expected_target_id, "expected_target_id")
+            if err:
+                return error_response(intent, "INVALID_EXPECTED_TARGET_ID", err)
+            expected_target_id = str(expected_target_id).strip()
+        expected_kind = payload.get("expected_kind", None)
+        if expected_kind is not None:
+            if not isinstance(expected_kind, str):
+                return error_response(intent, "INVALID_EXPECTED_KIND", "expected_kind должен быть строкой (task|plan)")
+            expected_kind = str(expected_kind or "").strip().lower()
+            if expected_kind not in {"task", "plan"}:
+                return error_response(intent, "INVALID_EXPECTED_KIND", "expected_kind должен быть task|plan")
+        strict_targeting = bool(payload.get("strict_targeting", False))
+
+        target_resolution = (ctx_add or {}).get("target_resolution") if isinstance(ctx_add, dict) else {}
+        source = str((target_resolution or {}).get("source") or "").strip()
+        resolved_target_id = payload.get("plan") if payload.get("plan") is not None else payload.get("task")
+        resolved_target_id = str(resolved_target_id or "").strip() or None
+        resolved_kind: Optional[str] = None
+        if resolved_target_id:
+            if resolved_target_id.startswith("PLAN-"):
+                resolved_kind = "plan"
+            elif resolved_target_id.startswith("TASK-"):
+                resolved_kind = "task"
+
+        if strict_targeting and source and source != "explicit" and not expected_target_id:
+            err_resp = error_response(
+                intent,
+                "STRICT_TARGETING_REQUIRES_EXPECTED_TARGET_ID",
+                "expected_target_id обязателен при strict_targeting=true и использовании focus",
+                recovery="Передай expected_target_id (и опционально expected_kind) либо адресуй операцию явно через task=/plan=.",
+                suggestions=[
+                    Suggestion(action="focus_get", target="focus_get", reason="Проверь текущий focus перед записью.", priority="high", params={}),
+                    Suggestion(action="radar", target="tasks_radar", reason="Проверь, что focus указывает на нужную цель.", priority="normal", params={}),
+                ],
+                result={
+                    "expected_target_id": expected_target_id,
+                    "expected_kind": expected_kind,
+                    "resolved_target_id": resolved_target_id,
+                    "resolved_kind": resolved_kind,
+                    "target_resolution": target_resolution,
+                },
+            )
+            err_resp.context = dict(err_resp.context or {})
+            err_resp.context.update(ctx_add or {})
+            return err_resp
+
+        if expected_target_id and resolved_target_id and resolved_target_id != expected_target_id:
+            err_resp = error_response(
+                intent,
+                "EXPECTED_TARGET_MISMATCH",
+                f"resolved_target_id={resolved_target_id} != expected_target_id={expected_target_id}",
+                recovery="Исправь target (task=/plan=) или установи корректный focus через focus_set, затем повтори вызов.",
+                suggestions=_missing_target_suggestions(manager, want=["TASK-", "PLAN-"]),
+                result={
+                    "expected_target_id": expected_target_id,
+                    "expected_kind": expected_kind,
+                    "resolved_target_id": resolved_target_id,
+                    "resolved_kind": resolved_kind,
+                    "target_resolution": target_resolution,
+                },
+            )
+            err_resp.context = dict(err_resp.context or {})
+            err_resp.context.update(ctx_add or {})
+            return err_resp
+
+        if expected_kind and resolved_kind and resolved_kind != expected_kind:
+            err_resp = error_response(
+                intent,
+                "EXPECTED_TARGET_MISMATCH",
+                f"resolved_kind={resolved_kind} != expected_kind={expected_kind}",
+                recovery="Исправь target (task=/plan=) или установи корректный focus через focus_set, затем повтори вызов.",
+                suggestions=_missing_target_suggestions(manager, want=["TASK-", "PLAN-"]),
+                result={
+                    "expected_target_id": expected_target_id,
+                    "expected_kind": expected_kind,
+                    "resolved_target_id": resolved_target_id,
+                    "resolved_kind": resolved_kind,
+                    "target_resolution": target_resolution,
+                },
+            )
+            err_resp.context = dict(err_resp.context or {})
+            err_resp.context.update(ctx_add or {})
+            return err_resp
 
     # History tracking (undo/redo + delta): capture *before* snapshots for mutations.
     history = OperationHistory(storage_dir=Path(manager.tasks_dir))

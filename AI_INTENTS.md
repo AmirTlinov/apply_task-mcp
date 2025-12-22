@@ -74,6 +74,19 @@ Notes:
 - When `expected_revision` is present and stale, the operation fails with `error.code = "REVISION_MISMATCH"` and includes `result.current_revision` plus recovery suggestions (resume/radar → retry).
 - Read-only intents ignore `expected_revision` (but if provided it must be a valid integer).
 
+## Safe targeting (expected_target_id / strict_targeting)
+
+Focus is **convenience**, never magic: `explicit > focus`. To eliminate “silent mis-target” on writes, mutating intents accept an optional guard:
+
+```json
+{"expected_target_id":"TASK-001","expected_kind":"task","strict_targeting":true}
+```
+
+Rules:
+- When `expected_target_id` is present, the resolved target id **must match** (otherwise fails with `error.code = "EXPECTED_TARGET_MISMATCH"`).
+- When `strict_targeting=true` and the operation is focus-based (no explicit `task`/`plan`), `expected_target_id` is required (otherwise fails with `error.code = "STRICT_TARGETING_REQUIRES_EXPECTED_TARGET_ID"`).
+- Mutating responses include `context.target_resolution` (`explicit|focus|focus_task_parent|missing|focus_incompatible`) so you can trace how the target was chosen.
+
 ## Intents
 
 ### focus_get
@@ -102,19 +115,21 @@ Clear focus (removes `.last` if present).
 
 ### radar
 
-Compact “Radar View” snapshot for the current work:
+Compact “Radar View” snapshot for the current work (1 screen → 1 truth):
 
 - **Now**: active step / current plan checklist item
 - **Why**: contract / goal summary
-- **How to verify**: checks/tests (and missing checkpoints)
+- **Verify**: commands + missing checkpoints + evidence summary
 - **Next**: top 1–3 actions/suggestions
 - **Blockers/Deps**: blockers + dependency state
 
 ```json
-{"intent":"radar","task":"TASK-001","limit":3}
+{"intent":"radar","task":"TASK-001","limit":3,"max_chars":12000}
 ```
 
 Notes:
+- Radar always returns stable keys: `now`, `why`, `verify`, `next`, `blockers`, `open_checkpoints` (plus `focus`, `links`, `budget`).
+- `max_chars` is a hard output budget (UTF-8 bytes). Result includes `result.budget` with `used_chars` and `truncated`.
 - `result.why.contract` may include a compact summary from structured `contract_data` (goal/done/checks/constraints/risks).
 - `result.links` contains small “expand” payloads (resume/mirror/context/history).
 - For tasks, `result.verify.evidence` includes a compact “black box” summary for the active step (counts + kinds + last observed timestamps).
@@ -474,15 +489,18 @@ Execute multiple intents in order (optionally `atomic=true`).
   "intent":"batch",
   "atomic":true,
   "task":"TASK-001",
+  "expected_target_id":"TASK-001",
+  "strict_targeting":true,
   "operations":[
-    {"intent":"note","path":"s:0","note":"..."},
-    {"intent":"verify","path":"s:0","checkpoints":{"criteria":{"confirmed":true}}}
+    {"intent":"evidence_capture","path":"s:0","artifacts":[{"kind":"cmd_output","command":"pytest -q","stdout":"..."}]},
+    {"intent":"close_step","path":"s:0","note":"...","checkpoints":{"criteria":{"confirmed":true},"tests":{"confirmed":true}}}
   ]
 }
 ```
 
 Batch result also includes:
 - `result.latest_id`: latest operation id after the batch (for `delta` chaining)
+- `result.operation_ids`: operation ids in execution order (one per successful nested mutation)
 - Nested results may include `meta.operation_id` (when the nested intent is mutating)
 
 ### undo / redo
@@ -513,6 +531,7 @@ Return operation log entries strictly after a given operation id (agent-friendly
 Notes:
 - Use `meta.operation_id` from any mutating response as the `since` cursor.
 - `since` is exclusive (returns ops strictly after it).
+- Delta is lightweight by default: set `include_details=true` to return full `data/result` payloads.
 
 ### storage
 

@@ -82,6 +82,18 @@ _COMMON_REQUEST_PROPERTIES: Dict[str, Any] = {
         "type": ["integer", "string"],
         "description": "Alias for expected_revision.",
     },
+    "expected_target_id": {
+        "type": "string",
+        "description": "Optional safe write guard: the resolved target id MUST match this value, otherwise the operation fails (prevents focus mis-target).",
+    },
+    "expected_kind": {
+        "type": "string",
+        "description": "Optional safe write guard: expected target kind (task|plan). Used with expected_target_id/strict_targeting.",
+    },
+    "strict_targeting": {
+        "type": "boolean",
+        "description": "When true, focus-based writes require expected_target_id and will fail if focus resolves to a different target.",
+    },
 }
 
 
@@ -159,6 +171,7 @@ _TOOL_SPECS: Dict[str, Dict[str, Any]] = {
                 "task": {"type": "string", "description": "Task id (TASK-###). Uses focus if omitted."},
                 "plan": {"type": "string", "description": "Plan id (PLAN-###). Uses focus if omitted."},
                 "limit": {"type": "integer", "default": 3, "description": "Max next suggestions to return (0..10)."},
+                "max_chars": {"type": "integer", "default": 12000, "description": "Hard output budget for radar JSON (UTF-8 bytes)."},
             },
             "required": [],
         },
@@ -607,6 +620,7 @@ _TOOL_SPECS: Dict[str, Dict[str, Any]] = {
                 "task": {"type": "string", "description": "Optional filter: only operations for this task/plan id."},
                 "limit": {"type": "integer", "default": 50, "description": "Max operations returned (0..500)."},
                 "include_undone": {"type": "boolean", "default": True, "description": "Include operations marked as undone."},
+                "include_details": {"type": "boolean", "default": False, "description": "When true, include full operation data/result payloads (larger)."},
             },
             "required": [],
         },
