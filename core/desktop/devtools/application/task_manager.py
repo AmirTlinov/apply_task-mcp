@@ -1177,6 +1177,9 @@ class TaskManager:
         attr_map = {
             "criteria": ("criteria_confirmed", "criteria_notes"),
             "tests": ("tests_confirmed", "tests_notes"),
+            "security": ("security_confirmed", "security_notes"),
+            "perf": ("perf_confirmed", "perf_notes"),
+            "docs": ("docs_confirmed", "docs_notes"),
         }
         if checkpoint not in attr_map:
             return False, "unknown_checkpoint"
@@ -1252,6 +1255,9 @@ class TaskManager:
         attr_map = {
             "criteria": ("criteria_confirmed", "criteria_notes"),
             "tests": ("tests_confirmed", "tests_notes"),
+            "security": ("security_confirmed", "security_notes"),
+            "perf": ("perf_confirmed", "perf_notes"),
+            "docs": ("docs_confirmed", "docs_notes"),
         }
         if checkpoint not in attr_map:
             return False, "unknown_checkpoint"

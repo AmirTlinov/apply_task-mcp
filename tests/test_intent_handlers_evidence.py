@@ -2,6 +2,7 @@ from core import Step, TaskDetail
 from core.desktop.devtools.application.task_manager import TaskManager
 from core.desktop.devtools.interface.intent_api import handle_progress, handle_verify
 from core.desktop.devtools.interface import evidence_collectors
+from core.evidence import Attachment, VerificationCheck
 
 
 def test_handle_verify_persists_checks_and_attachments(tmp_path):
@@ -41,6 +42,65 @@ def test_handle_verify_persists_checks_and_attachments(tmp_path):
     assert updated_step.attachments
     assert updated_step.attachments[0].kind == "log"
     assert updated_step.verification_outcome == "pass"
+
+def test_handle_verify_extended_checkpoints_adds_evidence_refs(tmp_path):
+    tasks_dir = tmp_path / ".tasks"
+    tasks_dir.mkdir()
+    manager = TaskManager(tasks_dir=tasks_dir)
+
+    step = Step(False, "Step", success_criteria=["c"], tests=["t"])
+    task = TaskDetail(id="TASK-001", title="Example", status="TODO", steps=[step])
+    manager.save_task(task, skip_sync=True)
+
+    check_payload = {"kind": "command", "spec": "bandit -q -r .", "outcome": "pass"}
+    attachment_payload = {"kind": "url", "external_uri": "https://example.com/security-review"}
+    expected_check_digest = VerificationCheck.from_dict(check_payload).digest
+    expected_attachment_digest = Attachment.from_dict(attachment_payload).digest
+
+    resp = handle_verify(
+        manager,
+        {
+            "intent": "verify",
+            "task": "TASK-001",
+            "path": "s:0",
+            "checkpoints": {"security": {"confirmed": True, "note": "reviewed"}},
+            "checks": [check_payload],
+            "attachments": [attachment_payload],
+        },
+    )
+    assert resp.success is True
+
+    updated = manager.load_task("TASK-001", skip_sync=True)
+    assert updated is not None
+    updated_step = updated.steps[0]
+    assert updated_step.security_confirmed is True
+    assert "reviewed" in updated_step.security_notes
+    assert expected_check_digest in list(updated_step.security_evidence_refs or [])
+    assert expected_attachment_digest in list(updated_step.security_evidence_refs or [])
+
+
+def test_progress_gating_respects_required_checkpoints(tmp_path):
+    tasks_dir = tmp_path / ".tasks"
+    tasks_dir.mkdir()
+    manager = TaskManager(tasks_dir=tasks_dir)
+
+    step = Step(False, "Step", success_criteria=["c"], tests=["t"])
+    step.criteria_confirmed = True
+    step.tests_confirmed = True
+    step.required_checkpoints = ["criteria", "tests", "security"]
+    task = TaskDetail(id="TASK-001", title="Example", status="TODO", steps=[step])
+    manager.save_task(task, skip_sync=True)
+
+    blocked = handle_progress(manager, {"intent": "progress", "task": "TASK-001", "path": "s:0", "completed": True})
+    assert blocked.success is False
+    assert blocked.error_code == "GATING_FAILED"
+    assert "security" in list(((blocked.result or {}).get("missing_checkpoints") or []))
+
+    ok = handle_verify(manager, {"intent": "verify", "task": "TASK-001", "path": "s:0", "checkpoints": {"security": {"confirmed": True}}})
+    assert ok.success is True
+
+    done = handle_progress(manager, {"intent": "progress", "task": "TASK-001", "path": "s:0", "completed": True})
+    assert done.success is True
 
 
 def test_handle_progress_force_requires_override(tmp_path):

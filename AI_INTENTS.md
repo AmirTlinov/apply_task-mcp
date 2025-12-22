@@ -264,7 +264,7 @@ Update a step at `path` (title / success_criteria / tests / blockers).
 
 ### verify
 
-Confirm checkpoints (`criteria` and/or `tests`) for any checkpointable node.
+Confirm checkpoints (`criteria` / `tests` / `security` / `perf` / `docs`) for any checkpointable node.
 
 ```json
 {"intent":"verify","task":"TASK-001","path":"s:0","checkpoints":{"criteria":{"confirmed":true,"note":"ok"}}}
@@ -283,7 +283,8 @@ Strict confirmation-only rule:
 - Every provided `checkpoints.<name>` must include `confirmed:true`. Missing/false confirmations are rejected with `error.code="VERIFY_NOOP"` and do not mutate state.
 
 Optional evidence (step only):
-- `checks[]` / `attachments[]` / `verification_outcome`
+- `checks[]` / `verification_outcome` (step only)
+- `attachments[]` (any checkpoint target)
 
 Auto evidence (step only, best-effort):
 - When a checkpoint is confirmed, apply_task may append `checks` of kind `ci` (GitHub Actions) and/or `git` (HEAD state), deduped by `digest`.
@@ -313,6 +314,7 @@ Set step completion (respects checkpoints unless `force=true`).
 Close a step (optional `note` is saved as a progress note first).
 
 If `auto_verify=true`, this becomes atomic `verify(step)` → `done(step)` in a single call (requires `checkpoints.*.confirmed=true`).
+Supported checkpoints: `criteria` / `tests` / `security` / `perf` / `docs`.
 
 ```json
 {"intent":"done","task":"TASK-001","path":"s:0","force":false,"note":"done"}
@@ -327,6 +329,7 @@ Atomic close example:
 ### close_step
 
 Atomic `verify(step)` → `done(step)` (strict checkpoints + explicit gating errors). Equivalent to `done(auto_verify=true)`.
+Supported checkpoints: `criteria` / `tests` / `security` / `perf` / `docs`.
 
 ```json
 {"intent":"close_step","task":"TASK-001","path":"s:0","checkpoints":{"criteria":{"confirmed":true},"tests":{"confirmed":true}}}
@@ -414,6 +417,11 @@ Patch structured contract data (plan/task detail only, allowlisted keys):
 Patch a step:
 ```json
 {"intent":"patch","task":"TASK-001","kind":"step","path":"s:0","ops":[{"op":"append","field":"blockers","value":"Waiting for access"}]}
+```
+
+Per-step gating policy (defaults to `["criteria","tests"]` when empty):
+```json
+{"intent":"patch","task":"TASK-001","kind":"step","path":"s:0","ops":[{"op":"set","field":"required_checkpoints","value":["criteria","tests","security"]}]}
 ```
 
 Patch a task node inside a step plan:

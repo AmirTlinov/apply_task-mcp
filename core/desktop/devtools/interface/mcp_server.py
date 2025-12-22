@@ -328,7 +328,7 @@ _TOOL_SPECS: Dict[str, Dict[str, Any]] = {
         },
     },
     "verify": {
-        "description": "Confirm checkpoints (criteria/tests) for a checkpointable node. For TASK-### defaults to kind=step; for PLAN-### kind=plan targets the root plan (no need for kind=task_detail).",
+        "description": "Confirm checkpoints (criteria/tests/security/perf/docs) for a checkpointable node. For TASK-### defaults to kind=step; for PLAN-### kind=plan targets the root plan (no need for kind=task_detail).",
         "schema": {
             "type": "object",
             "properties": {
@@ -342,14 +342,17 @@ _TOOL_SPECS: Dict[str, Dict[str, Any]] = {
                 "task_node_id": {"type": "string", "description": "Stable task node id (NODE-XXXX)."},
                 "checkpoints": {
                     "type": "object",
-                    "description": "Allowed: checkpoints.criteria / checkpoints.tests. Strict: every provided checkpoints.<name> must include confirmed:true.",
+                    "description": "Allowed: checkpoints.criteria / checkpoints.tests / checkpoints.security / checkpoints.perf / checkpoints.docs. Strict: every provided checkpoints.<name> must include confirmed:true.",
                     "properties": {
                         "criteria": {"type": "object"},
                         "tests": {"type": "object"},
+                        "security": {"type": "object"},
+                        "perf": {"type": "object"},
+                        "docs": {"type": "object"},
                     },
                 },
                 "checks": {"type": "array", "description": "Optional verification checks for step targets."},
-                "attachments": {"type": "array", "description": "Optional attachments for step targets."},
+                "attachments": {"type": "array", "description": "Optional attachments for checkpoint targets."},
                 "verification_outcome": {"type": "string", "description": "Optional outcome label for step targets."},
             },
             "required": ["checkpoints"],
@@ -382,10 +385,13 @@ _TOOL_SPECS: Dict[str, Dict[str, Any]] = {
                 "auto_verify": {"type": "boolean", "default": False, "description": "When true, verifies checkpoints before completion (atomic close)."},
                 "checkpoints": {
                     "type": "object",
-                    "description": "Required when auto_verify=true. Allowed: checkpoints.criteria / checkpoints.tests. Strict: every provided checkpoints.<name> must include confirmed:true.",
+                    "description": "Required when auto_verify=true. Allowed: checkpoints.criteria / checkpoints.tests / checkpoints.security / checkpoints.perf / checkpoints.docs. Strict: every provided checkpoints.<name> must include confirmed:true.",
                     "properties": {
                         "criteria": {"type": "object"},
                         "tests": {"type": "object"},
+                        "security": {"type": "object"},
+                        "perf": {"type": "object"},
+                        "docs": {"type": "object"},
                     },
                 },
                 "checks": {"type": "array", "description": "Optional verification checks for auto_verify=true (step only)."},
@@ -395,7 +401,7 @@ _TOOL_SPECS: Dict[str, Dict[str, Any]] = {
                 "force": {"type": "boolean", "default": False},
                 "override_reason": {"type": "string", "description": "Required when force=true."},
             },
-            "required": [],
+            "required": ["task", "path"],
         },
     },
     "close_step": {
@@ -408,10 +414,13 @@ _TOOL_SPECS: Dict[str, Dict[str, Any]] = {
                 "step_id": {"type": "string", "description": "Stable step id (STEP-...)."},
                 "checkpoints": {
                     "type": "object",
-                    "description": "Allowed: checkpoints.criteria / checkpoints.tests. Strict: every provided checkpoints.<name> must include confirmed:true.",
+                    "description": "Allowed: checkpoints.criteria / checkpoints.tests / checkpoints.security / checkpoints.perf / checkpoints.docs. Strict: every provided checkpoints.<name> must include confirmed:true.",
                     "properties": {
                         "criteria": {"type": "object"},
                         "tests": {"type": "object"},
+                        "security": {"type": "object"},
+                        "perf": {"type": "object"},
+                        "docs": {"type": "object"},
                     },
                 },
                 "checks": {"type": "array", "description": "Optional verification checks for step targets."},

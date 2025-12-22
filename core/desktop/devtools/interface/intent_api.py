@@ -252,11 +252,31 @@ def _checkpoint_snapshot_for_node(target: Any) -> Dict[str, Any]:
             "confirmed": bool(getattr(target, "criteria_confirmed", False)),
             "auto_confirmed": bool(getattr(target, "criteria_auto_confirmed", False)),
             "notes_count": len(list(getattr(target, "criteria_notes", []) or [])),
+            "evidence_refs_count": len(list(getattr(target, "criteria_evidence_refs", []) or [])),
         },
         "tests": {
             "confirmed": bool(getattr(target, "tests_confirmed", False)),
             "auto_confirmed": bool(getattr(target, "tests_auto_confirmed", False)),
             "notes_count": len(list(getattr(target, "tests_notes", []) or [])),
+            "evidence_refs_count": len(list(getattr(target, "tests_evidence_refs", []) or [])),
+        },
+        "security": {
+            "confirmed": bool(getattr(target, "security_confirmed", False)),
+            "auto_confirmed": False,
+            "notes_count": len(list(getattr(target, "security_notes", []) or [])),
+            "evidence_refs_count": len(list(getattr(target, "security_evidence_refs", []) or [])),
+        },
+        "perf": {
+            "confirmed": bool(getattr(target, "perf_confirmed", False)),
+            "auto_confirmed": False,
+            "notes_count": len(list(getattr(target, "perf_notes", []) or [])),
+            "evidence_refs_count": len(list(getattr(target, "perf_evidence_refs", []) or [])),
+        },
+        "docs": {
+            "confirmed": bool(getattr(target, "docs_confirmed", False)),
+            "auto_confirmed": False,
+            "notes_count": len(list(getattr(target, "docs_notes", []) or [])),
+            "evidence_refs_count": len(list(getattr(target, "docs_evidence_refs", []) or [])),
         },
     }
 
@@ -266,10 +286,18 @@ def _step_needs_for_completion(step: Step) -> List[str]:
     needs: List[str] = []
     if bool(getattr(step, "blocked", False)):
         needs.append("blocked")
-    if list(getattr(step, "success_criteria", []) or []) and not bool(getattr(step, "criteria_confirmed", False)):
+    raw_required = [str(v or "").strip().lower() for v in list(getattr(step, "required_checkpoints", []) or []) if str(v or "").strip()]
+    required = raw_required or ["criteria", "tests"]
+    if "criteria" in required and not bool(getattr(step, "criteria_confirmed", False)):
         needs.append("criteria")
-    if list(getattr(step, "tests", []) or []) and not (bool(getattr(step, "tests_confirmed", False)) or bool(getattr(step, "tests_auto_confirmed", False))):
+    if "tests" in required and not (bool(getattr(step, "tests_confirmed", False)) or bool(getattr(step, "tests_auto_confirmed", False))):
         needs.append("tests")
+    if "security" in required and not bool(getattr(step, "security_confirmed", False)):
+        needs.append("security")
+    if "perf" in required and not bool(getattr(step, "perf_confirmed", False)):
+        needs.append("perf")
+    if "docs" in required and not bool(getattr(step, "docs_confirmed", False)):
+        needs.append("docs")
     plan = getattr(step, "plan", None)
     tasks = list(getattr(plan, "tasks", []) or []) if plan else []
     if tasks and not all(t.is_done() for t in tasks):
@@ -1276,7 +1304,8 @@ def generate_suggestions(manager: TaskManager, focus_id: Optional[str] = None) -
 
             ready = bool(getattr(st, "ready_for_completion", lambda: False)()) if st else False
             needs = _step_needs_for_completion(st) if st and not ready else []
-            missing_checkpoints = [n for n in needs if n in {"criteria", "tests"}]
+            confirmable = {"criteria", "tests", "security", "perf", "docs"}
+            missing_checkpoints = [n for n in needs if n in confirmable]
             checkpoints_payload: Dict[str, Any] = {k: {"confirmed": True} for k in missing_checkpoints}
 
             # Radar suggestions are executable-by-shape: provide a canonical atomic batch skeleton
@@ -1709,6 +1738,15 @@ def handle_radar(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             if "tests" in needs:
                 missing.append({"checkpoint": "tests", "path": path})
                 open_checkpoints.append("tests")
+            if "security" in needs:
+                missing.append({"checkpoint": "security", "path": path})
+                open_checkpoints.append("security")
+            if "perf" in needs:
+                missing.append({"checkpoint": "perf", "path": path})
+                open_checkpoints.append("perf")
+            if "docs" in needs:
+                missing.append({"checkpoint": "docs", "path": path})
+                open_checkpoints.append("docs")
             if "blocked" in needs:
                 missing.append({"checkpoint": "unblocked", "path": path})
                 open_checkpoints.append("unblocked")
@@ -2900,10 +2938,14 @@ def handle_verify(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
     if not isinstance(checkpoints, dict):
         return error_response("verify", "INVALID_CHECKPOINTS", "checkpoints должен быть объектом")
 
-    allowed = {"criteria", "tests"}
+    allowed = {"criteria", "tests", "security", "perf", "docs"}
     keys = set(checkpoints.keys())
     if not keys or not keys.issubset(allowed):
-        return error_response("verify", "INVALID_CHECKPOINTS", "Допустимо: checkpoints.criteria / checkpoints.tests")
+        return error_response(
+            "verify",
+            "INVALID_CHECKPOINTS",
+            "Допустимо: checkpoints.criteria / checkpoints.tests / checkpoints.security / checkpoints.perf / checkpoints.docs",
+        )
 
     task = manager.load_task(task_id, skip_sync=True)
     if not task:
@@ -2971,8 +3013,8 @@ def handle_verify(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
     checks_raw = data.get("checks") or data.get("verification_checks")
     attachments_raw = data.get("attachments")
     verification_outcome = data.get("verification_outcome")
-    if (checks_raw is not None or attachments_raw is not None or verification_outcome is not None) and kind != "step":
-        return error_response("verify", "INVALID_TARGET", "checks/attachments доступны только для шагов")
+    if (checks_raw is not None or verification_outcome is not None) and kind != "step":
+        return error_response("verify", "INVALID_TARGET", "checks/verification_outcome доступны только для шагов")
 
     # Strict: verify is confirmation-only.
     # Every provided checkpoint entry must include confirmed=true, otherwise this is a NOOP/FAILED call and must not mutate state.
@@ -2990,18 +3032,7 @@ def handle_verify(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             )
 
     def _checkpoint_snapshot(target: Any) -> Dict[str, Any]:
-        return {
-            "criteria": {
-                "confirmed": bool(getattr(target, "criteria_confirmed", False)),
-                "auto_confirmed": bool(getattr(target, "criteria_auto_confirmed", False)),
-                "notes_count": len(list(getattr(target, "criteria_notes", []) or [])),
-            },
-            "tests": {
-                "confirmed": bool(getattr(target, "tests_confirmed", False)),
-                "auto_confirmed": bool(getattr(target, "tests_auto_confirmed", False)),
-                "notes_count": len(list(getattr(target, "tests_notes", []) or [])),
-            },
-        }
+        return _checkpoint_snapshot_for_node(target)
 
     def _locate_target(detail: TaskDetail, *, kind_key: str, path_value: Optional[str]) -> Optional[Any]:
         if kind_key == "task_detail":
@@ -3054,6 +3085,8 @@ def handle_verify(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
     if kind == "step" and path:
         st, _, _ = _find_step_by_path((updated or task).steps, path)
     if st and kind == "step":
+        confirmed_keys = sorted(keys)
+
         def _extend_unique_checks(items: List[VerificationCheck]) -> int:
             existing = {str(getattr(x, "digest", "") or "").strip() for x in (st.verification_checks or []) if getattr(x, "digest", "")}
             added = 0
@@ -3080,7 +3113,24 @@ def handle_verify(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
                     existing.add(digest)
             return added
 
+        def _extend_unique_evidence_refs(target: Any, attr: str, digests: List[str]) -> int:
+            current = getattr(target, attr, None)
+            if not isinstance(current, list):
+                current = []
+                setattr(target, attr, current)
+            existing = {str(v or "").strip() for v in list(current or []) if str(v or "").strip()}
+            added = 0
+            for raw in digests:
+                val = str(raw or "").strip()
+                if not val or val in existing:
+                    continue
+                current.append(val)
+                existing.add(val)
+                added += 1
+            return added
+
         needs_save = False
+        evidence_digests: List[str] = []
         if checks_raw is not None:
             if not isinstance(checks_raw, list):
                 return error_response("verify", "INVALID_CHECKS", "checks должен быть массивом")
@@ -3090,6 +3140,7 @@ def handle_verify(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
                 return error_response("verify", "INVALID_CHECKS", "checks содержит некорректные элементы")
             if _extend_unique_checks(parsed_checks):
                 needs_save = True
+            evidence_digests.extend([str(getattr(c, "digest", "") or "").strip() for c in parsed_checks if str(getattr(c, "digest", "") or "").strip()])
         if attachments_raw is not None:
             if not isinstance(attachments_raw, list):
                 return error_response("verify", "INVALID_ATTACHMENTS", "attachments должен быть массивом")
@@ -3099,6 +3150,9 @@ def handle_verify(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
                 return error_response("verify", "INVALID_ATTACHMENTS", "attachments содержит некорректные элементы")
             if _extend_unique_attachments(parsed_attachments):
                 needs_save = True
+            evidence_digests.extend(
+                [str(getattr(a, "digest", "") or "").strip() for a in parsed_attachments if str(getattr(a, "digest", "") or "").strip()]
+            )
         if verification_outcome is not None:
             st.verification_outcome = str(verification_outcome or "").strip()
             needs_save = True
@@ -3107,16 +3161,91 @@ def handle_verify(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         if any_confirmed:
             try:
                 auto_checks = collect_auto_verification_checks(resolve_project_root())
-                if auto_checks and _extend_unique_checks(list(auto_checks)):
+                auto_checks_list = list(auto_checks or [])
+                if auto_checks_list and _extend_unique_checks(auto_checks_list):
                     needs_save = True
+                evidence_digests.extend(
+                    [str(getattr(c, "digest", "") or "").strip() for c in auto_checks_list if str(getattr(c, "digest", "") or "").strip()]
+                )
             except Exception:
                 pass
+
+        # Tie evidence to the checkpoints confirmed by this call (evidence-first traceability).
+        if evidence_digests:
+            evidence_digests = _dedupe_strs(evidence_digests)
+            refs_map = {
+                "criteria": "criteria_evidence_refs",
+                "tests": "tests_evidence_refs",
+                "security": "security_evidence_refs",
+                "perf": "perf_evidence_refs",
+                "docs": "docs_evidence_refs",
+            }
+            for ck in confirmed_keys:
+                attr = refs_map.get(str(ck or "").strip().lower())
+                if not attr:
+                    continue
+                if _extend_unique_evidence_refs(st, attr, evidence_digests):
+                    needs_save = True
 
         if needs_save and updated:
             manager.save_task(updated, skip_sync=True)
             updated = manager.load_task(task_id, task.domain, skip_sync=True) or updated
             if path:
                 st, _, _ = _find_step_by_path((updated or task).steps, path)
+
+    # Attach evidence/evidence_refs to non-step targets (plan/task/task_detail) when attachments are provided.
+    if kind != "step" and attachments_raw is not None and updated:
+        if not isinstance(attachments_raw, list):
+            return error_response("verify", "INVALID_ATTACHMENTS", "attachments должен быть массивом")
+        try:
+            parsed_attachments = [Attachment.from_dict(a) for a in attachments_raw if isinstance(a, dict)]
+        except Exception:
+            return error_response("verify", "INVALID_ATTACHMENTS", "attachments содержит некорректные элементы")
+        if parsed_attachments:
+            after_target0 = _locate_target(updated, kind_key=checkpoint_target_kind, path_value=path)
+            if after_target0 is not None:
+                current_atts = getattr(after_target0, "attachments", None)
+                if not isinstance(current_atts, list):
+                    current_atts = []
+                    setattr(after_target0, "attachments", current_atts)
+                existing = {str(getattr(x, "digest", "") or "").strip() for x in current_atts if getattr(x, "digest", "")}
+                changed = False
+                evidence_digests = []
+                for att in parsed_attachments:
+                    digest = str(getattr(att, "digest", "") or "").strip()
+                    if digest and digest in existing:
+                        continue
+                    current_atts.append(att)
+                    changed = True
+                    if digest:
+                        existing.add(digest)
+                        evidence_digests.append(digest)
+                if evidence_digests:
+                    evidence_digests = _dedupe_strs(evidence_digests)
+                    refs_map = {
+                        "criteria": "criteria_evidence_refs",
+                        "tests": "tests_evidence_refs",
+                        "security": "security_evidence_refs",
+                        "perf": "perf_evidence_refs",
+                        "docs": "docs_evidence_refs",
+                    }
+                    for ck in sorted(keys):
+                        attr = refs_map.get(str(ck or "").strip().lower())
+                        if not attr:
+                            continue
+                        lst = getattr(after_target0, attr, None)
+                        if not isinstance(lst, list):
+                            lst = []
+                            setattr(after_target0, attr, lst)
+                        before = set(str(v or "").strip() for v in lst if str(v or "").strip())
+                        for d in evidence_digests:
+                            if d and d not in before:
+                                lst.append(d)
+                                before.add(d)
+                                changed = True
+                if changed:
+                    manager.save_task(updated, skip_sync=True)
+                    updated = manager.load_task(task_id, task.domain, skip_sync=True) or updated
 
     after_target = _locate_target(updated or task, kind_key=checkpoint_target_kind, path_value=path) if (updated or task) else None
     checkpoints_after = _checkpoint_snapshot(after_target) if after_target is not None else None
@@ -3479,7 +3608,8 @@ def _handle_close_step_like(manager: TaskManager, data: Dict[str, Any], *, inten
 
     ready = bool(st0.ready_for_completion())
     needs = _step_needs_for_completion(st0) if not ready else []
-    missing_checkpoints = [n for n in needs if n in {"criteria", "tests"}]
+    confirmable = {"criteria", "tests", "security", "perf", "docs"}
+    missing_checkpoints = [n for n in needs if n in confirmable]
     if not ready and not force:
         return error_response(
             intent_name,
@@ -3510,7 +3640,8 @@ def _handle_close_step_like(manager: TaskManager, data: Dict[str, Any], *, inten
         st1, _, _ = _find_step_by_path(updated.steps, path)
         if not force and st1 and not bool(st1.ready_for_completion()):
             needs1 = _step_needs_for_completion(st1)
-            missing1 = [n for n in needs1 if n in {"criteria", "tests"}]
+            confirmable = {"criteria", "tests", "security", "perf", "docs"}
+            missing1 = [n for n in needs1 if n in confirmable]
             return error_response(
                 intent_name,
                 "GATING_FAILED",
@@ -3622,7 +3753,8 @@ def handle_progress(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
     checkpoints_before = _checkpoint_snapshot_for_node(st0)
     if completed and not force and not bool(st0.ready_for_completion()):
         needs0 = _step_needs_for_completion(st0)
-        missing0 = [n for n in needs0 if n in {"criteria", "tests"}]
+        confirmable = {"criteria", "tests", "security", "perf", "docs"}
+        missing0 = [n for n in needs0 if n in confirmable]
         return error_response(
             "progress",
             "GATING_FAILED",
@@ -3649,7 +3781,8 @@ def handle_progress(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         st1, _, _ = _find_step_by_path(updated.steps, path)
         if completed and not force and st1 and not bool(st1.ready_for_completion()):
             needs1 = _step_needs_for_completion(st1)
-            missing1 = [n for n in needs1 if n in {"criteria", "tests"}]
+            confirmable = {"criteria", "tests", "security", "perf", "docs"}
+            missing1 = [n for n in needs1 if n in confirmable]
             return error_response(
                 "progress",
                 "GATING_FAILED",
@@ -3991,6 +4124,7 @@ _PATCHABLE_STEP_FIELDS: Dict[str, str] = {
     "success_criteria": "str_list",
     "tests": "str_list",
     "blockers": "str_list",
+    "required_checkpoints": "str_list",
 }
 
 _PATCHABLE_TASK_NODE_FIELDS: Dict[str, str] = {

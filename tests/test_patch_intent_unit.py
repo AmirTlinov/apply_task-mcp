@@ -60,6 +60,28 @@ def test_patch_step_appends_blocker(tmp_path):
     assert after is not None
     assert after.steps[0].blockers == ["b1"]
 
+def test_patch_step_sets_required_checkpoints(tmp_path):
+    tasks_dir = tmp_path / ".tasks"
+    tasks_dir.mkdir()
+    manager = TaskManager(tasks_dir=tasks_dir)
+
+    manager.save_task(_make_task("TASK-001"), skip_sync=True)
+    resp = process_intent(
+        manager,
+        {
+            "intent": "patch",
+            "task": "TASK-001",
+            "kind": "step",
+            "path": "s:0",
+            "ops": [{"op": "set", "field": "required_checkpoints", "value": ["criteria", "tests", "security"]}],
+        },
+    )
+    assert resp.success is True
+
+    after = manager.load_task("TASK-001", skip_sync=True)
+    assert after is not None
+    assert after.steps[0].required_checkpoints == ["criteria", "tests", "security"]
+
 
 def test_patch_task_node_sets_status(tmp_path):
     tasks_dir = tmp_path / ".tasks"
@@ -88,4 +110,3 @@ def test_patch_task_node_sets_status(tmp_path):
     patched = after.steps[0].plan.tasks[0]
     assert patched.status == "DONE"
     assert patched.status_manual is True
-

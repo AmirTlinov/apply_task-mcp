@@ -12,7 +12,7 @@ from core.status import normalize_status_code
 
 class TaskFileParser:
     STEP_PATTERN = re.compile(r"^-\s*\[(x|X| )\]\s*(.+)$")
-    CURRENT_SCHEMA_VERSION = 8
+    CURRENT_SCHEMA_VERSION = 9
 
     @staticmethod
     def _coerce_timestamp(value: Any) -> str:
@@ -157,6 +157,29 @@ class TaskFileParser:
             task.criteria_notes = [str(v).strip() for v in (metadata.get("criteria_notes", []) or []) if str(v).strip()]
         if "tests_notes" in metadata:
             task.tests_notes = [str(v).strip() for v in (metadata.get("tests_notes", []) or []) if str(v).strip()]
+        if "security_confirmed" in metadata:
+            task.security_confirmed = bool(metadata.get("security_confirmed", False))
+        if "perf_confirmed" in metadata:
+            task.perf_confirmed = bool(metadata.get("perf_confirmed", False))
+        if "docs_confirmed" in metadata:
+            task.docs_confirmed = bool(metadata.get("docs_confirmed", False))
+        if "security_notes" in metadata:
+            task.security_notes = [str(v).strip() for v in (metadata.get("security_notes", []) or []) if str(v).strip()]
+        if "perf_notes" in metadata:
+            task.perf_notes = [str(v).strip() for v in (metadata.get("perf_notes", []) or []) if str(v).strip()]
+        if "docs_notes" in metadata:
+            task.docs_notes = [str(v).strip() for v in (metadata.get("docs_notes", []) or []) if str(v).strip()]
+        for key in (
+            "criteria_evidence_refs",
+            "tests_evidence_refs",
+            "security_evidence_refs",
+            "perf_evidence_refs",
+            "docs_evidence_refs",
+        ):
+            if key in metadata:
+                values = metadata.get(key, []) or []
+                if isinstance(values, list):
+                    setattr(task, key, [str(v).strip() for v in values if str(v).strip()])
         if not getattr(task, "tests", []) and not getattr(task, "tests_confirmed", False):
             task.tests_auto_confirmed = True
         step_project_ids = metadata.get("step_project_ids", []) or []
@@ -252,10 +275,25 @@ class TaskFileParser:
                             value = token.split("=")[1].strip().upper()
                             current.tests_confirmed = value == "OK"
                             current.tests_auto_confirmed = value == "AUTO"
+                        elif token.startswith("Безопасность=") or token.lower().startswith("security="):
+                            value = token.split("=", 1)[1].strip().upper()
+                            current.security_confirmed = value == "OK"
+                        elif token.startswith("Производительность=") or token.lower().startswith("perf="):
+                            value = token.split("=", 1)[1].strip().upper()
+                            current.perf_confirmed = value == "OK"
+                        elif token.startswith("Документация=") or token.lower().startswith("docs="):
+                            value = token.split("=", 1)[1].strip().upper()
+                            current.docs_confirmed = value == "OK"
                 elif stripped.startswith("Отметки критериев:"):
                     current.criteria_notes = [n.strip() for n in stripped.split(":", 1)[1].split(";") if n.strip()]
                 elif stripped.startswith("Отметки тестов:"):
                     current.tests_notes = [n.strip() for n in stripped.split(":", 1)[1].split(";") if n.strip()]
+                elif stripped.startswith("Отметки безопасности:"):
+                    current.security_notes = [n.strip() for n in stripped.split(":", 1)[1].split(";") if n.strip()]
+                elif stripped.startswith("Отметки производительности:"):
+                    current.perf_notes = [n.strip() for n in stripped.split(":", 1)[1].split(";") if n.strip()]
+                elif stripped.startswith("Отметки документации:"):
+                    current.docs_notes = [n.strip() for n in stripped.split(":", 1)[1].split(";") if n.strip()]
                 elif stripped.startswith("Создано:"):
                     value = stripped.split(":", 1)[1].strip()
                     current.created_at = value or None
@@ -311,12 +349,30 @@ class TaskFileParser:
                     value = line.split("=", 1)[1].strip().upper()
                     task.tests_confirmed = value == "OK"
                     task.tests_auto_confirmed = value == "AUTO"
+                elif line.startswith("Безопасность=") or line.lower().startswith("security="):
+                    value = line.split("=", 1)[1].strip().upper()
+                    task.security_confirmed = value == "OK"
+                elif line.startswith("Производительность=") or line.lower().startswith("perf="):
+                    value = line.split("=", 1)[1].strip().upper()
+                    task.perf_confirmed = value == "OK"
+                elif line.startswith("Документация=") or line.lower().startswith("docs="):
+                    value = line.split("=", 1)[1].strip().upper()
+                    task.docs_confirmed = value == "OK"
                 elif line.startswith("Отметки критериев:") or line.lower().startswith("criteria notes:"):
                     rhs = line.split(":", 1)[1]
                     task.criteria_notes = [n.strip() for n in rhs.split(";") if n.strip()]
                 elif line.startswith("Отметки тестов:") or line.lower().startswith("tests notes:"):
                     rhs = line.split(":", 1)[1]
                     task.tests_notes = [n.strip() for n in rhs.split(";") if n.strip()]
+                elif line.startswith("Отметки безопасности:"):
+                    rhs = line.split(":", 1)[1]
+                    task.security_notes = [n.strip() for n in rhs.split(";") if n.strip()]
+                elif line.startswith("Отметки производительности:"):
+                    rhs = line.split(":", 1)[1]
+                    task.perf_notes = [n.strip() for n in rhs.split(";") if n.strip()]
+                elif line.startswith("Отметки документации:"):
+                    rhs = line.split(":", 1)[1]
+                    task.docs_notes = [n.strip() for n in rhs.split(";") if n.strip()]
         elif section == "Следующие шаги":
             task.next_steps = cls._parse_list(lines)
         elif section == "Зависимости":
@@ -351,6 +407,25 @@ class TaskFileParser:
             st.tests_auto_confirmed = True
         st.criteria_notes = list(node.get("criteria_notes", []) or [])
         st.tests_notes = list(node.get("tests_notes", []) or [])
+        st.security_confirmed = bool(node.get("security_confirmed", getattr(st, "security_confirmed", False)))
+        st.perf_confirmed = bool(node.get("perf_confirmed", getattr(st, "perf_confirmed", False)))
+        st.docs_confirmed = bool(node.get("docs_confirmed", getattr(st, "docs_confirmed", False)))
+        st.security_notes = list(node.get("security_notes", []) or [])
+        st.perf_notes = list(node.get("perf_notes", []) or [])
+        st.docs_notes = list(node.get("docs_notes", []) or [])
+        for key in (
+            "criteria_evidence_refs",
+            "tests_evidence_refs",
+            "security_evidence_refs",
+            "perf_evidence_refs",
+            "docs_evidence_refs",
+        ):
+            values = node.get(key, []) or []
+            if isinstance(values, list):
+                setattr(st, key, [str(v).strip() for v in values if str(v).strip()])
+        req = node.get("required_checkpoints", []) or []
+        if isinstance(req, list):
+            st.required_checkpoints = [str(v).strip() for v in req if str(v).strip()]
         st.created_at = cls._coerce_timestamp_opt(node.get("created_at", None))
         st.completed_at = cls._coerce_timestamp_opt(node.get("completed_at", None))
         st.progress_notes = list(node.get("progress_notes", []) or [])
@@ -406,6 +481,17 @@ class TaskFileParser:
             tests_auto_confirmed=bool(node.get("tests_auto_confirmed", False)),
             criteria_notes=list(node.get("criteria_notes", []) or []),
             tests_notes=list(node.get("tests_notes", []) or []),
+            security_confirmed=bool(node.get("security_confirmed", False)),
+            perf_confirmed=bool(node.get("perf_confirmed", False)),
+            docs_confirmed=bool(node.get("docs_confirmed", False)),
+            security_notes=list(node.get("security_notes", []) or []),
+            perf_notes=list(node.get("perf_notes", []) or []),
+            docs_notes=list(node.get("docs_notes", []) or []),
+            criteria_evidence_refs=list(node.get("criteria_evidence_refs", []) or []),
+            tests_evidence_refs=list(node.get("tests_evidence_refs", []) or []),
+            security_evidence_refs=list(node.get("security_evidence_refs", []) or []),
+            perf_evidence_refs=list(node.get("perf_evidence_refs", []) or []),
+            docs_evidence_refs=list(node.get("docs_evidence_refs", []) or []),
             steps=list(node.get("steps", []) or []),
             current=int(node.get("current", 0) or 0),
             tasks=tasks,
@@ -440,6 +526,17 @@ class TaskFileParser:
             tests_auto_confirmed=bool(node.get("tests_auto_confirmed", False)),
             criteria_notes=list(node.get("criteria_notes", []) or []),
             tests_notes=list(node.get("tests_notes", []) or []),
+            security_confirmed=bool(node.get("security_confirmed", False)),
+            perf_confirmed=bool(node.get("perf_confirmed", False)),
+            docs_confirmed=bool(node.get("docs_confirmed", False)),
+            security_notes=list(node.get("security_notes", []) or []),
+            perf_notes=list(node.get("perf_notes", []) or []),
+            docs_notes=list(node.get("docs_notes", []) or []),
+            criteria_evidence_refs=list(node.get("criteria_evidence_refs", []) or []),
+            tests_evidence_refs=list(node.get("tests_evidence_refs", []) or []),
+            security_evidence_refs=list(node.get("security_evidence_refs", []) or []),
+            perf_evidence_refs=list(node.get("perf_evidence_refs", []) or []),
+            docs_evidence_refs=list(node.get("docs_evidence_refs", []) or []),
             dependencies=list(node.get("dependencies", []) or []),
             next_steps=list(node.get("next_steps", []) or []),
             problems=list(node.get("problems", []) or []),

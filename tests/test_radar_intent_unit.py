@@ -76,3 +76,18 @@ def test_handle_radar_task_includes_now_verify_and_deps(manager: TaskManager):
     assert evidence["attachments"]["last_observed_at"] == "2025-12-22T00:00:01+00:00"
     assert result["blockers"]["depends_on"] == ["TASK-002"]
     assert result["blockers"]["unresolved_depends_on"] == ["TASK-002"]
+
+
+def test_handle_radar_task_open_checkpoints_include_extended(manager: TaskManager):
+    step1 = Step.new("Step 1", criteria=["c1"], tests=["t1"])
+    assert step1 is not None
+    step1.criteria_confirmed = True
+    step1.tests_confirmed = True
+    step1.required_checkpoints = ["criteria", "tests", "security"]
+    task = TaskDetail(id="TASK-001", title="Task", status="ACTIVE", steps=[step1])
+    manager.save_task(task)
+
+    resp = handle_radar(manager, {"intent": "radar", "task": "TASK-001", "limit": 1})
+    assert resp.success is True
+    result = resp.result
+    assert "security" in list(result.get("open_checkpoints") or [])

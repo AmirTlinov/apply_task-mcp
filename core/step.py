@@ -63,6 +63,21 @@ class Step:
     tests_auto_confirmed: bool = False     # Auto-OK if tests[] was empty
     criteria_notes: List[str] = field(default_factory=list)
     tests_notes: List[str] = field(default_factory=list)
+    # Extended checkpoints (engineering gates)
+    security_confirmed: bool = False
+    perf_confirmed: bool = False
+    docs_confirmed: bool = False
+    security_notes: List[str] = field(default_factory=list)
+    perf_notes: List[str] = field(default_factory=list)
+    docs_notes: List[str] = field(default_factory=list)
+    # Evidence refs are lightweight pointers (digests/uris) tied to checkpoint confirmations.
+    criteria_evidence_refs: List[str] = field(default_factory=list)
+    tests_evidence_refs: List[str] = field(default_factory=list)
+    security_evidence_refs: List[str] = field(default_factory=list)
+    perf_evidence_refs: List[str] = field(default_factory=list)
+    docs_evidence_refs: List[str] = field(default_factory=list)
+    # Gating policy (per-step): when empty, defaults to legacy ["criteria", "tests"].
+    required_checkpoints: List[str] = field(default_factory=list)
     project_item_id: str = ""
     created_at: Optional[str] = None  # ISO format timestamp
     completed_at: Optional[str] = None  # ISO format timestamp
@@ -137,8 +152,8 @@ class Step:
         """Check if step is ready to be marked as completed.
 
         Normal mode logic:
-        - criteria: must be explicitly confirmed (criteria_confirmed=True)
-        - tests: OK if confirmed OR auto_confirmed (empty at creation)
+        - criteria/tests: legacy defaults
+        - required_checkpoints: optional per-step gating policy for extra checkpoints (security/perf/docs)
         - plan tasks: all must be done
         - blocked: blocked steps are never ready
         """
@@ -147,9 +162,11 @@ class Step:
         plan_ready = True
         if self.plan and getattr(self.plan, "tasks", None):
             plan_ready = all(task.is_done() for task in self.plan.tasks)
-        criteria_ok = self.criteria_confirmed
-        tests_ok = self.tests_confirmed or self.tests_auto_confirmed
-        return criteria_ok and tests_ok and plan_ready
+        required = self._effective_required_checkpoints()
+        for name in required:
+            if not self._checkpoint_ok(name):
+                return False
+        return plan_ready
 
     def status_value(self) -> Status:
         if self.completed:
@@ -164,10 +181,50 @@ class Step:
             return "completed"
         if self.blocked:
             return "blocked"
-        if (self.progress_notes or self.criteria_confirmed or
-            self.tests_confirmed or self.started_at):
+        if (
+            self.progress_notes
+            or self.started_at
+            or self.criteria_confirmed
+            or self.tests_confirmed
+            or self.security_confirmed
+            or self.perf_confirmed
+            or self.docs_confirmed
+            or self.criteria_notes
+            or self.tests_notes
+            or self.security_notes
+            or self.perf_notes
+            or self.docs_notes
+        ):
             return "in_progress"
         return "pending"
+
+    def _effective_required_checkpoints(self) -> List[str]:
+        raw = list(getattr(self, "required_checkpoints", []) or [])
+        if not raw:
+            return ["criteria", "tests"]
+        normalized: List[str] = []
+        seen: set[str] = set()
+        for item in raw:
+            name = str(item or "").strip().lower()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            normalized.append(name)
+        return normalized
+
+    def _checkpoint_ok(self, checkpoint: str) -> bool:
+        name = str(checkpoint or "").strip().lower()
+        if name == "criteria":
+            return bool(self.criteria_confirmed)
+        if name == "tests":
+            return bool(self.tests_confirmed or self.tests_auto_confirmed)
+        if name == "security":
+            return bool(self.security_confirmed)
+        if name == "perf":
+            return bool(self.perf_confirmed)
+        if name == "docs":
+            return bool(self.docs_confirmed)
+        return False
 
     def is_valid_flagship(self) -> tuple[bool, list[str]]:
         """Quality checks matching legacy validation."""
@@ -204,11 +261,24 @@ class Step:
             f"Критерии={_status(self.criteria_confirmed, self.criteria_auto_confirmed)}",
             f"Тесты={_status(self.tests_confirmed, self.tests_auto_confirmed)}",
         ]
+        # Extended checkpoints are explicit-only.
+        if self.security_confirmed or self.security_notes:
+            status_tokens.append(f"Безопасность={_status(self.security_confirmed, False)}")
+        if self.perf_confirmed or self.perf_notes:
+            status_tokens.append(f"Производительность={_status(self.perf_confirmed, False)}")
+        if self.docs_confirmed or self.docs_notes:
+            status_tokens.append(f"Документация={_status(self.docs_confirmed, False)}")
         lines.append("  - Чекпоинты: " + "; ".join(status_tokens))
         if self.criteria_notes:
             lines.append("  - Отметки критериев: " + "; ".join(self.criteria_notes))
         if self.tests_notes:
             lines.append("  - Отметки тестов: " + "; ".join(self.tests_notes))
+        if self.security_notes:
+            lines.append("  - Отметки безопасности: " + "; ".join(self.security_notes))
+        if self.perf_notes:
+            lines.append("  - Отметки производительности: " + "; ".join(self.perf_notes))
+        if self.docs_notes:
+            lines.append("  - Отметки документации: " + "; ".join(self.docs_notes))
         if self.created_at:
             lines.append(f"  - Создано: {self.created_at}")
         if self.completed_at:
@@ -269,6 +339,17 @@ class TaskNode:
     tests_auto_confirmed: bool = False     # Auto-OK if tests[] was empty
     criteria_notes: List[str] = field(default_factory=list)
     tests_notes: List[str] = field(default_factory=list)
+    security_confirmed: bool = False
+    perf_confirmed: bool = False
+    docs_confirmed: bool = False
+    security_notes: List[str] = field(default_factory=list)
+    perf_notes: List[str] = field(default_factory=list)
+    docs_notes: List[str] = field(default_factory=list)
+    criteria_evidence_refs: List[str] = field(default_factory=list)
+    tests_evidence_refs: List[str] = field(default_factory=list)
+    security_evidence_refs: List[str] = field(default_factory=list)
+    perf_evidence_refs: List[str] = field(default_factory=list)
+    docs_evidence_refs: List[str] = field(default_factory=list)
     dependencies: List[str] = field(default_factory=list)
     next_steps: List[str] = field(default_factory=list)
     problems: List[str] = field(default_factory=list)
@@ -314,6 +395,17 @@ class PlanNode:
     tests_auto_confirmed: bool = False     # Auto-OK if tests[] was empty
     criteria_notes: List[str] = field(default_factory=list)
     tests_notes: List[str] = field(default_factory=list)
+    security_confirmed: bool = False
+    perf_confirmed: bool = False
+    docs_confirmed: bool = False
+    security_notes: List[str] = field(default_factory=list)
+    perf_notes: List[str] = field(default_factory=list)
+    docs_notes: List[str] = field(default_factory=list)
+    criteria_evidence_refs: List[str] = field(default_factory=list)
+    tests_evidence_refs: List[str] = field(default_factory=list)
+    security_evidence_refs: List[str] = field(default_factory=list)
+    perf_evidence_refs: List[str] = field(default_factory=list)
+    docs_evidence_refs: List[str] = field(default_factory=list)
     steps: List[str] = field(default_factory=list)
     current: int = 0
     tasks: List[TaskNode] = field(default_factory=list)

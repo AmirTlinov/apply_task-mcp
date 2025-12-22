@@ -38,6 +38,10 @@ def step_to_dict(
             "tests_confirmed": bool(getattr(step, "tests_confirmed", False)),
             "criteria_auto_confirmed": bool(getattr(step, "criteria_auto_confirmed", False)),
             "tests_auto_confirmed": bool(getattr(step, "tests_auto_confirmed", False)),
+            "security_confirmed": bool(getattr(step, "security_confirmed", False)),
+            "perf_confirmed": bool(getattr(step, "perf_confirmed", False)),
+            "docs_confirmed": bool(getattr(step, "docs_confirmed", False)),
+            "required_checkpoints": list(getattr(step, "required_checkpoints", []) or []),
         }
         # Only include what's needed to understand status
         if not step.completed:
@@ -50,6 +54,13 @@ def step_to_dict(
                     blocking.append("criteria")
                 if step.tests and not (step.tests_confirmed or step.tests_auto_confirmed):
                     blocking.append("tests")
+                required = [str(v or "").strip().lower() for v in list(getattr(step, "required_checkpoints", []) or []) if str(v or "").strip()]
+                if "security" in required and not bool(getattr(step, "security_confirmed", False)):
+                    blocking.append("security")
+                if "perf" in required and not bool(getattr(step, "perf_confirmed", False)):
+                    blocking.append("perf")
+                if "docs" in required and not bool(getattr(step, "docs_confirmed", False)):
+                    blocking.append("docs")
                 if blocking:
                     d["needs"] = blocking
         # Phase 1: Add status and blocked info
@@ -81,6 +92,18 @@ def step_to_dict(
         "tests_auto_confirmed": getattr(step, "tests_auto_confirmed", False),
         "criteria_notes": list(step.criteria_notes),
         "tests_notes": list(step.tests_notes),
+        "security_confirmed": bool(getattr(step, "security_confirmed", False)),
+        "perf_confirmed": bool(getattr(step, "perf_confirmed", False)),
+        "docs_confirmed": bool(getattr(step, "docs_confirmed", False)),
+        "security_notes": list(getattr(step, "security_notes", []) or []),
+        "perf_notes": list(getattr(step, "perf_notes", []) or []),
+        "docs_notes": list(getattr(step, "docs_notes", []) or []),
+        "criteria_evidence_refs": list(getattr(step, "criteria_evidence_refs", []) or []),
+        "tests_evidence_refs": list(getattr(step, "tests_evidence_refs", []) or []),
+        "security_evidence_refs": list(getattr(step, "security_evidence_refs", []) or []),
+        "perf_evidence_refs": list(getattr(step, "perf_evidence_refs", []) or []),
+        "docs_evidence_refs": list(getattr(step, "docs_evidence_refs", []) or []),
+        "required_checkpoints": list(getattr(step, "required_checkpoints", []) or []),
         "created_at": getattr(step, "created_at", None),
         "completed_at": getattr(step, "completed_at", None),
         "progress_notes": list(getattr(step, "progress_notes", [])),
@@ -115,6 +138,17 @@ def plan_node_to_dict(
         "tests_auto_confirmed": bool(getattr(plan, "tests_auto_confirmed", False)),
         "criteria_notes": list(getattr(plan, "criteria_notes", []) or []),
         "tests_notes": list(getattr(plan, "tests_notes", []) or []),
+        "security_confirmed": bool(getattr(plan, "security_confirmed", False)),
+        "perf_confirmed": bool(getattr(plan, "perf_confirmed", False)),
+        "docs_confirmed": bool(getattr(plan, "docs_confirmed", False)),
+        "security_notes": list(getattr(plan, "security_notes", []) or []),
+        "perf_notes": list(getattr(plan, "perf_notes", []) or []),
+        "docs_notes": list(getattr(plan, "docs_notes", []) or []),
+        "criteria_evidence_refs": list(getattr(plan, "criteria_evidence_refs", []) or []),
+        "tests_evidence_refs": list(getattr(plan, "tests_evidence_refs", []) or []),
+        "security_evidence_refs": list(getattr(plan, "security_evidence_refs", []) or []),
+        "perf_evidence_refs": list(getattr(plan, "perf_evidence_refs", []) or []),
+        "docs_evidence_refs": list(getattr(plan, "docs_evidence_refs", []) or []),
         "steps": list(getattr(plan, "steps", []) or []),
         "current": int(getattr(plan, "current", 0) or 0),
     }
@@ -145,6 +179,9 @@ def task_node_to_dict(
             "tests_confirmed": bool(getattr(task, "tests_confirmed", False)),
             "criteria_auto_confirmed": bool(getattr(task, "criteria_auto_confirmed", False)),
             "tests_auto_confirmed": bool(getattr(task, "tests_auto_confirmed", False)),
+            "security_confirmed": bool(getattr(task, "security_confirmed", False)),
+            "perf_confirmed": bool(getattr(task, "perf_confirmed", False)),
+            "docs_confirmed": bool(getattr(task, "docs_confirmed", False)),
         }
         if include_steps:
             data["steps"] = [
@@ -172,6 +209,17 @@ def task_node_to_dict(
         "tests_auto_confirmed": bool(getattr(task, "tests_auto_confirmed", False)),
         "criteria_notes": list(getattr(task, "criteria_notes", []) or []),
         "tests_notes": list(getattr(task, "tests_notes", []) or []),
+        "security_confirmed": bool(getattr(task, "security_confirmed", False)),
+        "perf_confirmed": bool(getattr(task, "perf_confirmed", False)),
+        "docs_confirmed": bool(getattr(task, "docs_confirmed", False)),
+        "security_notes": list(getattr(task, "security_notes", []) or []),
+        "perf_notes": list(getattr(task, "perf_notes", []) or []),
+        "docs_notes": list(getattr(task, "docs_notes", []) or []),
+        "criteria_evidence_refs": list(getattr(task, "criteria_evidence_refs", []) or []),
+        "tests_evidence_refs": list(getattr(task, "tests_evidence_refs", []) or []),
+        "security_evidence_refs": list(getattr(task, "security_evidence_refs", []) or []),
+        "perf_evidence_refs": list(getattr(task, "perf_evidence_refs", []) or []),
+        "docs_evidence_refs": list(getattr(task, "docs_evidence_refs", []) or []),
         "dependencies": list(getattr(task, "dependencies", []) or []),
         "next_steps": list(getattr(task, "next_steps", []) or []),
         "problems": list(getattr(task, "problems", []) or []),
@@ -205,6 +253,9 @@ def plan_to_dict(plan: TaskDetail, *, compact: bool = False) -> Dict[str, Any]:
         data["tests_confirmed"] = bool(getattr(plan, "tests_confirmed", False))
         data["criteria_auto_confirmed"] = bool(getattr(plan, "criteria_auto_confirmed", False))
         data["tests_auto_confirmed"] = bool(getattr(plan, "tests_auto_confirmed", False))
+        data["security_confirmed"] = bool(getattr(plan, "security_confirmed", False))
+        data["perf_confirmed"] = bool(getattr(plan, "perf_confirmed", False))
+        data["docs_confirmed"] = bool(getattr(plan, "docs_confirmed", False))
         plan_steps = list(getattr(plan, "plan_steps", []) or [])
         plan_current = int(getattr(plan, "plan_current", 0) or 0)
         if plan_steps:
@@ -238,6 +289,17 @@ def plan_to_dict(plan: TaskDetail, *, compact: bool = False) -> Dict[str, Any]:
         "tests_auto_confirmed": bool(getattr(plan, "tests_auto_confirmed", False)),
         "criteria_notes": list(getattr(plan, "criteria_notes", []) or []),
         "tests_notes": list(getattr(plan, "tests_notes", []) or []),
+        "security_confirmed": bool(getattr(plan, "security_confirmed", False)),
+        "perf_confirmed": bool(getattr(plan, "perf_confirmed", False)),
+        "docs_confirmed": bool(getattr(plan, "docs_confirmed", False)),
+        "security_notes": list(getattr(plan, "security_notes", []) or []),
+        "perf_notes": list(getattr(plan, "perf_notes", []) or []),
+        "docs_notes": list(getattr(plan, "docs_notes", []) or []),
+        "criteria_evidence_refs": list(getattr(plan, "criteria_evidence_refs", []) or []),
+        "tests_evidence_refs": list(getattr(plan, "tests_evidence_refs", []) or []),
+        "security_evidence_refs": list(getattr(plan, "security_evidence_refs", []) or []),
+        "perf_evidence_refs": list(getattr(plan, "perf_evidence_refs", []) or []),
+        "docs_evidence_refs": list(getattr(plan, "docs_evidence_refs", []) or []),
         "plan": {
             "steps": list(getattr(plan, "plan_steps", []) or []),
             "current": int(getattr(plan, "plan_current", 0) or 0),
@@ -274,6 +336,9 @@ def task_to_dict(
             "tests_confirmed": bool(getattr(task, "tests_confirmed", False)),
             "criteria_auto_confirmed": bool(getattr(task, "criteria_auto_confirmed", False)),
             "tests_auto_confirmed": bool(getattr(task, "tests_auto_confirmed", False)),
+            "security_confirmed": bool(getattr(task, "security_confirmed", False)),
+            "perf_confirmed": bool(getattr(task, "perf_confirmed", False)),
+            "docs_confirmed": bool(getattr(task, "docs_confirmed", False)),
         }
         # Include domain for GUI step disambiguation
         if task.domain:
@@ -325,6 +390,17 @@ def task_to_dict(
         "tests_auto_confirmed": bool(getattr(task, "tests_auto_confirmed", False)),
         "criteria_notes": list(getattr(task, "criteria_notes", []) or []),
         "tests_notes": list(getattr(task, "tests_notes", []) or []),
+        "security_confirmed": bool(getattr(task, "security_confirmed", False)),
+        "perf_confirmed": bool(getattr(task, "perf_confirmed", False)),
+        "docs_confirmed": bool(getattr(task, "docs_confirmed", False)),
+        "security_notes": list(getattr(task, "security_notes", []) or []),
+        "perf_notes": list(getattr(task, "perf_notes", []) or []),
+        "docs_notes": list(getattr(task, "docs_notes", []) or []),
+        "criteria_evidence_refs": list(getattr(task, "criteria_evidence_refs", []) or []),
+        "tests_evidence_refs": list(getattr(task, "tests_evidence_refs", []) or []),
+        "security_evidence_refs": list(getattr(task, "security_evidence_refs", []) or []),
+        "perf_evidence_refs": list(getattr(task, "perf_evidence_refs", []) or []),
+        "docs_evidence_refs": list(getattr(task, "docs_evidence_refs", []) or []),
         "dependencies": list(task.dependencies),
         "next_steps": list(task.next_steps),
         "problems": list(task.problems),

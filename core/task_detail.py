@@ -47,6 +47,17 @@ class TaskDetail:
     tests_auto_confirmed: bool = False     # Auto-OK if tests[] was empty
     criteria_notes: List[str] = field(default_factory=list)
     tests_notes: List[str] = field(default_factory=list)
+    security_confirmed: bool = False
+    perf_confirmed: bool = False
+    docs_confirmed: bool = False
+    security_notes: List[str] = field(default_factory=list)
+    perf_notes: List[str] = field(default_factory=list)
+    docs_notes: List[str] = field(default_factory=list)
+    criteria_evidence_refs: List[str] = field(default_factory=list)
+    tests_evidence_refs: List[str] = field(default_factory=list)
+    security_evidence_refs: List[str] = field(default_factory=list)
+    perf_evidence_refs: List[str] = field(default_factory=list)
+    docs_evidence_refs: List[str] = field(default_factory=list)
     dependencies: List[str] = field(default_factory=list)
     next_steps: List[str] = field(default_factory=list)
     problems: List[str] = field(default_factory=list)
@@ -146,6 +157,28 @@ class TaskDetail:
             metadata["criteria_notes"] = list(self.criteria_notes)
         if self.tests_notes:
             metadata["tests_notes"] = list(self.tests_notes)
+        if self.security_confirmed:
+            metadata["security_confirmed"] = True
+        if self.perf_confirmed:
+            metadata["perf_confirmed"] = True
+        if self.docs_confirmed:
+            metadata["docs_confirmed"] = True
+        if self.security_notes:
+            metadata["security_notes"] = list(self.security_notes)
+        if self.perf_notes:
+            metadata["perf_notes"] = list(self.perf_notes)
+        if self.docs_notes:
+            metadata["docs_notes"] = list(self.docs_notes)
+        if self.criteria_evidence_refs:
+            metadata["criteria_evidence_refs"] = list(self.criteria_evidence_refs)
+        if self.tests_evidence_refs:
+            metadata["tests_evidence_refs"] = list(self.tests_evidence_refs)
+        if self.security_evidence_refs:
+            metadata["security_evidence_refs"] = list(self.security_evidence_refs)
+        if self.perf_evidence_refs:
+            metadata["perf_evidence_refs"] = list(self.perf_evidence_refs)
+        if self.docs_evidence_refs:
+            metadata["docs_evidence_refs"] = list(self.docs_evidence_refs)
         if self.project_item_id:
             metadata["project_item_id"] = self.project_item_id
         if self.project_draft_id:
@@ -187,6 +220,17 @@ class TaskDetail:
                     "tests_auto_confirmed": bool(getattr(plan, "tests_auto_confirmed", False)),
                     "criteria_notes": list(getattr(plan, "criteria_notes", []) or []),
                     "tests_notes": list(getattr(plan, "tests_notes", []) or []),
+                    "security_confirmed": bool(getattr(plan, "security_confirmed", False)),
+                    "perf_confirmed": bool(getattr(plan, "perf_confirmed", False)),
+                    "docs_confirmed": bool(getattr(plan, "docs_confirmed", False)),
+                    "security_notes": list(getattr(plan, "security_notes", []) or []),
+                    "perf_notes": list(getattr(plan, "perf_notes", []) or []),
+                    "docs_notes": list(getattr(plan, "docs_notes", []) or []),
+                    "criteria_evidence_refs": list(getattr(plan, "criteria_evidence_refs", []) or []),
+                    "tests_evidence_refs": list(getattr(plan, "tests_evidence_refs", []) or []),
+                    "security_evidence_refs": list(getattr(plan, "security_evidence_refs", []) or []),
+                    "perf_evidence_refs": list(getattr(plan, "perf_evidence_refs", []) or []),
+                    "docs_evidence_refs": list(getattr(plan, "docs_evidence_refs", []) or []),
                     "steps": list(getattr(plan, "steps", []) or []),
                     "current": int(getattr(plan, "current", 0) or 0),
                     "tasks": [dump_task(t) for t in list(getattr(plan, "tasks", []) or [])],
@@ -209,9 +253,27 @@ class TaskDetail:
                     return True
                 if bool(getattr(plan, "criteria_confirmed", False)) or bool(getattr(plan, "tests_confirmed", False)):
                     return True
+                if bool(getattr(plan, "security_confirmed", False)) or bool(getattr(plan, "perf_confirmed", False)) or bool(getattr(plan, "docs_confirmed", False)):
+                    return True
                 if list(getattr(plan, "criteria_notes", []) or []):
                     return True
                 if list(getattr(plan, "tests_notes", []) or []):
+                    return True
+                if list(getattr(plan, "security_notes", []) or []):
+                    return True
+                if list(getattr(plan, "perf_notes", []) or []):
+                    return True
+                if list(getattr(plan, "docs_notes", []) or []):
+                    return True
+                if list(getattr(plan, "criteria_evidence_refs", []) or []):
+                    return True
+                if list(getattr(plan, "tests_evidence_refs", []) or []):
+                    return True
+                if list(getattr(plan, "security_evidence_refs", []) or []):
+                    return True
+                if list(getattr(plan, "perf_evidence_refs", []) or []):
+                    return True
+                if list(getattr(plan, "docs_evidence_refs", []) or []):
                     return True
                 if list(getattr(plan, "steps", []) or []):
                     return True
@@ -236,6 +298,17 @@ class TaskDetail:
                     "tests_auto_confirmed": bool(getattr(task, "tests_auto_confirmed", False)),
                     "criteria_notes": list(getattr(task, "criteria_notes", []) or []),
                     "tests_notes": list(getattr(task, "tests_notes", []) or []),
+                    "security_confirmed": bool(getattr(task, "security_confirmed", False)),
+                    "perf_confirmed": bool(getattr(task, "perf_confirmed", False)),
+                    "docs_confirmed": bool(getattr(task, "docs_confirmed", False)),
+                    "security_notes": list(getattr(task, "security_notes", []) or []),
+                    "perf_notes": list(getattr(task, "perf_notes", []) or []),
+                    "docs_notes": list(getattr(task, "docs_notes", []) or []),
+                    "criteria_evidence_refs": list(getattr(task, "criteria_evidence_refs", []) or []),
+                    "tests_evidence_refs": list(getattr(task, "tests_evidence_refs", []) or []),
+                    "security_evidence_refs": list(getattr(task, "security_evidence_refs", []) or []),
+                    "perf_evidence_refs": list(getattr(task, "perf_evidence_refs", []) or []),
+                    "docs_evidence_refs": list(getattr(task, "docs_evidence_refs", []) or []),
                     "dependencies": list(getattr(task, "dependencies", []) or []),
                     "next_steps": list(getattr(task, "next_steps", []) or []),
                     "problems": list(getattr(task, "problems", []) or []),
@@ -263,6 +336,18 @@ class TaskDetail:
                     "tests_auto_confirmed": getattr(st, "tests_auto_confirmed", False),
                     "criteria_notes": list(st.criteria_notes),
                     "tests_notes": list(st.tests_notes),
+                    "security_confirmed": bool(getattr(st, "security_confirmed", False)),
+                    "perf_confirmed": bool(getattr(st, "perf_confirmed", False)),
+                    "docs_confirmed": bool(getattr(st, "docs_confirmed", False)),
+                    "security_notes": list(getattr(st, "security_notes", []) or []),
+                    "perf_notes": list(getattr(st, "perf_notes", []) or []),
+                    "docs_notes": list(getattr(st, "docs_notes", []) or []),
+                    "criteria_evidence_refs": list(getattr(st, "criteria_evidence_refs", []) or []),
+                    "tests_evidence_refs": list(getattr(st, "tests_evidence_refs", []) or []),
+                    "security_evidence_refs": list(getattr(st, "security_evidence_refs", []) or []),
+                    "perf_evidence_refs": list(getattr(st, "perf_evidence_refs", []) or []),
+                    "docs_evidence_refs": list(getattr(st, "docs_evidence_refs", []) or []),
+                    "required_checkpoints": list(getattr(st, "required_checkpoints", []) or []),
                     "created_at": getattr(st, "created_at", None),
                     "completed_at": getattr(st, "completed_at", None),
                     "progress_notes": list(getattr(st, "progress_notes", [])),
@@ -323,11 +408,23 @@ class TaskDetail:
                     lines.append(f"{pad_detail}- Блокеры: " + "; ".join(st.blockers))
                 tests_value = "OK" if st.tests_confirmed else ("AUTO" if st.tests_auto_confirmed else "TODO")
                 status_tokens = [f"Критерии={'OK' if st.criteria_confirmed else 'TODO'}", f"Тесты={tests_value}"]
+                if getattr(st, "security_confirmed", False) or list(getattr(st, "security_notes", []) or []):
+                    status_tokens.append(f"Безопасность={'OK' if getattr(st, 'security_confirmed', False) else 'TODO'}")
+                if getattr(st, "perf_confirmed", False) or list(getattr(st, "perf_notes", []) or []):
+                    status_tokens.append(f"Производительность={'OK' if getattr(st, 'perf_confirmed', False) else 'TODO'}")
+                if getattr(st, "docs_confirmed", False) or list(getattr(st, "docs_notes", []) or []):
+                    status_tokens.append(f"Документация={'OK' if getattr(st, 'docs_confirmed', False) else 'TODO'}")
                 lines.append(f"{pad_detail}- Чекпоинты: " + "; ".join(status_tokens))
                 if st.criteria_notes:
                     lines.append(f"{pad_detail}- Отметки критериев: " + "; ".join(st.criteria_notes))
                 if st.tests_notes:
                     lines.append(f"{pad_detail}- Отметки тестов: " + "; ".join(st.tests_notes))
+                if list(getattr(st, "security_notes", []) or []):
+                    lines.append(f"{pad_detail}- Отметки безопасности: " + "; ".join(list(getattr(st, "security_notes", []) or [])))
+                if list(getattr(st, "perf_notes", []) or []):
+                    lines.append(f"{pad_detail}- Отметки производительности: " + "; ".join(list(getattr(st, "perf_notes", []) or [])))
+                if list(getattr(st, "docs_notes", []) or []):
+                    lines.append(f"{pad_detail}- Отметки документации: " + "; ".join(list(getattr(st, "docs_notes", []) or [])))
                 # Phase 1 fields
                 if st.created_at:
                     lines.append(f"{pad_detail}- Создано: {st.created_at}")
@@ -366,10 +463,22 @@ class TaskDetail:
             tests_value = "OK" if self.tests_confirmed else ("AUTO" if self.tests_auto_confirmed else "TODO")
             checkpoint_lines.append(f"- Критерии={'OK' if self.criteria_confirmed else 'TODO'}")
             checkpoint_lines.append(f"- Тесты={tests_value}")
+            if self.security_confirmed or self.security_notes:
+                checkpoint_lines.append(f"- Безопасность={'OK' if self.security_confirmed else 'TODO'}")
+            if self.perf_confirmed or self.perf_notes:
+                checkpoint_lines.append(f"- Производительность={'OK' if self.perf_confirmed else 'TODO'}")
+            if self.docs_confirmed or self.docs_notes:
+                checkpoint_lines.append(f"- Документация={'OK' if self.docs_confirmed else 'TODO'}")
             if self.criteria_notes:
                 checkpoint_lines.append("- Отметки критериев: " + "; ".join(self.criteria_notes))
             if self.tests_notes:
                 checkpoint_lines.append("- Отметки тестов: " + "; ".join(self.tests_notes))
+            if self.security_notes:
+                checkpoint_lines.append("- Отметки безопасности: " + "; ".join(self.security_notes))
+            if self.perf_notes:
+                checkpoint_lines.append("- Отметки производительности: " + "; ".join(self.perf_notes))
+            if self.docs_notes:
+                checkpoint_lines.append("- Отметки документации: " + "; ".join(self.docs_notes))
         add_section("Чекпоинты", checkpoint_lines)
         add_section("Зависимости", [f"- {d}" for d in self.dependencies])
         add_section("Риски", [f"- {r}" for r in self.risks])
