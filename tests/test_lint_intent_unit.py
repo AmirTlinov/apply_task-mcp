@@ -42,3 +42,27 @@ def test_lint_plan_detects_plan_current_out_of_range(tmp_path):
     codes = {i["code"] for i in resp.result.get("issues", [])}
     assert "PLAN_CURRENT_OUT_OF_RANGE" in codes
 
+
+def test_lint_warns_when_ready_step_has_no_evidence(tmp_path):
+    tasks_dir = tmp_path / ".tasks"
+    tasks_dir.mkdir()
+    manager = TaskManager(tasks_dir=tasks_dir)
+
+    step = Step(
+        False,
+        "Evidence gap step",
+        success_criteria=["ok"],
+        tests=[],
+        blockers=[],
+        criteria_confirmed=True,
+        tests_auto_confirmed=True,
+    )
+    task = TaskDetail(id="TASK-001", title="Example", status="TODO", steps=[step], success_criteria=["done"])
+    manager.save_task(task, skip_sync=True)
+
+    resp = process_intent(manager, {"intent": "lint", "task": "TASK-001"})
+    assert resp.success is True
+    issues = resp.result.get("issues", []) or []
+    by_code = {i["code"]: i for i in issues if isinstance(i, dict) and i.get("code")}
+    assert "EVIDENCE_MISSING" in by_code
+    assert by_code["EVIDENCE_MISSING"]["severity"] == "warning"

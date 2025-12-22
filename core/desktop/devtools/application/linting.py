@@ -339,6 +339,25 @@ def _lint_task(detail: TaskDetail, manager, all_items: List[TaskDetail]) -> List
                     )
                 )
 
+        # Evidence ("black box") signal: when checkpoints are confirmed but no evidence is recorded.
+        try:
+            ready = bool(step.ready_for_completion()) or bool(getattr(step, "completed", False))
+        except Exception:
+            ready = bool(getattr(step, "completed", False))
+        if ready:
+            has_outcome = bool(str(getattr(step, "verification_outcome", "") or "").strip())
+            has_checks = bool(list(getattr(step, "verification_checks", []) or []))
+            has_attachments = bool(list(getattr(step, "attachments", []) or []))
+            if not (has_outcome or has_checks or has_attachments):
+                issues.append(
+                    LintIssue(
+                        code="EVIDENCE_MISSING",
+                        severity="warning",
+                        message="Чекпоинты подтверждены, но нет evidence (verification_outcome/checks/attachments).",
+                        target=target,
+                    )
+                )
+
         # Nested task nodes inside this step plan.
         plan = getattr(step, "plan", None)
         tasks = list(getattr(plan, "tasks", []) or []) if plan else []
