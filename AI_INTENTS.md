@@ -193,6 +193,9 @@ Target kinds:
 Optional evidence (step only):
 - `checks[]` / `attachments[]` / `verification_outcome`
 
+Auto evidence (step only, best-effort):
+- When a checkpoint is confirmed, apply_task may append `checks` of kind `ci` (GitHub Actions) and/or `git` (HEAD state), deduped by `digest`.
+
 ### progress
 
 Set step completion (respects checkpoints unless `force=true`).

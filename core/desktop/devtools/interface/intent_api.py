@@ -34,8 +34,10 @@ from core.desktop.devtools.application.context import (
 )
 from core.desktop.devtools.application.plan_semantics import append_contract_version_if_changed
 from core.desktop.devtools.application.task_manager import TaskManager, _find_step_by_path, _find_task_by_path
+from core.desktop.devtools.interface.evidence_collectors import collect_auto_verification_checks
 from core.desktop.devtools.interface.operation_history import OperationHistory
 from core.desktop.devtools.interface.serializers import plan_to_dict, plan_node_to_dict, step_to_dict, task_to_dict, task_node_to_dict
+from core.desktop.devtools.interface.tasks_dir_resolver import resolve_project_root
 
 
 MAX_STRING_LENGTH = 500
@@ -1854,6 +1856,11 @@ def handle_verify(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
     checks_raw = data.get("checks") or data.get("verification_checks")
     attachments_raw = data.get("attachments")
     verification_outcome = data.get("verification_outcome")
+    any_confirmed = any(
+        bool((checkpoints.get(name) or {}).get("confirmed", False))
+        for name in ("criteria", "tests")
+        if name in checkpoints
+    )
 
     updated = manager.load_task(task_id, task.domain, skip_sync=True)
     st = None
@@ -1861,7 +1868,34 @@ def handle_verify(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         st, _, _ = _find_step_by_path((updated or task).steps, path)
     if (checks_raw is not None or attachments_raw is not None or verification_outcome is not None) and kind != "step":
         return error_response("verify", "INVALID_TARGET", "checks/attachments доступны только для шагов")
-    if st and (checks_raw is not None or attachments_raw is not None or verification_outcome is not None):
+    if st and kind == "step":
+        def _extend_unique_checks(items: List[VerificationCheck]) -> int:
+            existing = {str(getattr(x, "digest", "") or "").strip() for x in (st.verification_checks or []) if getattr(x, "digest", "")}
+            added = 0
+            for check in items:
+                digest = str(getattr(check, "digest", "") or "").strip()
+                if digest and digest in existing:
+                    continue
+                st.verification_checks.append(check)
+                added += 1
+                if digest:
+                    existing.add(digest)
+            return added
+
+        def _extend_unique_attachments(items: List[Attachment]) -> int:
+            existing = {str(getattr(x, "digest", "") or "").strip() for x in (st.attachments or []) if getattr(x, "digest", "")}
+            added = 0
+            for att in items:
+                digest = str(getattr(att, "digest", "") or "").strip()
+                if digest and digest in existing:
+                    continue
+                st.attachments.append(att)
+                added += 1
+                if digest:
+                    existing.add(digest)
+            return added
+
+        needs_save = False
         if checks_raw is not None:
             if not isinstance(checks_raw, list):
                 return error_response("verify", "INVALID_CHECKS", "checks должен быть массивом")
@@ -1869,7 +1903,8 @@ def handle_verify(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
                 parsed_checks = [VerificationCheck.from_dict(c) for c in checks_raw if isinstance(c, dict)]
             except Exception:
                 return error_response("verify", "INVALID_CHECKS", "checks содержит некорректные элементы")
-            st.verification_checks.extend(parsed_checks)
+            if _extend_unique_checks(parsed_checks):
+                needs_save = True
         if attachments_raw is not None:
             if not isinstance(attachments_raw, list):
                 return error_response("verify", "INVALID_ATTACHMENTS", "attachments должен быть массивом")
@@ -1877,10 +1912,23 @@ def handle_verify(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
                 parsed_attachments = [Attachment.from_dict(a) for a in attachments_raw if isinstance(a, dict)]
             except Exception:
                 return error_response("verify", "INVALID_ATTACHMENTS", "attachments содержит некорректные элементы")
-            st.attachments.extend(parsed_attachments)
+            if _extend_unique_attachments(parsed_attachments):
+                needs_save = True
         if verification_outcome is not None:
             st.verification_outcome = str(verification_outcome or "").strip()
-        manager.save_task(updated, skip_sync=True)
+            needs_save = True
+
+        # Best-effort: auto-evidence for verified checkpoints (CI + git).
+        if any_confirmed:
+            try:
+                auto_checks = collect_auto_verification_checks(resolve_project_root())
+                if auto_checks and _extend_unique_checks(list(auto_checks)):
+                    needs_save = True
+            except Exception:
+                pass
+
+        if needs_save and updated:
+            manager.save_task(updated, skip_sync=True)
     payload_key = "plan" if getattr(updated or task, "kind", "task") == "plan" else "task"
     return AIResponse(
         success=True,
