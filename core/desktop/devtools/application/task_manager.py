@@ -309,6 +309,10 @@ def _step_completion_blockers(step: Step, translator) -> Optional[str]:
     # Account for auto_confirmed flags (Normal mode)
     if not (step.tests_confirmed or step.tests_auto_confirmed):
         missing.append(translator("CHECKPOINT_TESTS"))
+    plan = getattr(step, "plan", None)
+    tasks = list(getattr(plan, "tasks", []) or []) if plan else []
+    if tasks and not all(t.is_done() for t in tasks):
+        missing.append(translator("CHECKPOINT_PLAN_TASKS"))
     return translator("ERR_SUBTASK_CHECKPOINTS").format(items=", ".join(missing)) if missing else None
 
 

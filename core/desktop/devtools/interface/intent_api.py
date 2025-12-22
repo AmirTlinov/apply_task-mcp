@@ -241,6 +241,38 @@ def _latest_observed_at(items: List[Any]) -> str:
     return max(observed) if observed else ""
 
 
+def _checkpoint_snapshot_for_node(target: Any) -> Dict[str, Any]:
+    """Return a compact before/after snapshot of checkpoint state for mutation responses."""
+    return {
+        "criteria": {
+            "confirmed": bool(getattr(target, "criteria_confirmed", False)),
+            "auto_confirmed": bool(getattr(target, "criteria_auto_confirmed", False)),
+            "notes_count": len(list(getattr(target, "criteria_notes", []) or [])),
+        },
+        "tests": {
+            "confirmed": bool(getattr(target, "tests_confirmed", False)),
+            "auto_confirmed": bool(getattr(target, "tests_auto_confirmed", False)),
+            "notes_count": len(list(getattr(target, "tests_notes", []) or [])),
+        },
+    }
+
+
+def _step_needs_for_completion(step: Step) -> List[str]:
+    """Return a stable list of gating reasons for completion (agent-friendly tokens)."""
+    needs: List[str] = []
+    if bool(getattr(step, "blocked", False)):
+        needs.append("blocked")
+    if list(getattr(step, "success_criteria", []) or []) and not bool(getattr(step, "criteria_confirmed", False)):
+        needs.append("criteria")
+    if list(getattr(step, "tests", []) or []) and not (bool(getattr(step, "tests_confirmed", False)) or bool(getattr(step, "tests_auto_confirmed", False))):
+        needs.append("tests")
+    plan = getattr(step, "plan", None)
+    tasks = list(getattr(plan, "tasks", []) or []) if plan else []
+    if tasks and not all(t.is_done() for t in tasks):
+        needs.append("plan_tasks")
+    return needs
+
+
 def _contract_summary(value: Any) -> Dict[str, Any]:
     """Compact contract summary for Radar View (1 screen → 1 truth)."""
     if not isinstance(value, dict):
@@ -307,6 +339,7 @@ _FOCUSABLE_MUTATING_INTENTS: set[str] = {
     "define",
     "verify",
     "done",
+    "close_step",
     "progress",
     "note",
     "block",
@@ -323,6 +356,7 @@ _TASK_ONLY_INTENTS: set[str] = {
     "define",
     "verify",
     "done",
+    "close_step",
     "progress",
     "note",
     "block",
@@ -2860,13 +2894,7 @@ def handle_verify(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
     needs: Optional[List[str]] = None
     if st and kind == "step":
         ready = bool(st.ready_for_completion())
-        if not ready:
-            missing: List[str] = []
-            if list(getattr(st, "success_criteria", []) or []) and not bool(getattr(st, "criteria_confirmed", False)):
-                missing.append("criteria")
-            if list(getattr(st, "tests", []) or []) and not (bool(getattr(st, "tests_confirmed", False)) or bool(getattr(st, "tests_auto_confirmed", False))):
-                missing.append("tests")
-            needs = missing
+        needs = [] if ready else _step_needs_for_completion(st)
     payload_key = "plan" if getattr(updated or task, "kind", "task") == "plan" else "task"
     return AIResponse(
         success=True,
@@ -2888,6 +2916,175 @@ def handle_verify(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
     )
 
 
+def _handle_close_step_like(manager: TaskManager, data: Dict[str, Any], *, intent_name: str) -> AIResponse:
+    """Atomic verify(step) -> done(step) in a single call."""
+    task_id = data.get("task")
+    if not task_id:
+        return error_response(
+            intent_name,
+            "MISSING_TASK",
+            "task обязателен",
+            recovery="Передай task=TASK-### или установи focus через focus_set и передай его явно.",
+            suggestions=_missing_target_suggestions(manager, want="TASK-"),
+        )
+    err = validate_task_id(task_id)
+    if err:
+        return error_response(
+            intent_name,
+            "INVALID_TASK",
+            err,
+            recovery="Проверь id через context(include_all=true).",
+            suggestions=_missing_target_suggestions(manager, want="TASK-"),
+        )
+    task_id = str(task_id)
+
+    force = bool(data.get("force", False))
+    override_reason = str(data.get("override_reason", "") or "").strip()
+    if force and not override_reason:
+        return error_response(intent_name, "MISSING_OVERRIDE_REASON", "override_reason обязателен при force=true")
+    note = str(data.get("note", "") or "").strip()
+
+    checkpoints = data.get("checkpoints")
+    if checkpoints is None:
+        return error_response(
+            intent_name,
+            "MISSING_CHECKPOINTS",
+            "checkpoints обязателен",
+            recovery="Передай checkpoints.criteria/tests с confirmed:true (как в verify).",
+            suggestions=_path_help_suggestions(task_id),
+            result={"task": task_id},
+        )
+
+    verify_payload = dict(data or {})
+    verify_payload["task"] = task_id
+    verify_payload["kind"] = "step"
+    verify_resp = handle_verify(manager, verify_payload)
+    if not verify_resp.success:
+        # Preserve original error code and suggestions, but make the intent explicit.
+        return AIResponse(
+            success=False,
+            intent=intent_name,
+            result=dict(verify_resp.result or {}),
+            context=dict(verify_resp.context or {}),
+            suggestions=list(verify_resp.suggestions or []),
+            warnings=list(verify_resp.warnings or []),
+            meta=dict(verify_resp.meta or {}),
+            error_code=str(verify_resp.error_code or "FAILED"),
+            error_message=str(verify_resp.error_message or "verify failed"),
+            error_recovery=verify_resp.error_recovery,
+        )
+
+    path = str((verify_resp.result or {}).get("path") or "").strip()
+    if not path:
+        return error_response(intent_name, "INVALID_PATH", "path обязателен", result={"task": task_id})
+
+    task = manager.load_task(task_id, skip_sync=True)
+    if not task:
+        return error_response(
+            intent_name,
+            "NOT_FOUND",
+            f"Не найдено: {task_id}",
+            recovery="Проверь id через context(include_all=true).",
+            suggestions=_missing_target_suggestions(manager, want="TASK-"),
+            result={"task": task_id},
+        )
+    if getattr(task, "kind", "task") != "task":
+        return error_response(intent_name, "NOT_A_TASK", f"{intent_name} применим только к заданиям (TASK-###)")
+
+    st0, _, _ = _find_step_by_path(task.steps, path)
+    if not st0:
+        return error_response(
+            intent_name,
+            "PATH_NOT_FOUND",
+            f"Шаг path={path} не найден",
+            recovery="Возьми корректный path/step_id через radar/mirror.",
+            suggestions=_path_help_suggestions(task_id),
+            result={"task": task_id, "path": path},
+        )
+
+    checkpoints_before = (verify_resp.result or {}).get("checkpoints_before") or _checkpoint_snapshot_for_node(st0)
+    checkpoints_after = (verify_resp.result or {}).get("checkpoints_after") or _checkpoint_snapshot_for_node(st0)
+
+    ready = bool(st0.ready_for_completion())
+    needs = _step_needs_for_completion(st0) if not ready else []
+    missing_checkpoints = [n for n in needs if n in {"criteria", "tests"}]
+    if not ready and not force:
+        return error_response(
+            intent_name,
+            "GATING_FAILED",
+            f"Нельзя завершить шаг path={path}: требуется {', '.join(needs) if needs else 'готовность'}",
+            recovery="Подтверди недостающие чекпоинты через verify или заверши вложенные задачи плана, затем повтори операцию.",
+            suggestions=_path_help_suggestions(task_id),
+            result={
+                "task_id": task_id,
+                "path": path,
+                "ready": ready,
+                "needs": needs,
+                "missing_checkpoints": missing_checkpoints,
+                "checkpoints_before": checkpoints_before,
+                "checkpoints_after": checkpoints_after,
+                "step": step_to_dict(st0, path=path, compact=False),
+            },
+        )
+
+    if note:
+        manager.add_step_progress_note(task_id, path=path, note=note, domain=task.domain)
+
+    ok, msg = manager.set_step_completed(task_id, 0, True, task.domain, path=path, force=force)
+    if not ok:
+        mapping = {"not_found": "NOT_FOUND", "index": "PATH_NOT_FOUND"}
+        code = mapping.get(msg or "", "FAILED")
+        updated = manager.load_task(task_id, task.domain, skip_sync=True) or task
+        st1, _, _ = _find_step_by_path(updated.steps, path)
+        if not force and st1 and not bool(st1.ready_for_completion()):
+            needs1 = _step_needs_for_completion(st1)
+            missing1 = [n for n in needs1 if n in {"criteria", "tests"}]
+            return error_response(
+                intent_name,
+                "GATING_FAILED",
+                f"Нельзя завершить шаг path={path}: требуется {', '.join(needs1) if needs1 else 'готовность'}",
+                recovery="Подтверди недостающие чекпоинты через verify или заверши вложенные задачи плана, затем повтори операцию.",
+                suggestions=_path_help_suggestions(task_id),
+                result={
+                    "task_id": task_id,
+                    "path": path,
+                    "ready": False,
+                    "needs": needs1,
+                    "missing_checkpoints": missing1,
+                    "checkpoints_before": checkpoints_before,
+                    "checkpoints_after": _checkpoint_snapshot_for_node(st1),
+                    "step": step_to_dict(st1, path=path, compact=False),
+                },
+            )
+        return error_response(intent_name, code, msg or "Не удалось завершить шаг", result={"task": task_id, "path": path})
+
+    updated = manager.load_task(task_id, task.domain, skip_sync=True) or task
+    st, _, _ = _find_step_by_path(updated.steps, path)
+    if force and override_reason and updated:
+        try:
+            updated.events.append(StepEvent.override(intent_name, override_reason, target=f"step:{path}"))
+            manager.save_task(updated, skip_sync=True)
+        except Exception:
+            pass
+    checkpoints_final = _checkpoint_snapshot_for_node(st) if st else checkpoints_after
+    payload = {
+        "task_id": task_id,
+        "path": path,
+        "completed": True,
+        "checkpoints_before": checkpoints_before,
+        "checkpoints_after": checkpoints_final,
+        "ready": True,
+        "needs": [],
+        "task": task_to_dict(updated, include_steps=True, compact=False),
+        "step": step_to_dict(st, path=path, compact=False) if st else None,
+    }
+    return AIResponse(success=True, intent=intent_name, result=payload, context={"task_id": task_id})
+
+
+def handle_close_step(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
+    return _handle_close_step_like(manager, data, intent_name="close_step")
+
+
 def handle_progress(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
     task_id = data.get("task")
     if not task_id:
@@ -2895,7 +3092,7 @@ def handle_progress(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             "progress",
             "MISSING_TASK",
             "task обязателен",
-            recovery="Передай task=TASK-### или установи focus через focus_set и передай его явно.",
+            recovery="Передай task=TASK-### или установи focus через focus_set.",
             suggestions=_missing_target_suggestions(manager, want="TASK-"),
         )
     err = validate_task_id(task_id)
@@ -2939,10 +3136,65 @@ def handle_progress(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             suggestions=_path_help_suggestions(task_id),
         )
 
+    st0, _, _ = _find_step_by_path(task.steps, path)
+    if not st0:
+        return error_response(
+            "progress",
+            "PATH_NOT_FOUND",
+            f"Шаг path={path} не найден",
+            recovery="Возьми корректный path/step_id через radar/mirror.",
+            suggestions=_path_help_suggestions(task_id),
+            result={"task_id": task_id, "path": path},
+        )
+
+    checkpoints_before = _checkpoint_snapshot_for_node(st0)
+    if completed and not force and not bool(st0.ready_for_completion()):
+        needs0 = _step_needs_for_completion(st0)
+        missing0 = [n for n in needs0 if n in {"criteria", "tests"}]
+        return error_response(
+            "progress",
+            "GATING_FAILED",
+            f"Нельзя завершить шаг path={path}: требуется {', '.join(needs0) if needs0 else 'готовность'}",
+            recovery="Подтверди недостающие чекпоинты через verify или заверши вложенные задачи плана, затем повтори операцию.",
+            suggestions=_path_help_suggestions(task_id),
+            result={
+                "task_id": task_id,
+                "path": path,
+                "ready": False,
+                "needs": needs0,
+                "missing_checkpoints": missing0,
+                "checkpoints_before": checkpoints_before,
+                "checkpoints_after": checkpoints_before,
+                "step": step_to_dict(st0, path=path, compact=False),
+            },
+        )
+
     ok, msg = manager.set_step_completed(task_id, 0, completed, task.domain, path=path, force=force)
     if not ok:
         mapping = {"not_found": "NOT_FOUND", "index": "PATH_NOT_FOUND"}
         code = mapping.get(msg or "", "FAILED")
+        updated = manager.load_task(task_id, task.domain, skip_sync=True) or task
+        st1, _, _ = _find_step_by_path(updated.steps, path)
+        if completed and not force and st1 and not bool(st1.ready_for_completion()):
+            needs1 = _step_needs_for_completion(st1)
+            missing1 = [n for n in needs1 if n in {"criteria", "tests"}]
+            return error_response(
+                "progress",
+                "GATING_FAILED",
+                f"Нельзя завершить шаг path={path}: требуется {', '.join(needs1) if needs1 else 'готовность'}",
+                recovery="Подтверди недостающие чекпоинты через verify или заверши вложенные задачи плана, затем повтори операцию.",
+                suggestions=_path_help_suggestions(task_id),
+                result={
+                    "task_id": task_id,
+                    "path": path,
+                    "ready": False,
+                    "needs": needs1,
+                    "missing_checkpoints": missing1,
+                    "checkpoints_before": checkpoints_before,
+                    "checkpoints_after": _checkpoint_snapshot_for_node(st1),
+                    "step": step_to_dict(st1, path=path, compact=False),
+                },
+            )
         return error_response("progress", code, msg or "Не удалось обновить completed", result={"task": task_id, "path": path})
 
     updated = manager.load_task(task_id, task.domain, skip_sync=True)
@@ -2953,6 +3205,9 @@ def handle_progress(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             manager.save_task(updated, skip_sync=True)
         except Exception:
             pass
+    checkpoints_after = _checkpoint_snapshot_for_node(st) if st else checkpoints_before
+    ready = bool(st.ready_for_completion()) if st else None
+    needs = [] if ready else _step_needs_for_completion(st) if st else None
     return AIResponse(
         success=True,
         intent="progress",
@@ -2960,6 +3215,10 @@ def handle_progress(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             "task_id": task_id,
             "path": path,
             "completed": completed,
+            "checkpoints_before": checkpoints_before,
+            "checkpoints_after": checkpoints_after,
+            "ready": ready,
+            "needs": needs,
             "step": step_to_dict(st, path=path, compact=False) if st else None,
             "task": task_to_dict(updated or task, include_steps=True, compact=False),
         },
@@ -2968,13 +3227,16 @@ def handle_progress(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
 
 
 def handle_done(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
+    if bool(data.get("auto_verify", False)):
+        return _handle_close_step_like(manager, data, intent_name="done")
+
     task_id = data.get("task")
     if not task_id:
         return error_response(
             "done",
             "MISSING_TASK",
             "task обязателен",
-            recovery="Передай task=TASK-### или установи focus через focus_set и передай его явно.",
+            recovery="Передай task=TASK-### или установи focus через focus_set.",
             suggestions=_missing_target_suggestions(manager, want="TASK-"),
         )
     err = validate_task_id(task_id)
@@ -3018,12 +3280,68 @@ def handle_done(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             suggestions=_path_help_suggestions(task_id),
         )
 
+    st0, _, _ = _find_step_by_path(task.steps, path)
+    if not st0:
+        return error_response(
+            "done",
+            "PATH_NOT_FOUND",
+            f"Шаг path={path} не найден",
+            recovery="Возьми корректный path/step_id через radar/mirror.",
+            suggestions=_path_help_suggestions(task_id),
+            result={"task_id": task_id, "path": path},
+        )
+
+    checkpoints_before = _checkpoint_snapshot_for_node(st0)
+    if not force and not bool(st0.ready_for_completion()):
+        needs0 = _step_needs_for_completion(st0)
+        missing0 = [n for n in needs0 if n in {"criteria", "tests"}]
+        return error_response(
+            "done",
+            "GATING_FAILED",
+            f"Нельзя завершить шаг path={path}: требуется {', '.join(needs0) if needs0 else 'готовность'}",
+            recovery="Подтверди недостающие чекпоинты через verify или заверши вложенные задачи плана, затем повтори операцию.",
+            suggestions=_path_help_suggestions(task_id),
+            result={
+                "task_id": task_id,
+                "path": path,
+                "ready": False,
+                "needs": needs0,
+                "missing_checkpoints": missing0,
+                "checkpoints_before": checkpoints_before,
+                "checkpoints_after": checkpoints_before,
+                "step": step_to_dict(st0, path=path, compact=False),
+            },
+        )
+
     if note:
         manager.add_step_progress_note(task_id, path=path, note=note, domain=task.domain)
     ok, msg = manager.set_step_completed(task_id, 0, True, task.domain, path=path, force=force)
     if not ok:
         mapping = {"not_found": "NOT_FOUND", "index": "PATH_NOT_FOUND"}
-        return error_response("done", mapping.get(msg or "", "FAILED"), msg or "Не удалось завершить шаг")
+        code = mapping.get(msg or "", "FAILED")
+        updated = manager.load_task(task_id, task.domain, skip_sync=True) or task
+        st1, _, _ = _find_step_by_path(updated.steps, path)
+        if not force and st1 and not bool(st1.ready_for_completion()):
+            needs1 = _step_needs_for_completion(st1)
+            missing1 = [n for n in needs1 if n in {"criteria", "tests"}]
+            return error_response(
+                "done",
+                "GATING_FAILED",
+                f"Нельзя завершить шаг path={path}: требуется {', '.join(needs1) if needs1 else 'готовность'}",
+                recovery="Подтверди недостающие чекпоинты через verify или заверши вложенные задачи плана, затем повтори операцию.",
+                suggestions=_path_help_suggestions(task_id),
+                result={
+                    "task_id": task_id,
+                    "path": path,
+                    "ready": False,
+                    "needs": needs1,
+                    "missing_checkpoints": missing1,
+                    "checkpoints_before": checkpoints_before,
+                    "checkpoints_after": _checkpoint_snapshot_for_node(st1),
+                    "step": step_to_dict(st1, path=path, compact=False),
+                },
+            )
+        return error_response("done", code, msg or "Не удалось завершить шаг")
 
     updated = manager.load_task(task_id, task.domain, skip_sync=True)
     st, _, _ = _find_step_by_path((updated or task).steps, path)
@@ -3033,12 +3351,20 @@ def handle_done(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             manager.save_task(updated, skip_sync=True)
         except Exception:
             pass
+    checkpoints_after = _checkpoint_snapshot_for_node(st) if st else checkpoints_before
+    ready = bool(st.ready_for_completion()) if st else None
+    needs = [] if ready else _step_needs_for_completion(st) if st else None
     return AIResponse(
         success=True,
         intent="done",
         result={
             "task_id": task_id,
             "path": path,
+            "completed": True,
+            "checkpoints_before": checkpoints_before,
+            "checkpoints_after": checkpoints_after,
+            "ready": ready,
+            "needs": needs,
             "task": task_to_dict(updated or task, include_steps=True, compact=False),
             "step": step_to_dict(st, path=path, compact=False) if st else None,
         },
@@ -4420,6 +4746,7 @@ INTENT_HANDLERS: Dict[str, Callable[[TaskManager, Dict[str, Any]], AIResponse]] 
     "define": handle_define,
     "verify": handle_verify,
     "done": handle_done,
+    "close_step": handle_close_step,
     "progress": handle_progress,
     "edit": handle_edit,
     "patch": handle_patch,
@@ -4447,6 +4774,7 @@ _MUTATING_INTENTS = {
     "define",
     "verify",
     "done",
+    "close_step",
     "progress",
     "edit",
     "patch",

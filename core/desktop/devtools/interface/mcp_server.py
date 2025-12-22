@@ -339,22 +339,60 @@ _TOOL_SPECS: Dict[str, Dict[str, Any]] = {
                 "attachments": {"type": "array", "description": "Optional attachments for step targets."},
                 "verification_outcome": {"type": "string", "description": "Optional outcome label for step targets."},
             },
-            "required": ["task", "checkpoints"],
+            "required": ["checkpoints"],
         },
     },
     "done": {
-        "description": "Unified “verify + done” style completion (optional note is saved as a progress note first).",
+        "description": "Close a step. If auto_verify=true, this becomes atomic verify(step)->done(step) (requires checkpoints.*.confirmed=true). Optional note is saved as a progress note first.",
         "schema": {
             "type": "object",
             "properties": {
-                "task": {"type": "string", "description": "Task id (TASK-###)."},
+                "task": {"type": "string", "description": "Task id (TASK-###). Uses focus if omitted."},
                 "path": {"type": "string", "description": _step_path_description()},
                 "step_id": {"type": "string", "description": "Stable step id (STEP-...)."},
+                "auto_verify": {"type": "boolean", "default": False, "description": "When true, verifies checkpoints before completion (atomic close)."},
+                "checkpoints": {
+                    "type": "object",
+                    "description": "Required when auto_verify=true. Allowed: checkpoints.criteria / checkpoints.tests. Strict: every provided checkpoints.<name> must include confirmed:true.",
+                    "properties": {
+                        "criteria": {"type": "object"},
+                        "tests": {"type": "object"},
+                    },
+                },
+                "checks": {"type": "array", "description": "Optional verification checks for auto_verify=true (step only)."},
+                "attachments": {"type": "array", "description": "Optional attachments for auto_verify=true (step only)."},
+                "verification_outcome": {"type": "string", "description": "Optional outcome label for auto_verify=true (step only)."},
                 "note": {"type": "string", "description": "Optional progress note saved before completion."},
                 "force": {"type": "boolean", "default": False},
                 "override_reason": {"type": "string", "description": "Required when force=true."},
             },
-            "required": ["task", "path"],
+            "required": [],
+        },
+    },
+    "close_step": {
+        "description": "Atomic verify(step)->done(step) in one call (strict checkpoints, explicit gating errors).",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "task": {"type": "string", "description": "Task id (TASK-###). Uses focus if omitted."},
+                "path": {"type": "string", "description": _step_path_description()},
+                "step_id": {"type": "string", "description": "Stable step id (STEP-...)."},
+                "checkpoints": {
+                    "type": "object",
+                    "description": "Allowed: checkpoints.criteria / checkpoints.tests. Strict: every provided checkpoints.<name> must include confirmed:true.",
+                    "properties": {
+                        "criteria": {"type": "object"},
+                        "tests": {"type": "object"},
+                    },
+                },
+                "checks": {"type": "array", "description": "Optional verification checks for step targets."},
+                "attachments": {"type": "array", "description": "Optional attachments for step targets."},
+                "verification_outcome": {"type": "string", "description": "Optional outcome label for step targets."},
+                "note": {"type": "string", "description": "Optional progress note saved before completion."},
+                "force": {"type": "boolean", "default": False},
+                "override_reason": {"type": "string", "description": "Required when force=true."},
+            },
+            "required": ["checkpoints"],
         },
     },
     "progress": {
@@ -362,12 +400,13 @@ _TOOL_SPECS: Dict[str, Dict[str, Any]] = {
         "schema": {
             "type": "object",
             "properties": {
-                "task": {"type": "string", "description": "Task id (TASK-###)."},
+                "task": {"type": "string", "description": "Task id (TASK-###). Uses focus if omitted."},
                 "path": {"type": "string", "description": _step_path_description()},
+                "step_id": {"type": "string", "description": "Stable step id (STEP-...)."},
                 "completed": {"type": "boolean"},
                 "force": {"type": "boolean", "default": False},
             },
-            "required": ["task", "path"],
+            "required": [],
         },
     },
     "edit": {

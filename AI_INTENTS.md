@@ -283,10 +283,26 @@ Set step completion (respects checkpoints unless `force=true`).
 
 ### done
 
-Unified “verify + done” style completion (optional `note` is saved as a progress note first).
+Close a step (optional `note` is saved as a progress note first).
+
+If `auto_verify=true`, this becomes atomic `verify(step)` → `done(step)` in a single call (requires `checkpoints.*.confirmed=true`).
 
 ```json
 {"intent":"done","task":"TASK-001","path":"s:0","force":false,"note":"done"}
+```
+
+Atomic close example:
+
+```json
+{"intent":"done","task":"TASK-001","path":"s:0","auto_verify":true,"checkpoints":{"criteria":{"confirmed":true},"tests":{"confirmed":true}}}
+```
+
+### close_step
+
+Atomic `verify(step)` → `done(step)` (strict checkpoints + explicit gating errors). Equivalent to `done(auto_verify=true)`.
+
+```json
+{"intent":"close_step","task":"TASK-001","path":"s:0","checkpoints":{"criteria":{"confirmed":true},"tests":{"confirmed":true}}}
 ```
 
 ### note
