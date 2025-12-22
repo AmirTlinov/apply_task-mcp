@@ -1895,12 +1895,21 @@ def handle_scaffold(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             append_contract_version_if_changed(task, note="scaffold")
         manager.save_task(task, skip_sync=True)
 
-        # Create-like operation: record without snapshots (undo for create is non-trivial).
+        # Create-like operation: record without snapshots (undo is delete/restore).
         history = OperationHistory(storage_dir=Path(manager.tasks_dir))
         try:
             payload = dict(data)
             payload["created_id"] = task.id
-            op = history.record(intent="scaffold", task_id=task.id, data=payload, task_file=None, result=None)
+            created_domain = str(getattr(task, "domain", "") or "")
+            created_file = _task_file_for(manager, str(task.id), created_domain)
+            op = history.record(
+                intent="scaffold",
+                task_id=task.id,
+                data=payload,
+                task_file=created_file,
+                result=None,
+                take_snapshot=False,
+            )
         except Exception:
             op = None
 
@@ -1986,7 +1995,16 @@ def handle_scaffold(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
     try:
         payload = dict(data)
         payload["created_id"] = plan.id
-        op = history.record(intent="scaffold", task_id=plan.id, data=payload, task_file=None, result=None)
+        created_domain = str(getattr(plan, "domain", "") or "")
+        created_file = _task_file_for(manager, str(plan.id), created_domain)
+        op = history.record(
+            intent="scaffold",
+            task_id=plan.id,
+            data=payload,
+            task_file=created_file,
+            result=None,
+            take_snapshot=False,
+        )
     except Exception:
         op = None
 
@@ -5128,7 +5146,7 @@ def process_intent(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             early_error.context.update(ctx_add)
         return early_error
 
-    # History tracking: snapshot root task file before mutation.
+    # History tracking (undo/redo + delta): capture *before* snapshots for mutations.
     history = OperationHistory(storage_dir=Path(manager.tasks_dir))
     task_id = payload.get("task") or payload.get("plan")
 
@@ -5147,6 +5165,7 @@ def process_intent(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
                     )
 
     task_file: Optional[Path] = None
+    before_snapshot_id: Optional[str] = None
     if intent in _MUTATING_INTENTS and task_id:
         norm = validate_task_id(task_id)
         if norm is None:
@@ -5156,6 +5175,10 @@ def process_intent(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
                 existing = manager.load_task(str(task_id), skip_sync=True)
                 domain = str(getattr(existing, "domain", "") or "") if existing else ""
             task_file = _task_file_for(manager, str(task_id), domain)
+            try:
+                before_snapshot_id = history.snapshot(task_file)
+            except Exception:
+                before_snapshot_id = None
 
     try:
         resp = handler(manager, payload)
@@ -5168,7 +5191,29 @@ def process_intent(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
 
     if intent in _MUTATING_INTENTS and resp.success and not bool(payload.get("dry_run", False)):
         try:
-            op = history.record(intent=intent, task_id=str(task_id) if task_id else None, data=dict(payload), task_file=task_file, result=resp.to_dict())
+            history_task_id = str(task_id) if task_id else None
+            history_task_file = task_file
+            history_payload = dict(payload)
+
+            # create has no explicit target id; bind history to the created file so undo/redo works.
+            if intent == "create":
+                created_id = (resp.result or {}).get("task_id") or (resp.result or {}).get("plan_id")
+                if created_id:
+                    history_task_id = str(created_id)
+                    history_payload["created_id"] = str(created_id)
+                    created_detail = manager.load_task(str(created_id), skip_sync=True)
+                    created_domain = str(getattr(created_detail, "domain", "") or "") if created_detail else ""
+                    history_task_file = _task_file_for(manager, str(created_id), created_domain)
+
+            op = history.record(
+                intent=intent,
+                task_id=history_task_id,
+                data=history_payload,
+                task_file=history_task_file,
+                result=resp.to_dict(),
+                before_snapshot_id=before_snapshot_id,
+                take_snapshot=False,
+            )
             # Make delta-chaining trivial for agents: every mutating response carries the op id.
             if op and getattr(op, "id", None):
                 resp.meta = dict(resp.meta or {})

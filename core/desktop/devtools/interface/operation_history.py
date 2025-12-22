@@ -150,6 +150,10 @@ class OperationHistory:
             if snapshot_id not in active_snapshots:
                 snapshot.unlink(missing_ok=True)
 
+    def snapshot(self, task_file: Path) -> Optional[str]:
+        """Create a snapshot for a task file (best-effort)."""
+        return self._create_snapshot(Path(task_file))
+
     def record(
         self,
         intent: str,
@@ -157,6 +161,9 @@ class OperationHistory:
         data: Dict[str, Any],
         task_file: Optional[Path] = None,
         result: Optional[Dict[str, Any]] = None,
+        *,
+        before_snapshot_id: Optional[str] = None,
+        take_snapshot: bool = True,
     ) -> Operation:
         """Record a new operation.
 
@@ -170,15 +177,15 @@ class OperationHistory:
         Returns:
             The recorded operation
         """
-        # Create snapshot if task file provided
-        snapshot_id = None
+        snapshot_id = before_snapshot_id
         task_file_rel: Optional[str] = None
         if task_file:
             try:
                 task_file_rel = str(Path(task_file).resolve().relative_to(self.storage_dir.resolve()))
             except Exception:
                 task_file_rel = None
-            snapshot_id = self._create_snapshot(task_file)
+            if take_snapshot and snapshot_id is None:
+                snapshot_id = self._create_snapshot(task_file)
 
         # Truncate any redo history
         if self.current_index < len(self.operations) - 1:
@@ -260,6 +267,24 @@ class OperationHistory:
             return False, "Нечего отменять", None
 
         operation = self.operations[self.current_index]
+
+        # Create-like operations: no "before" snapshot (file didn't exist). Undo is deletion with a redo snapshot.
+        if operation.snapshot_id is None and operation.task_id and operation.intent in {"create", "scaffold"}:
+            task_file = self._resolve_task_file(Path(tasks_dir), operation)
+            if not task_file:
+                return False, "Не удалось определить файл задачи для undo", None
+            if not task_file.exists():
+                return False, "Файл задачи для undo не найден", None
+            task_file.parent.mkdir(parents=True, exist_ok=True)
+            operation.after_snapshot_id = self._create_snapshot(task_file)
+            try:
+                task_file.unlink()
+            except Exception:
+                return False, "Не удалось удалить файл задачи для undo", None
+            operation.undone = True
+            self.current_index -= 1
+            self._save()
+            return True, None, operation
 
         # Restore from snapshot
         if operation.snapshot_id and operation.task_id:
