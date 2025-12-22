@@ -163,6 +163,7 @@ _TOOL_SPECS: Dict[str, Dict[str, Any]] = {
                 "description": {"type": "string"},
                 "context": {"type": "string"},
                 "contract": {"type": "string"},
+                "contract_data": {"type": "object", "description": "Optional structured contract data (see AI_INTENTS.md)."},
                 "steps": {"type": "array", "description": "Optional nested steps for kind=task.", "items": {"type": "object"}},
                 "dry_run": {"type": "boolean", "default": False},
             },
@@ -369,6 +370,7 @@ _TOOL_SPECS: Dict[str, Dict[str, Any]] = {
             "properties": {
                 "plan": {"type": "string", "description": "Plan id (PLAN-###)."},
                 "current": {"type": "string", "description": "New contract text."},
+                "contract_data": {"type": "object", "description": "Optional structured contract data (see AI_INTENTS.md)."},
                 "clear": {"type": "boolean", "default": False, "description": "Clear contract when true."},
             },
             "required": ["plan"],
@@ -456,6 +458,18 @@ _TOOL_SPECS: Dict[str, Dict[str, Any]] = {
         "schema": {
             "type": "object",
             "properties": {"limit": {"type": "integer", "default": 20, "description": "Max operations returned."}},
+            "required": [],
+        },
+    },
+    "delta": {
+        "description": "Get operations since a given operation id (delta updates).",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "since": {"type": "string", "description": "Return ops strictly after this operation id."},
+                "limit": {"type": "integer", "default": 50, "description": "Max operations returned (0..500)."},
+                "include_undone": {"type": "boolean", "default": True, "description": "Include operations marked as undone."},
+            },
             "required": [],
         },
     },

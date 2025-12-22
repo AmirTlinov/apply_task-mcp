@@ -219,6 +219,7 @@ def plan_to_dict(plan: TaskDetail, *, compact: bool = False) -> Dict[str, Any]:
         "tags": list(getattr(plan, "tags", []) or []),
         "description": getattr(plan, "description", "") or "",
         "contract": getattr(plan, "contract", "") or "",
+        "contract_data": dict(getattr(plan, "contract_data", {}) or {}),
         "attachments": [a.to_dict() for a in list(getattr(plan, "attachments", []) or [])],
         "contract_versions_count": len(getattr(plan, "contract_versions", []) or []),
         "context": getattr(plan, "context", "") or "",

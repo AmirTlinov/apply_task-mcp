@@ -4,7 +4,16 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from core import ACTOR_HUMAN, EVENT_PLAN_UPDATED, StepEvent, TaskDetail
+from datetime import datetime, timezone
+
+from core import (
+    ACTOR_AI,
+    ACTOR_HUMAN,
+    EVENT_CONTRACT_UPDATED,
+    EVENT_PLAN_UPDATED,
+    StepEvent,
+    TaskDetail,
+)
 
 
 def normalize_tag(value: str) -> str:
@@ -77,6 +86,69 @@ def mark_plan_updated(plan: TaskDetail, *, actor: str = ACTOR_HUMAN) -> None:
         return
 
 
+def append_contract_version_if_changed(plan: TaskDetail, *, actor: str = ACTOR_AI, note: str = "") -> bool:
+    """Append a contract_versions entry when contract (text or data) changed.
+
+    This keeps the contract history consistent across interfaces (TUI/GUI/MCP).
+
+    Returns True if a new version entry was appended.
+    """
+    entries = list(getattr(plan, "contract_versions", []) or [])
+
+    latest: Optional[dict] = None
+    latest_v = 0
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            v = int(entry.get("version"))
+        except (TypeError, ValueError):
+            continue
+        if v >= latest_v:
+            latest_v = v
+            latest = entry
+
+    current_text = str(getattr(plan, "contract", "") or "")
+    current_done = list(getattr(plan, "success_criteria", []) or [])
+    current_data = getattr(plan, "contract_data", None)
+    if not isinstance(current_data, dict):
+        current_data = {}
+
+    if latest is not None:
+        latest_text = str(latest.get("text", "") or "")
+        latest_done = latest.get("done_criteria") or []
+        if not isinstance(latest_done, list):
+            latest_done = []
+        latest_data = latest.get("data") if isinstance(latest.get("data"), dict) else {}
+        if latest_text == current_text and list(latest_done) == current_done and latest_data == current_data:
+            return False
+
+    version = int(latest_v) + 1
+    entries.append(
+        {
+            "version": version,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "text": current_text,
+            "done_criteria": current_done,
+            "data": dict(current_data),
+        }
+    )
+    plan.contract_versions = entries
+    try:
+        plan.events.append(
+            StepEvent.now(
+                EVENT_CONTRACT_UPDATED,
+                actor=actor,
+                target="",
+                version=version,
+                note=str(note or "").strip(),
+            )
+        )
+    except Exception:
+        pass
+    return True
+
+
 __all__ = [
     "normalize_tag",
     "is_plan_task",
@@ -84,4 +156,5 @@ __all__ = [
     "last_plan_contract_version",
     "plan_stale",
     "mark_plan_updated",
+    "append_contract_version_if_changed",
 ]

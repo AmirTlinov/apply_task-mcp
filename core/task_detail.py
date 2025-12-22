@@ -25,6 +25,7 @@ class TaskDetail:
     parent: Optional[str] = None  # Parent id (PLAN-###) or None/ROOT for top-level plans
     contract: str = ""
     contract_versions: List[Dict[str, Any]] = field(default_factory=list)
+    contract_data: Dict[str, Any] = field(default_factory=dict)
     plan_doc: str = ""
     plan_steps: List[str] = field(default_factory=list)
     plan_current: int = 0
@@ -164,6 +165,8 @@ class TaskDetail:
             metadata["attachments"] = [a.to_dict() for a in list(self.attachments or [])]
         if self.contract_versions:
             metadata["contract_versions"] = self.contract_versions
+        if self.contract_data:
+            metadata["contract_data"] = dict(self.contract_data)
         if self.plan_steps:
             metadata["plan_steps"] = self.plan_steps
             metadata["plan_current"] = int(getattr(self, "plan_current", 0) or 0)

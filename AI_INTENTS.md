@@ -124,6 +124,24 @@ Create a plan:
 {"intent":"create","kind":"plan","title":"Release v1","contract":"..."}
 ```
 
+Optional structured contract (stored in metadata as `contract_data` and versioned):
+```json
+{
+  "intent":"create",
+  "kind":"plan",
+  "title":"Release v1",
+  "contract_data":{
+    "goal":"Ship v1 safely",
+    "constraints":["No data loss"],
+    "assumptions":["CI is available"],
+    "non_goals":["Rewrite UI"],
+    "done":["pytest -q green"],
+    "risks":["Migration risk"],
+    "checks":["pytest -q"]
+  }
+}
+```
+
 Create a task under a plan:
 ```json
 {
@@ -247,6 +265,11 @@ Set/clear a plan contract.
 {"intent":"contract","plan":"PLAN-001","current":"..."}
 ```
 
+Optional structured contract data:
+```json
+{"intent":"contract","plan":"PLAN-001","contract_data":{"goal":"...","done":["..."],"checks":["pytest -q"]}}
+```
+
 ### plan
 
 Update plan checklist (`doc`, `steps`, `current`) and/or `advance=true`.
@@ -320,10 +343,18 @@ Undo/redo last reversible operation (when available).
 
 ### history
 
-Return recent operation history (optionally as markdown).
+Return recent operation history (undo/redo metadata).
 
 ```json
-{"intent":"history","task":"TASK-001","format":"markdown"}
+{"intent":"history","limit":20}
+```
+
+### delta
+
+Return operation log entries strictly after a given operation id (agent-friendly delta updates).
+
+```json
+{"intent":"delta","since":"<operation_id>","limit":50}
 ```
 
 ### storage

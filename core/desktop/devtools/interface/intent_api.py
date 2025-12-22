@@ -32,6 +32,7 @@ from core.desktop.devtools.application.context import (
     normalize_task_id,
     save_last_task,
 )
+from core.desktop.devtools.application.plan_semantics import append_contract_version_if_changed
 from core.desktop.devtools.application.task_manager import TaskManager, _find_step_by_path, _find_task_by_path
 from core.desktop.devtools.interface.operation_history import OperationHistory
 from core.desktop.devtools.interface.serializers import plan_to_dict, plan_node_to_dict, step_to_dict, task_to_dict, task_node_to_dict
@@ -1339,6 +1340,11 @@ def handle_create(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         plan.description = str(data.get("description", "") or "")
         plan.context = str(data.get("context", "") or "")
         plan.contract = str(data.get("contract", "") or "")
+        contract_data = data.get("contract_data")
+        if contract_data is not None:
+            if not isinstance(contract_data, dict):
+                return error_response("create", "INVALID_CONTRACT_DATA", "contract_data должен быть объектом")
+            plan.contract_data = dict(contract_data)
         sc = data.get("success_criteria")
         tests = data.get("tests")
         blockers = data.get("blockers")
@@ -1364,6 +1370,8 @@ def handle_create(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
                 intent="create",
                 result={"dry_run": True, "would_execute": True, "plan": plan_to_dict(plan, compact=False)},
             )
+        if str(getattr(plan, "contract", "") or "").strip() or dict(getattr(plan, "contract_data", {}) or {}) or list(getattr(plan, "success_criteria", []) or []):
+            append_contract_version_if_changed(plan, note="create")
         manager.save_task(plan, skip_sync=True)
         return AIResponse(
             success=True,
@@ -2225,6 +2233,12 @@ def handle_contract(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         plan.contract = ""
     if data.get("current") is not None:
         plan.contract = str(data.get("current") or "")
+    contract_data = data.get("contract_data")
+    if contract_data is not None:
+        if not isinstance(contract_data, dict):
+            return error_response("contract", "INVALID_CONTRACT_DATA", "contract_data должен быть объектом")
+        plan.contract_data = dict(contract_data)
+    append_contract_version_if_changed(plan, note="contract")
     manager.save_task(plan, skip_sync=True)
     return AIResponse(
         success=True,
@@ -2605,6 +2619,51 @@ def handle_history(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
     )
 
 
+def handle_delta(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
+    """Return operations since a given operation id (delta updates for agents)."""
+    history = OperationHistory(storage_dir=Path(manager.tasks_dir))
+    since = str(data.get("since") or data.get("since_operation_id") or data.get("since_id") or "").strip()
+    limit_raw = data.get("limit", 50)
+    try:
+        limit = int(limit_raw or 50)
+    except Exception:
+        return error_response("delta", "INVALID_LIMIT", "limit должен быть числом")
+    limit = max(0, min(limit, 500))
+    include_undone = bool(data.get("include_undone", True))
+
+    ops = list(history.operations or [])
+    start_idx = 0
+    if since:
+        found = next((idx for idx, op in enumerate(ops) if getattr(op, "id", None) == since), None)
+        if found is None:
+            return error_response(
+                "delta",
+                "SINCE_NOT_FOUND",
+                f"since={since} не найден",
+                recovery="Вызови history чтобы получить актуальные operation.id.",
+                result={"since": since},
+            )
+        start_idx = int(found) + 1
+
+    sliced = ops[start_idx:]
+    if not include_undone:
+        sliced = [op for op in sliced if not bool(getattr(op, "undone", False))]
+    sliced = sliced[:limit] if limit else []
+
+    latest_id = ops[-1].id if ops else None
+    return AIResponse(
+        success=True,
+        intent="delta",
+        result={
+            "since": since or None,
+            "latest_id": latest_id,
+            "operations": [op.to_dict() for op in sliced],
+            "can_undo": history.can_undo(),
+            "can_redo": history.can_redo(),
+        },
+    )
+
+
 def handle_undo(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
     history = OperationHistory(storage_dir=Path(manager.tasks_dir))
     if not history.can_undo():
@@ -2723,6 +2782,7 @@ INTENT_HANDLERS: Dict[str, Callable[[TaskManager, Dict[str, Any]], AIResponse]] 
     "undo": handle_undo,
     "redo": handle_redo,
     "history": handle_history,
+    "delta": handle_delta,
     "storage": handle_storage,
 }
 

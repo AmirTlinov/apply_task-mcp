@@ -83,6 +83,7 @@ class TaskFileParser:
             blocked=blocked,
             blockers=metadata.get("blockers", []),
             contract_versions=list(metadata.get("contract_versions", []) or []),
+            contract_data=(dict(metadata.get("contract_data", {}) or {}) if isinstance(metadata.get("contract_data", {}), dict) else {}),
             plan_steps=list(metadata.get("plan_steps", []) or []),
             plan_current=int(metadata.get("plan_current", 0) or 0),
             project_item_id=metadata.get("project_item_id"),
