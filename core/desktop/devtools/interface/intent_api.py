@@ -29,6 +29,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from core import PlanNode, Step, TaskDetail, TaskNode, Attachment, VerificationCheck, StepEvent
 from core.evidence import redact, redact_text
+from core.status import status_label
 from core.desktop.devtools.application.context import (
     clear_last_task,
     get_last_task,
@@ -498,6 +499,75 @@ def _preview_state_diff(before: Dict[str, Any], after: Dict[str, Any]) -> Dict[s
         if before.get(field) != after.get(field):
             diff[field] = {"from": before.get(field), "to": after.get(field)}
     return diff
+
+
+def _task_state_snapshot(detail: Any) -> Dict[str, Any]:
+    raw_status = str(getattr(detail, "status", "") or "").strip()
+    try:
+        progress = int(getattr(detail, "calculate_progress")())
+    except Exception:
+        progress = int(getattr(detail, "progress", 0) or 0)
+    return {
+        "status": status_label(raw_status) if raw_status else "",
+        "progress": progress,
+        "blocked": bool(getattr(detail, "blocked", False)),
+    }
+
+
+def _patch_field_type(kind: str, field: str) -> str:
+    if field.startswith("contract_data."):
+        key = field.split(".", 1)[1]
+        return str(_CONTRACT_DATA_FIELDS.get(key, "unknown"))
+    allow = (
+        _PATCHABLE_TASK_DETAIL_FIELDS
+        if kind == "task_detail"
+        else (_PATCHABLE_STEP_FIELDS if kind == "step" else _PATCHABLE_TASK_NODE_FIELDS)
+    )
+    return str(allow.get(field, "unknown"))
+
+
+def _patch_field_value(target: Any, field: str) -> Any:
+    if field.startswith("contract_data."):
+        key = field.split(".", 1)[1]
+        cd = dict(getattr(target, "contract_data", {}) or {}) if target is not None else {}
+        return cd.get(key)
+    return getattr(target, field, None) if target is not None else None
+
+
+def _truncate_patch_diff_value(value: Any, value_type: str) -> Tuple[Any, Dict[str, Any]]:
+    if value_type == "str":
+        text = str(value or "")
+        total = len(text)
+        if total > 200:
+            return (text[:200] + "…"), {"total_chars": total, "truncated": True}
+        return text, {"total_chars": total, "truncated": False}
+    if value_type == "str_list":
+        items = list(value or []) if isinstance(value, list) else []
+        normalized = [str(v) for v in items]
+        total = len(normalized)
+        if total > 20:
+            return normalized[:20], {"total_items": total, "truncated": True}
+        return normalized, {"total_items": total, "truncated": False}
+    return value, {}
+
+
+def _build_patch_field_diffs(*, kind: str, before_target: Any, after_target: Any, fields: List[str]) -> List[Dict[str, Any]]:
+    diffs: List[Dict[str, Any]] = []
+    for field in list(fields or []):
+        value_type = _patch_field_type(kind, field)
+        before_val = _patch_field_value(before_target, field)
+        after_val = _patch_field_value(after_target, field)
+        if before_val == after_val:
+            continue
+        before_out, before_meta = _truncate_patch_diff_value(before_val, value_type)
+        after_out, after_meta = _truncate_patch_diff_value(after_val, value_type)
+        entry: Dict[str, Any] = {"field": field, "type": value_type, "before": before_out, "after": after_out}
+        if before_meta:
+            entry["before_meta"] = before_meta
+        if after_meta:
+            entry["after_meta"] = after_meta
+        diffs.append(entry)
+    return diffs
 
 
 def _task_evidence_summary(task: Any) -> Dict[str, Any]:
@@ -2028,6 +2098,9 @@ def _build_radar_payload(
         "domain": str(getattr(detail, "domain", "") or focus_domain or ""),
         "title": str(getattr(detail, "title", "") or ""),
     }
+    raw_status = str(getattr(detail, "status", "") or "").strip()
+    if raw_status:
+        focus_payload["lifecycle_status"] = status_label(raw_status)
 
     raw_suggestions = list(generate_suggestions(manager, focus_id))
     next_suggestions: List[Suggestion] = []
@@ -2065,7 +2138,7 @@ def _build_radar_payload(
             "index": current,
             "title": title,
             "total": len(steps),
-            "status": status,
+            "queue_status": status,
             "queue": {"remaining": max(0, len(steps) - current), "total": len(steps)},
         }
         why_payload: Dict[str, Any] = {
@@ -2147,11 +2220,13 @@ def _build_radar_payload(
     }
     now_payload = dict(now or {})
     if now_payload:
+        if "status" in now_payload:
+            now_payload["queue_status"] = now_payload.pop("status")
         now_payload.setdefault("queue", queue_summary)
     elif all_completed:
-        now_payload = {"kind": "task", "status": "ready", "queue": queue_summary}
+        now_payload = {"kind": "task", "queue_status": "ready", "queue": queue_summary}
     else:
-        now_payload = {"kind": "step", "status": "missing", "queue": queue_summary}
+        now_payload = {"kind": "step", "queue_status": "missing", "queue": queue_summary}
     result["now"] = now_payload
 
     plan_id = str(getattr(task, "parent", "") or "").strip()
@@ -2599,12 +2674,34 @@ def handle_resume(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             suggestions=_missing_target_suggestions(manager, want="PLAN-" if focus_id.startswith("PLAN-") else "TASK-"),
             result={"task": focus_id},
         )
+    compact = data.get("compact")
+    if compact is None:
+        compact = True
+    compact = bool(compact)
     result: Dict[str, Any] = {}
     if getattr(detail, "kind", "task") == "plan":
-        result["plan"] = plan_to_dict(detail, compact=False)
+        result["plan"] = plan_to_dict(detail, compact=compact is True)
     else:
-        result["task"] = task_to_dict(detail, include_steps=True, compact=False)
-        result["checkpoint_status"] = _compute_checkpoint_status(detail)
+        include_steps = compact is not True
+        result["task"] = task_to_dict(detail, include_steps=include_steps, compact=compact is True)
+        checkpoint_status = _compute_checkpoint_status(detail)
+        if compact is True:
+            pending = list(checkpoint_status.get("pending", []) or [])
+            ready = list(checkpoint_status.get("ready", []) or [])
+            pending_ids = list(checkpoint_status.get("pending_ids", []) or [])
+            ready_ids = list(checkpoint_status.get("ready_ids", []) or [])
+            result["checkpoint_status"] = {
+                "pending_count": len(pending),
+                "ready_count": len(ready),
+                "next_pending": (pending[:1] or [None])[0],
+                "next_ready": (ready[:1] or [None])[0],
+                "pending": pending[:10],
+                "ready": ready[:10],
+                "pending_ids": pending_ids[:10],
+                "ready_ids": ready_ids[:10],
+            }
+        else:
+            result["checkpoint_status"] = checkpoint_status
     # Timeline: expose events if present (already structured)
     events = list(getattr(detail, "events", []) or [])
     if events:
@@ -5075,22 +5172,25 @@ def _apply_patch_ops_to_target(
                     error_response(intent, "FORBIDDEN_FIELD", f"contract_data.{key} не поддерживается", result={"field": field}),
                     contract_touched,
                 )
-            contract_touched = True
             cd = dict(getattr(target, "contract_data", {}) or {})
             if op == "unset":
                 if key in cd:
                     cd.pop(key, None)
                     updated_fields.append(field)
-                setattr(target, "contract_data", cd)
+                    contract_touched = True
+                    setattr(target, "contract_data", cd)
                 continue
             if value_type == "str_list":
                 current = cd.get(key, []) if isinstance(cd.get(key, []), list) else []
                 new_list, list_err = _apply_patch_list_field(list(current or []), op, value, field=field)
                 if list_err:
                     return error_response(intent, "INVALID_VALUE", list_err, result={"field": field, "op": op}), contract_touched
-                cd[key] = list(new_list or [])
-                updated_fields.append(field)
-                setattr(target, "contract_data", cd)
+                normalized = list(new_list or [])
+                if normalized != list(current or []) or (key not in cd and normalized):
+                    cd[key] = normalized
+                    updated_fields.append(field)
+                    contract_touched = True
+                    setattr(target, "contract_data", cd)
                 continue
             # value_type == str
             if op in {"append", "remove"}:
@@ -5098,9 +5198,13 @@ def _apply_patch_ops_to_target(
             new_val, val_err = _apply_patch_scalar_field("str", op, value, field=field)
             if val_err:
                 return error_response(intent, "INVALID_VALUE", val_err, result={"field": field, "op": op}), contract_touched
-            cd[key] = str(new_val or "")
-            updated_fields.append(field)
-            setattr(target, "contract_data", cd)
+            normalized = str(new_val or "")
+            current_val = str(cd.get(key, "") or "")
+            if normalized != current_val or key not in cd:
+                cd[key] = normalized
+                updated_fields.append(field)
+                contract_touched = True
+                setattr(target, "contract_data", cd)
             continue
 
         value_type = allow.get(field)
@@ -5123,8 +5227,10 @@ def _apply_patch_ops_to_target(
             new_list, list_err = _apply_patch_list_field(current, op, value, field=field)
             if list_err:
                 return error_response(intent, "INVALID_VALUE", list_err, result={"field": field, "op": op}), contract_touched
-            setattr(target, field, list(new_list or []))
-            updated_fields.append(field)
+            normalized = list(new_list or [])
+            if normalized != list(current or []):
+                setattr(target, field, normalized)
+                updated_fields.append(field)
             continue
 
         if op in {"append", "remove"}:
@@ -5132,8 +5238,10 @@ def _apply_patch_ops_to_target(
         new_val, val_err = _apply_patch_scalar_field(value_type, op, value, field=field)
         if val_err:
             return error_response(intent, "INVALID_VALUE", val_err, result={"field": field, "op": op}), contract_touched
-        setattr(target, field, new_val)
-        updated_fields.append(field)
+        current_val = getattr(target, field, None)
+        if current_val != new_val:
+            setattr(target, field, new_val)
+            updated_fields.append(field)
 
     return None, contract_touched
 
@@ -5180,10 +5288,11 @@ def _apply_patch_request_inplace(
             detail.tests_auto_confirmed = not tests_list
         if any(f.startswith("contract_data.") or f == "contract" for f in updated_fields):
             contract_touched = True
-        try:
-            detail.update_status_from_progress()
-        except Exception:
-            pass
+        if updated_fields:
+            try:
+                detail.update_status_from_progress()
+            except Exception:
+                pass
         return None, {"kind": "task_detail", "path": None, "updated_fields": sorted(set(updated_fields)), "contract_touched": bool(contract_touched)}
 
     if kind == "step":
@@ -5232,10 +5341,11 @@ def _apply_patch_request_inplace(
             tests_list = list(getattr(step, "tests", []) or [])
             step.tests_confirmed = False
             step.tests_auto_confirmed = not tests_list
-        try:
-            detail.update_status_from_progress()
-        except Exception:
-            pass
+        if updated_fields:
+            try:
+                detail.update_status_from_progress()
+            except Exception:
+                pass
         return None, {"kind": "step", "path": path, "updated_fields": sorted(set(updated_fields)), "contract_touched": bool(contract_touched)}
 
     # kind == task (task node)
@@ -5283,10 +5393,11 @@ def _apply_patch_request_inplace(
         node.tests_auto_confirmed = not tests_list
     if "status" in updated_fields and "status_manual" not in updated_fields:
         node.status_manual = True
-    try:
-        detail.update_status_from_progress()
-    except Exception:
-        pass
+    if updated_fields:
+        try:
+            detail.update_status_from_progress()
+        except Exception:
+            pass
     return None, {"kind": "task", "path": path, "updated_fields": sorted(set(updated_fields)), "contract_touched": bool(contract_touched)}
 
 
@@ -5336,6 +5447,10 @@ def handle_patch(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         )
 
     dry_run = bool(data.get("dry_run", False))
+    compact = data.get("compact")
+    if compact is None:
+        compact = True
+    compact = bool(compact)
     detail = copy.deepcopy(base) if dry_run else base
 
     if kind != "task_detail" and getattr(detail, "kind", "task") != "task":
@@ -5356,26 +5471,75 @@ def handle_patch(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
     contract_touched = bool((meta or {}).get("contract_touched", False))
     raw_path = (meta or {}).get("path")
     path = str(raw_path or "").strip() or None
+    changed_set = set(updated_fields)
+    diff_fields_ordered: List[str] = []
+    seen: set[str] = set()
+    for raw_op in list(ops or []):
+        if not isinstance(raw_op, dict):
+            continue
+        field = str(raw_op.get("field", "") or "").strip()
+        if field and field in changed_set and field not in seen:
+            diff_fields_ordered.append(field)
+            seen.add(field)
 
     if kind == "task_detail":
         if dry_run:
             key = "plan" if getattr(detail, "kind", "task") == "plan" else "task"
-            current = plan_to_dict(base, compact=False) if key == "plan" else task_to_dict(base, include_steps=True, compact=False)
-            computed = plan_to_dict(detail, compact=False) if key == "plan" else task_to_dict(detail, include_steps=True, compact=False)
+            include_steps = compact is not True
+            current = (
+                plan_to_dict(base, compact=compact is True)
+                if key == "plan"
+                else task_to_dict(base, include_steps=include_steps, compact=compact is True)
+            )
+            computed = (
+                plan_to_dict(detail, compact=compact is True)
+                if key == "plan"
+                else task_to_dict(detail, include_steps=include_steps, compact=compact is True)
+            )
+            state_diff = _preview_state_diff(_task_state_snapshot(base), _task_state_snapshot(detail))
+            field_diffs = _build_patch_field_diffs(
+                kind="task_detail",
+                before_target=base,
+                after_target=detail,
+                fields=diff_fields_ordered,
+            )
+            diff = {"state": state_diff, "fields": field_diffs}
             return AIResponse(
                 success=True,
                 intent="patch",
                 result={
                     "dry_run": True,
-                    "would_execute": True,
+                    "would_execute": bool(state_diff) or bool(field_diffs),
                     "task_id": task_id,
                     "kind": "task_detail",
                     "updated_fields": sorted(set(updated_fields)),
-                    "diff": _preview_state_diff(current, computed),
+                    "diff": diff,
                     "current": {key: current},
                     "computed": {key: computed},
                 },
                 context={"task_id": task_id},
+            )
+
+        if not updated_fields:
+            key = "plan" if getattr(detail, "kind", "task") == "plan" else "task"
+            include_steps = compact is not True
+            snapshot = (
+                plan_to_dict(base, compact=compact is True)
+                if key == "plan"
+                else task_to_dict(base, include_steps=include_steps, compact=compact is True)
+            )
+            return AIResponse(
+                success=True,
+                intent="patch",
+                result={
+                    "task_id": task_id,
+                    "kind": "task_detail",
+                    "updated_fields": [],
+                    "no_op": True,
+                    key: snapshot,
+                },
+                context={"task_id": task_id},
+                meta={"no_op": True},
             )
 
         if contract_touched and getattr(detail, "kind", "task") == "plan":
@@ -5386,7 +5550,12 @@ def handle_patch(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         manager.save_task(detail, skip_sync=True)
         reloaded = manager.load_task(task_id, getattr(detail, "domain", ""), skip_sync=True) or detail
         key = "plan" if getattr(reloaded, "kind", "task") == "plan" else "task"
-        snapshot = plan_to_dict(reloaded, compact=False) if key == "plan" else task_to_dict(reloaded, include_steps=True, compact=False)
+        include_steps = compact is not True
+        snapshot = (
+            plan_to_dict(reloaded, compact=compact is True)
+            if key == "plan"
+            else task_to_dict(reloaded, include_steps=include_steps, compact=compact is True)
+        )
         return AIResponse(
             success=True,
             intent="patch",
@@ -5399,30 +5568,63 @@ def handle_patch(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             return error_response("patch", "PATH_NOT_FOUND", "path не найден после применения patch")
         step, _, _ = _find_step_by_path(list(getattr(detail, "steps", []) or []), path)
         if dry_run:
-            current_task = task_to_dict(base, include_steps=True, compact=False)
-            computed_task = task_to_dict(detail, include_steps=True, compact=False)
+            include_steps = compact is not True
+            current_task = task_to_dict(base, include_steps=include_steps, compact=compact is True)
+            computed_task = task_to_dict(detail, include_steps=include_steps, compact=compact is True)
             current_step, _, _ = _find_step_by_path(list(getattr(base, "steps", []) or []), path)
+            state_diff = _preview_state_diff(_task_state_snapshot(base), _task_state_snapshot(detail))
+            field_diffs = _build_patch_field_diffs(
+                kind="step",
+                before_target=current_step,
+                after_target=step,
+                fields=diff_fields_ordered,
+            )
+            diff = {"state": state_diff, "fields": field_diffs}
             return AIResponse(
                 success=True,
                 intent="patch",
                 result={
                     "dry_run": True,
-                    "would_execute": True,
+                    "would_execute": bool(state_diff) or bool(field_diffs),
                     "task_id": task_id,
                     "kind": "step",
                     "path": path,
                     "updated_fields": sorted(set(updated_fields)),
-                    "diff": _preview_state_diff(current_task, computed_task),
+                    "diff": diff,
                     "current": {
                         "task": current_task,
-                        "step": step_to_dict(current_step, path=path, compact=False) if current_step else None,
+                        "step": step_to_dict(
+                            current_step, path=path, compact=compact is True, include_steps=compact is not True
+                        )
+                        if current_step
+                        else None,
                     },
                     "computed": {
                         "task": computed_task,
-                        "step": step_to_dict(step, path=path, compact=False) if step else None,
+                        "step": step_to_dict(step, path=path, compact=compact is True, include_steps=compact is not True) if step else None,
                     },
                 },
                 context={"task_id": task_id},
+            )
+
+        if not updated_fields:
+            st_before, _, _ = _find_step_by_path(list(getattr(base, "steps", []) or []), path)
+            return AIResponse(
+                success=True,
+                intent="patch",
+                result={
+                    "task_id": task_id,
+                    "kind": "step",
+                    "path": path,
+                    "updated_fields": [],
+                    "no_op": True,
+                    "step": step_to_dict(st_before, path=path, compact=compact is True, include_steps=compact is not True)
+                    if st_before
+                    else None,
+                    "task": task_to_dict(base, include_steps=compact is not True, compact=compact is True),
+                },
+                context={"task_id": task_id},
+                meta={"no_op": True},
             )
 
         manager.save_task(detail, skip_sync=True)
@@ -5436,8 +5638,8 @@ def handle_patch(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
                 "kind": "step",
                 "path": path,
                 "updated_fields": sorted(set(updated_fields)),
-                "step": step_to_dict(st, path=path, compact=False) if st else None,
-                "task": task_to_dict(reloaded, include_steps=True, compact=False),
+                "step": step_to_dict(st, path=path, compact=compact is True, include_steps=compact is not True) if st else None,
+                "task": task_to_dict(reloaded, include_steps=compact is not True, compact=compact is True),
             },
             context={"task_id": task_id},
         )
@@ -5447,30 +5649,63 @@ def handle_patch(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         return error_response("patch", "PATH_NOT_FOUND", "path не найден после применения patch")
     node, _, _ = _find_task_by_path(list(getattr(detail, "steps", []) or []), path)
     if dry_run:
-        current_task = task_to_dict(base, include_steps=True, compact=False)
-        computed_task = task_to_dict(detail, include_steps=True, compact=False)
+        include_steps = compact is not True
+        current_task = task_to_dict(base, include_steps=include_steps, compact=compact is True)
+        computed_task = task_to_dict(detail, include_steps=include_steps, compact=compact is True)
         current_node, _, _ = _find_task_by_path(list(getattr(base, "steps", []) or []), path)
+        state_diff = _preview_state_diff(_task_state_snapshot(base), _task_state_snapshot(detail))
+        field_diffs = _build_patch_field_diffs(
+            kind="task",
+            before_target=current_node,
+            after_target=node,
+            fields=diff_fields_ordered,
+        )
+        diff = {"state": state_diff, "fields": field_diffs}
         return AIResponse(
             success=True,
             intent="patch",
             result={
                 "dry_run": True,
-                "would_execute": True,
+                "would_execute": bool(state_diff) or bool(field_diffs),
                 "task_id": task_id,
                 "kind": "task",
                 "path": path,
                 "updated_fields": sorted(set(updated_fields)),
-                "diff": _preview_state_diff(current_task, computed_task),
+                "diff": diff,
                 "current": {
                     "task": current_task,
-                    "task_node": task_node_to_dict(current_node, path=path, compact=False) if current_node else None,
+                    "task_node": task_node_to_dict(
+                        current_node, path=path, compact=compact is True, include_steps=compact is not True
+                    )
+                    if current_node
+                    else None,
                 },
                 "computed": {
                     "task": computed_task,
-                    "task_node": task_node_to_dict(node, path=path, compact=False) if node else None,
+                    "task_node": task_node_to_dict(node, path=path, compact=compact is True, include_steps=compact is not True) if node else None,
                 },
             },
             context={"task_id": task_id},
+        )
+
+    if not updated_fields:
+        current_node, _, _ = _find_task_by_path(list(getattr(base, "steps", []) or []), path)
+        return AIResponse(
+            success=True,
+            intent="patch",
+            result={
+                "task_id": task_id,
+                "kind": "task",
+                "path": path,
+                "updated_fields": [],
+                "no_op": True,
+                "task_node": task_node_to_dict(current_node, path=path, compact=compact is True, include_steps=compact is not True)
+                if current_node
+                else None,
+                "task": task_to_dict(base, include_steps=compact is not True, compact=compact is True),
+            },
+            context={"task_id": task_id},
+            meta={"no_op": True},
         )
 
     manager.save_task(detail, skip_sync=True)
@@ -5484,8 +5719,8 @@ def handle_patch(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             "kind": "task",
             "path": path,
             "updated_fields": sorted(set(updated_fields)),
-            "task_node": task_node_to_dict(patched, path=path, compact=False) if patched else None,
-            "task": task_to_dict(reloaded, include_steps=True, compact=False),
+            "task_node": task_node_to_dict(patched, path=path, compact=compact is True, include_steps=compact is not True) if patched else None,
+            "task": task_to_dict(reloaded, include_steps=compact is not True, compact=compact is True),
         },
         context={"task_id": task_id},
     )
@@ -7027,7 +7262,29 @@ def process_intent(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         except Exception:
             pass
 
-    if intent in _MUTATING_INTENTS and resp.success and not is_preview:
+    no_op = bool((resp.meta or {}).get("no_op", False)) if isinstance(resp.meta, dict) else False
+
+    if intent in _MUTATING_INTENTS and resp.success and not is_preview and no_op and wants_audit:
+        try:
+            history_task_id = str(task_id) if task_id else None
+            history_payload = dict(payload)
+            op = history.record(
+                intent=intent,
+                task_id=history_task_id,
+                data=history_payload,
+                task_file=None,
+                result=resp.to_dict(),
+                stream="audit",
+                effect="read",
+                take_snapshot=False,
+            )
+            if op and getattr(op, "id", None):
+                resp.meta = dict(resp.meta or {})
+                resp.meta.setdefault("audit_operation_id", str(op.id))
+        except Exception:
+            pass
+
+    if intent in _MUTATING_INTENTS and resp.success and not is_preview and not no_op:
         try:
             history_task_id = str(task_id) if task_id else None
             history_task_file = task_file

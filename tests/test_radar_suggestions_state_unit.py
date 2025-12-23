@@ -22,7 +22,7 @@ def test_radar_now_ready_prioritizes_runway_recipe_when_runway_closed(tmp_path):
     resp = handle_radar(manager, {"intent": "radar", "task": "TASK-001"})
     assert resp.success is True
     assert (resp.result.get("now") or {}).get("kind") == "task"
-    assert (resp.result.get("now") or {}).get("status") == "ready"
+    assert (resp.result.get("now") or {}).get("queue_status") == "ready"
 
     runway = resp.result.get("runway") or {}
     assert runway.get("open") is False

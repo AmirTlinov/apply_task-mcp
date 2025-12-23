@@ -165,6 +165,8 @@ Compact “Radar View” snapshot for the current work (1 screen → 1 truth):
 
 Notes:
 - Radar always returns stable keys: `now`, `why`, `verify`, `next`, `blockers`, `open_checkpoints`, `runway` (plus `focus`, `links`, `budget`).
+- `result.focus.lifecycle_status` is the canonical lifecycle status (TODO|ACTIVE|DONE) of the focused item.
+- `result.now.queue_status` is the queue/UI status of the “Now” item (not the lifecycle status).
 - `max_chars` is a hard output budget (UTF-8 bytes). Result includes `result.budget` with `used_chars` and `truncated`.
 - `result.why.contract` may include a compact summary from structured `contract_data` (goal/done/checks/constraints/risks).
 - `result.links` contains small “expand” payloads (resume/mirror/context/history/handoff).
@@ -221,10 +223,12 @@ Result includes `counts`, `by_status`, and (when `include_all=true`) `plans[]` a
 Load a specific `plan`/`task` (or `.last` fallback) with optional timeline.
 
 ```json
-{"intent":"resume","task":"TASK-001","events_limit":20}
+{"intent":"resume","task":"TASK-001","events_limit":20,"compact":true}
 ```
 
-Returns either `result.plan` or `result.task`. For tasks also returns `result.checkpoint_status`.
+Notes:
+- `compact=true` (default) returns a short summary payload; use `compact=false` for full snapshots.
+- Returns either `result.plan` or `result.task`. For tasks also returns `result.checkpoint_status` (bounded in `compact=true`).
 
 ### lint
 
@@ -472,6 +476,7 @@ Diff-oriented safe patch (field allowlist) for `task_detail` / `step` / `task` (
 Operations:
 - `set` / `unset` for scalar fields
 - `set` / `unset` / `append` / `remove` for list fields
+- `compact=true` (default) returns compact snapshots; use `compact=false` for full snapshots.
 
 Patch a root task/plan (`kind` inferred when omitted):
 ```json
@@ -513,13 +518,18 @@ Patch a task node inside a step plan:
 
 Dry-run preview (no writes; does not pollute ops history/delta):
 ```json
-{"intent":"patch","task":"TASK-001","dry_run":true,"ops":[{"op":"append","field":"success_criteria","value":"<done>"}]}
+{"intent":"patch","task":"TASK-001","dry_run":true,"compact":true,"ops":[{"op":"append","field":"success_criteria","value":"<done>"}]}
 ```
 
 Dry-run response is explicit-by-shape:
 - `result.current` — current snapshot
 - `result.computed` — post-preview snapshot (in-memory)
-- `result.diff` — minimal status/progress/blocked diff (when changed)
+- `result.diff.state` — status/progress/blocked diff (when changed)
+- `result.diff.fields` — before/after for changed fields (trust-by-diff; works even in `compact=true`)
+- `result.would_execute=false` when the patch is a true no-op (no side-effects)
+
+No-op behavior (non-dry-run):
+- If the patch results in no changes, it returns `result.no_op=true`, does not bump revision, and does not write an ops history entry.
 
 ### contract
 

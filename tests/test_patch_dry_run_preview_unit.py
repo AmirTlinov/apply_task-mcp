@@ -39,8 +39,12 @@ def test_patch_dry_run_returns_current_and_computed_snapshots(tmp_path):
     assert "computed" in result
     assert result["current"]["task"]["status"] == "ACTIVE"
     assert result["computed"]["task"]["status"] == "ACTIVE"
-    assert result["computed"]["task"]["success_criteria"] == ["done"]
-    assert result.get("diff") == {}
+    diff = result.get("diff") or {}
+    assert (diff.get("state") or {}) == {}
+    fields = diff.get("fields") or []
+    assert fields and fields[0].get("field") == "success_criteria"
+    assert fields[0].get("before") == []
+    assert fields[0].get("after") == ["done"]
 
 
 def test_patch_dry_run_exposes_status_diff_when_blocked_changes(tmp_path):
@@ -63,7 +67,7 @@ def test_patch_dry_run_exposes_status_diff_when_blocked_changes(tmp_path):
     assert resp.success is True
     result = resp.result
     diff = result.get("diff") or {}
+    state = diff.get("state") or {}
 
-    assert diff.get("blocked") == {"from": False, "to": True}
-    assert diff.get("status") == {"from": "ACTIVE", "to": "TODO"}
-
+    assert state.get("blocked") == {"from": False, "to": True}
+    assert state.get("status") == {"from": "ACTIVE", "to": "TODO"}

@@ -63,6 +63,7 @@ def test_handle_radar_task_includes_now_verify_and_deps(manager: TaskManager):
     assert resp.success is True
     result = resp.result
     assert result["focus"]["id"] == "TASK-001"
+    assert result["focus"]["lifecycle_status"] == "ACTIVE"
     assert result["now"]["kind"] == "step"
     assert "verify" in result
     assert "open_checkpoints" in result

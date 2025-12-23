@@ -68,6 +68,40 @@ def test_close_task_dry_run_audit_records_to_audit_stream_only(tmp_path: Path):
     assert hist_audit.result["operations"][0]["stream"] == "audit"
 
 
+def test_patch_no_op_does_not_write_ops_history_or_reset_checkpoints(tmp_path: Path):
+    tasks_dir = tmp_path / ".tasks"
+    tasks_dir.mkdir()
+    manager = TaskManager(tasks_dir=tasks_dir)
+
+    step = Step.new("Step title long enough 12345", criteria=["c"], tests=["t"])
+    assert step is not None
+    task = TaskDetail(id="TASK-001", title="Task", status="ACTIVE", steps=[step], success_criteria=["done"])
+    task.criteria_confirmed = True
+    manager.save_task(task, skip_sync=True)
+
+    before = manager.load_task("TASK-001", skip_sync=True)
+    assert before is not None
+    before_revision = int(getattr(before, "revision", 0) or 0)
+
+    resp = process_intent(
+        manager,
+        {"intent": "patch", "task": "TASK-001", "ops": [{"op": "append", "field": "success_criteria", "value": "done"}]},
+    )
+    assert resp.success is True
+    assert resp.result.get("no_op") is True
+    assert resp.meta.get("operation_id") in {None, ""}  # no-op must be silent by default
+
+    after = manager.load_task("TASK-001", skip_sync=True)
+    assert after is not None
+    assert after.success_criteria == ["done"]
+    assert after.criteria_confirmed is True
+    assert int(getattr(after, "revision", 0) or 0) == before_revision
+
+    history = OperationHistory(storage_dir=tasks_dir)
+    assert history.operations == []
+    assert history.audit_operations == []
+
+
 def test_delta_filters_by_intent_and_path(tmp_path: Path):
     tasks_dir = tmp_path / ".tasks"
     tasks_dir.mkdir()
