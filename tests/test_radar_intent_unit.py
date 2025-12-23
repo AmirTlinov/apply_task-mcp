@@ -120,3 +120,31 @@ def test_handle_radar_reflects_verify_evidence(manager: TaskManager):
     assert evidence["checks"]["count"] >= 1
     assert evidence["checks"]["kinds"].get("command") == 1
     assert evidence["attachments"]["count"] == 1
+
+
+def test_handle_radar_includes_task_level_evidence_blackbox(manager: TaskManager):
+    step1 = Step.new("Step 1", criteria=["c1"], tests=["t1"])
+    assert step1 is not None
+    step1.verification_checks = [
+        VerificationCheck(kind="ci", spec="pytest -q", outcome="pass", observed_at="2025-12-22T00:00:00+00:00")
+    ]
+    step1.attachments = [Attachment(kind="cmd_output", uri="stdout", size=1, observed_at="2025-12-22T00:00:01+00:00")]
+
+    step2 = Step.new("Step 2", criteria=["c2"], tests=["t2"])
+    assert step2 is not None
+    step2.verification_checks = [
+        VerificationCheck(kind="lint", spec="apply_task lint", outcome="info", observed_at="2025-12-22T00:00:02+00:00")
+    ]
+
+    task = TaskDetail(id="TASK-001", title="Task", status="ACTIVE", steps=[step1, step2], success_criteria=["done"])
+    manager.save_task(task)
+
+    resp = handle_radar(manager, {"intent": "radar", "task": "TASK-001", "limit": 1})
+    assert resp.success is True
+    evidence_task = (resp.result.get("verify") or {}).get("evidence_task") or {}
+    assert evidence_task.get("steps_total") == 2
+    assert evidence_task.get("checks", {}).get("count") == 2
+    assert evidence_task.get("checks", {}).get("kinds", {}).get("ci") == 1
+    assert evidence_task.get("checks", {}).get("kinds", {}).get("lint") == 1
+    assert evidence_task.get("checks", {}).get("last_observed_at") == "2025-12-22T00:00:02+00:00"
+    assert evidence_task.get("attachments", {}).get("count") == 1

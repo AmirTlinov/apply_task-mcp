@@ -55,6 +55,27 @@ Every intent returns `AIResponse`:
 
 On failure: `success=false` and `error={code,message,recovery?}`.
 
+### Suggestions (executable actions)
+
+`AIResponse.suggestions[]` are server-emitted, tool-ready actions that are intended to be copy/pasted and executed as-is.
+
+Each suggestion has a stable shape:
+
+```json
+{
+  "action": "patch",
+  "target": "tasks_patch",
+  "reason": "…",
+  "priority": "high",
+  "validated": true,
+  "params": { "…" : "…" }
+}
+```
+
+Notes:
+- `validated=true` means the server validated `params` against the MCP tool input schema for that intent (schema-correct + executable).
+- When a suggestion targets a mutating intent on the current focus, the server may auto-fill safety fields (`strict_targeting`, `expected_target_id`, `expected_kind`, and `expected_revision` when known).
+
 ## Optimistic concurrency (revision / expected_revision)
 
 Every stored `PLAN-###` / `TASK-###` file has a **monotonic integer** `revision` (etag-like). It is:
@@ -90,6 +111,18 @@ Rules:
 - Auto strict: if there are multiple ACTIVE targets and a focus-based write omits strict flags, `strict_targeting` is enabled automatically and `context.strict_writes_auto=true` with `context.strict_writes_active_count`.
 - Explicit addressing (`task`/`plan`) bypasses auto strict because the target is unambiguous.
 
+## Preview mode (dry_run/apply=false) and audit stream
+
+By default, previews leave **no trace** in the operational log:
+
+- Any mutating intent with `dry_run=true` is treated as a **preview** (no write, no ops history/delta entry).
+- `close_task` uses `apply=false` (default) as its **preview** mode.
+
+If you need a trace of previews for debugging/analytics, pass `audit=true` on the preview call:
+
+- The server records the preview call into a separate **audit** stream (non-undoable, does not affect `ops` undo/redo).
+- Preview responses may include `meta.audit_operation_id` for `delta(stream="audit", since=...)` chaining.
+
 ## Intents
 
 ### focus_get
@@ -123,7 +156,7 @@ Compact “Radar View” snapshot for the current work (1 screen → 1 truth):
 - **Now**: active step / current plan checklist item
 - **Why**: contract / goal summary
 - **Verify**: commands + missing checkpoints + evidence summary
-- **Next**: top 1–3 actions/suggestions
+- **Next**: exactly one best next action (“recipe”), state-aware and executable
 - **Blockers/Deps**: blockers + dependency state
 
 ```json
@@ -135,12 +168,15 @@ Notes:
 - `max_chars` is a hard output budget (UTF-8 bytes). Result includes `result.budget` with `used_chars` and `truncated`.
 - `result.why.contract` may include a compact summary from structured `contract_data` (goal/done/checks/constraints/risks).
 - `result.links` contains small “expand” payloads (resume/mirror/context/history/handoff).
-- For tasks, `result.verify.evidence` includes a compact “black box” summary for the active step (counts + kinds + last observed timestamps).
+- For tasks, `result.verify.evidence` is the “black box” summary for the active step (counts + kinds + last observed timestamps).
+- For tasks, `result.verify.evidence_task` aggregates evidence across **all** steps (task-level black box).
+- `result.next[]` is always a single suggestion and mirrors `AIResponse.suggestions[0]` (same payload, `validated` flag, and safe-write defaults when applicable).
 - `result.runway` is the “runway status” for safe closure:
   - `open: bool` — whether closing is allowed right now
   - `blocking.lint` — top lint errors (severity=error) + summary counters
   - `blocking.validation` — structural gating (e.g., task not complete / step not ready / plan checklist not finished)
   - `recipe` — one executable, schema-correct fix payload (usually `patch`, sometimes `batch`/`close_step` or `plan(advance=true)`).
+  - When `runway.open=false`, `result.next[0]` prioritizes `runway.recipe` (fix first, closure later).
 
 ### handoff
 
@@ -546,6 +582,7 @@ Apply atomically (patches → complete DONE):
 
 Notes:
 - When `apply=false` (default), `close_task` is always a dry-run (no history side-effects).
+- To record the preview in the audit stream, pass `audit=true` and query `history(stream=\"audit\")` / `delta(stream=\"audit\")`.
 - Returns `runway` + `diff` so you can see exactly what would change.
 - If the runway is closed and `force=false`, `apply=true` fails with `RUNWAY_CLOSED` and includes the same `runway` + `diff` in the error payload.
 - `patches[]` use the same shape as `patch` requests but omit the root `task` id (it’s implied by `close_task.task`).
@@ -602,6 +639,16 @@ Return recent operation history (undo/redo metadata).
 {"intent":"history","limit":20}
 ```
 
+Filters:
+- `stream: "ops" | "audit"` (default `"ops"`)
+- `task: "TASK-###" | "PLAN-###"` (optional)
+- `intents: ["patch","complete",...]` (optional)
+- `paths: ["s:0", "s:1.t:2", ...]` (optional; matches any `path` found in the operation payload)
+
+Notes:
+- `ops` is the canonical mutation stream (undoable where supported).
+- `audit` is preview/trace-only and never affects undo/redo.
+
 ### delta
 
 Return operation log entries strictly after a given operation id (agent-friendly delta updates).
@@ -612,9 +659,11 @@ Return operation log entries strictly after a given operation id (agent-friendly
 
 Notes:
 - Use `meta.operation_id` from any mutating response as the `since` cursor.
+- Use `meta.audit_operation_id` from preview calls (with `audit=true`) as the `since` cursor for `stream=\"audit\"`.
 - `since` is exclusive (returns ops strictly after it).
 - Delta is metadata-only by default: set `include_details=true` to return full `data/result` payloads.
 - Set `include_snapshot=true` to include before/after snapshot content for each operation (heavier).
+- Supports the same filters as `history` (`stream`, `task`, `intents`, `paths`).
 
 ### storage
 

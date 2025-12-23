@@ -74,6 +74,11 @@ def _task_path_description() -> str:
 
 
 _COMMON_REQUEST_PROPERTIES: Dict[str, Any] = {
+    "audit": {
+        "type": "boolean",
+        "default": False,
+        "description": "When true, records preview/dry_run calls into the audit stream (separate from ops history/delta).",
+    },
     "expected_revision": {
         "type": ["integer", "string"],
         "description": "Optional optimistic concurrency precondition (etag-like). When provided for mutating intents, stale revisions are rejected with REVISION_MISMATCH.",
@@ -713,7 +718,13 @@ _TOOL_SPECS: Dict[str, Dict[str, Any]] = {
         "description": "Get operation history (undo/redo metadata).",
         "schema": {
             "type": "object",
-            "properties": {"limit": {"type": "integer", "default": 20, "description": "Max operations returned."}},
+            "properties": {
+                "limit": {"type": "integer", "default": 20, "description": "Max operations returned."},
+                "stream": {"type": "string", "default": "ops", "description": "History stream: ops|audit."},
+                "task": {"type": "string", "description": "Optional filter: only operations for this task/plan id."},
+                "intents": {"type": "array", "items": {"type": "string"}, "description": "Filter by intent names."},
+                "paths": {"type": "array", "items": {"type": "string"}, "description": "Filter by step/task paths."},
+            },
             "required": [],
         },
     },
@@ -728,6 +739,9 @@ _TOOL_SPECS: Dict[str, Dict[str, Any]] = {
                 "include_undone": {"type": "boolean", "default": True, "description": "Include operations marked as undone."},
                 "include_details": {"type": "boolean", "default": False, "description": "When true, include full operation data/result payloads (larger)."},
                 "include_snapshot": {"type": "boolean", "default": False, "description": "When true, include before/after snapshot content for each operation (larger)."},
+                "stream": {"type": "string", "default": "ops", "description": "Delta stream: ops|audit."},
+                "intents": {"type": "array", "items": {"type": "string"}, "description": "Filter by intent names."},
+                "paths": {"type": "array", "items": {"type": "string"}, "description": "Filter by step/task paths."},
             },
             "required": [],
         },

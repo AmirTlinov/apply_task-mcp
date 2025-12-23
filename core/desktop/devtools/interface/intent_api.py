@@ -23,6 +23,7 @@ import tempfile
 import copy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -46,6 +47,7 @@ from core.desktop.devtools.application.task_manager import (
     TaskManager,
     _find_step_by_path,
     _find_task_by_path,
+    _flatten_steps,
     _validate_root_step_ready_for_ok,
 )
 from core.desktop.devtools.application.linting import lint_item
@@ -77,6 +79,7 @@ class Suggestion:
     reason: str
     priority: str = "normal"
     params: Optional[Dict[str, Any]] = None
+    validated: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         data: Dict[str, Any] = {
@@ -84,10 +87,105 @@ class Suggestion:
             "target": self.target,
             "reason": self.reason,
             "priority": self.priority,
+            "validated": bool(self.validated),
         }
         if self.params:
             data["params"] = dict(self.params)
         return data
+
+
+@lru_cache(maxsize=1)
+def _tool_input_schemas_by_intent() -> Dict[str, Dict[str, Any]]:
+    """Load MCP tool input schemas (1:1 with intents) for suggestion validation."""
+    try:
+        from core.desktop.devtools.interface.mcp_server import get_tool_definitions
+
+        tools = get_tool_definitions()
+    except Exception:
+        return {}
+
+    schemas: Dict[str, Dict[str, Any]] = {}
+    for tool in list(tools or []):
+        name = str((tool or {}).get("name", "") or "")
+        schema = (tool or {}).get("inputSchema")
+        if not name.startswith("tasks_") or not isinstance(schema, dict):
+            continue
+        schemas[name[len("tasks_") :]] = dict(schema)
+    return schemas
+
+
+def _validate_tool_args(intent: str, args: Dict[str, Any]) -> bool:
+    schema = _tool_input_schemas_by_intent().get(str(intent or "").strip())
+    if not isinstance(schema, dict) or not schema:
+        return False
+    if not isinstance(args, dict):
+        return False
+    # Semantic guards beyond JSON Schema: keep suggestions executable-by-default.
+    if str(intent or "") == "batch":
+        ops = args.get("operations")
+        if not isinstance(ops, list) or not ops:
+            return False
+    if str(intent or "") == "patch":
+        ops = args.get("ops")
+        if not isinstance(ops, list) or not ops:
+            return False
+    try:
+        import jsonschema
+
+        jsonschema.validate(instance=args, schema=schema)
+        return True
+    except Exception:
+        return False
+
+
+def _suggestion_from_intent_payload(payload: Any, *, reason: str, priority: str = "high") -> Optional[Suggestion]:
+    if not isinstance(payload, dict):
+        return None
+    intent = str(payload.get("intent", "") or "").strip()
+    if not intent:
+        return None
+    params = dict(payload)
+    params.pop("intent", None)
+    return Suggestion(action=intent, target=f"tasks_{intent}", reason=reason, priority=priority, params=params or None)
+
+
+def _secure_suggestion_for_focus(suggestion: Suggestion, focus: Dict[str, Any]) -> Suggestion:
+    params = dict(getattr(suggestion, "params", None) or {})
+    focus_id = str(focus.get("id", "") or "").strip()
+    focus_kind = str(focus.get("kind", "") or "").strip().lower()
+    focus_revision = focus.get("revision")
+    target_id = str(params.get("task") or params.get("plan") or "").strip()
+
+    if focus_id and target_id == focus_id and str(suggestion.action or "") in _MUTATING_INTENTS:
+        params.setdefault("strict_targeting", True)
+        params.setdefault("expected_target_id", focus_id)
+        if focus_kind in {"task", "plan"}:
+            params.setdefault("expected_kind", focus_kind)
+        if isinstance(focus_revision, int):
+            params.setdefault("expected_revision", int(focus_revision))
+
+    return Suggestion(
+        action=str(suggestion.action or ""),
+        target=str(suggestion.target or ""),
+        reason=str(suggestion.reason or ""),
+        priority=str(suggestion.priority or "normal"),
+        params=params or None,
+        validated=bool(getattr(suggestion, "validated", False)),
+    )
+
+
+def _finalize_suggestions(suggestions: List[Suggestion], *, focus: Optional[Dict[str, Any]] = None) -> List[Suggestion]:
+    out: List[Suggestion] = []
+    for sug in list(suggestions or []):
+        if not isinstance(sug, Suggestion):
+            continue
+        candidate = _secure_suggestion_for_focus(sug, focus) if isinstance(focus, dict) else sug
+        args = dict(getattr(candidate, "params", None) or {})
+        if not _validate_tool_args(candidate.action, args):
+            continue
+        candidate.validated = True
+        out.append(candidate)
+    return out
 
 
 @dataclass
@@ -387,6 +485,45 @@ def _latest_observed_at(items: List[Any]) -> str:
     observed = [str(getattr(item, "observed_at", "") or "").strip() for item in items]
     observed = [v for v in observed if v]
     return max(observed) if observed else ""
+
+
+def _task_evidence_summary(task: Any) -> Dict[str, Any]:
+    flat = _flatten_steps(list(getattr(task, "steps", []) or []))
+    all_checks: List[Any] = []
+    all_attachments: List[Any] = []
+    outcomes: List[str] = []
+    for _path, st in flat:
+        all_checks.extend(list(getattr(st, "verification_checks", []) or []))
+        all_attachments.extend(list(getattr(st, "attachments", []) or []))
+        outcome = str(getattr(st, "verification_outcome", "") or "").strip()
+        if outcome:
+            outcomes.append(outcome)
+
+    outcome_counts: Dict[str, int] = {}
+    for out in outcomes:
+        outcome_counts[out] = outcome_counts.get(out, 0) + 1
+
+    return {
+        "steps_total": len(flat),
+        "steps_with_any_evidence": sum(
+            1
+            for _p, st in flat
+            if bool(str(getattr(st, "verification_outcome", "") or "").strip())
+            or bool(list(getattr(st, "verification_checks", []) or []))
+            or bool(list(getattr(st, "attachments", []) or []))
+        ),
+        "verification_outcomes": {"count": len(outcomes), "kinds": outcome_counts},
+        "checks": {
+            "count": len(all_checks),
+            "kinds": _counts_by_kind(all_checks),
+            "last_observed_at": _latest_observed_at(all_checks),
+        },
+        "attachments": {
+            "count": len(all_attachments),
+            "kinds": _counts_by_kind(all_attachments),
+            "last_observed_at": _latest_observed_at(all_attachments),
+        },
+    }
 
 
 def _normalize_checks_payload(raw: Any) -> List[Dict[str, Any]]:
@@ -1579,6 +1716,26 @@ def generate_suggestions(manager: TaskManager, focus_id: Optional[str] = None) -
             missing_checkpoints = [n for n in needs if n in confirmable]
             non_confirmable = [n for n in needs if n not in confirmable]
             if non_confirmable:
+                if "plan_tasks" in non_confirmable:
+                    return [
+                        Suggestion(
+                            action="mirror",
+                            target="tasks_mirror",
+                            reason="Шаг заблокирован вложенными задачами: открой зеркало плана шага и закрой подзадачи.",
+                            priority="high",
+                            params={"task": focus_id, "kind": "step", "path": path, "limit": 10},
+                        )
+                    ]
+                if "blocked" in non_confirmable:
+                    return [
+                        Suggestion(
+                            action="block",
+                            target="tasks_block",
+                            reason="Шаг помечен как blocked: разблокируй его (blocked=false) или обнови blockers.",
+                            priority="high",
+                            params={"task": focus_id, "path": path, "blocked": False, "reason": ""},
+                        )
+                    ]
                 return []
             checkpoints_payload: Dict[str, Any] = {}
             if missing_checkpoints:
@@ -1859,7 +2016,8 @@ def _build_radar_payload(
         "title": str(getattr(detail, "title", "") or ""),
     }
 
-    next_suggestions = list(generate_suggestions(manager, focus_id))[:limit]
+    raw_suggestions = list(generate_suggestions(manager, focus_id))
+    next_suggestions: List[Suggestion] = []
 
     focus_key = "plan" if getattr(detail, "kind", "task") == "plan" else "task"
     result: Dict[str, Any] = {
@@ -1867,7 +2025,7 @@ def _build_radar_payload(
         "now": {},
         "why": {},
         "verify": {"commands": [], "ready": None, "needs": None},
-        "next": [s.to_dict() for s in next_suggestions],
+        "next": [],
         "blockers": {"blocked": False, "blockers": [], "depends_on": [], "unresolved_depends_on": []},
         "open_checkpoints": [],
         "runway": {},
@@ -1880,7 +2038,7 @@ def _build_radar_payload(
             "handoff": {"intent": "handoff", focus_key: focus_id, "limit": limit, "max_chars": max_chars},
         },
     }
-    result["runway"] = _build_runway_payload(manager, detail=detail, focus_id=focus_id, next_suggestions=next_suggestions)
+    result["runway"] = _build_runway_payload(manager, detail=detail, focus_id=focus_id, next_suggestions=raw_suggestions)
 
     if getattr(detail, "kind", "task") == "plan":
         contract_summary = _contract_summary(getattr(detail, "contract_data", {}) or {})
@@ -1933,6 +2091,31 @@ def _build_radar_payload(
             "depends_on": deps,
             "unresolved_depends_on": unresolved,
         }
+
+        runway = result.get("runway") if isinstance(result.get("runway"), dict) else {}
+        if not bool(runway.get("open", True)) and isinstance(runway.get("recipe"), dict):
+            candidate = _suggestion_from_intent_payload(
+                runway.get("recipe"),
+                reason="Полоса закрыта — открой её этим рецептом.",
+                priority="high",
+            )
+            next_suggestions = [candidate] if candidate else []
+        else:
+            next_suggestions = list(raw_suggestions)[:1]
+        next_suggestions = _finalize_suggestions(next_suggestions, focus=focus_payload)
+        if not next_suggestions:
+            next_suggestions = _finalize_suggestions(
+                [
+                    Suggestion(
+                        action="context",
+                        target="tasks_context",
+                        reason="Нет безопасных подсказок — покажи контекст и выбери следующий шаг.",
+                        priority="high",
+                        params={"include_all": True, "compact": True},
+                    )
+                ]
+            )
+        result["next"] = [s.to_dict() for s in next_suggestions]
         return result, next_suggestions
 
     task = detail
@@ -2042,6 +2225,8 @@ def _build_radar_payload(
         verify_payload["open_checkpoints"] = list(open_checkpoints)
     result["verify"] = verify_payload
     result["open_checkpoints"] = open_checkpoints
+    if isinstance(result.get("verify"), dict):
+        result["verify"].setdefault("evidence_task", _task_evidence_summary(task))
 
     deps = [str(d or "").strip() for d in list(getattr(task, "depends_on", []) or []) if str(d or "").strip()]
     unresolved: List[str] = []
@@ -2055,6 +2240,44 @@ def _build_radar_payload(
         "depends_on": deps,
         "unresolved_depends_on": unresolved,
     }
+
+    runway = result.get("runway") if isinstance(result.get("runway"), dict) else {}
+    if not bool(runway.get("open", True)) and isinstance(runway.get("recipe"), dict):
+        candidate = _suggestion_from_intent_payload(
+            runway.get("recipe"),
+            reason="Полоса закрыта — открой её этим рецептом.",
+            priority="high",
+        )
+        next_suggestions = [candidate] if candidate else []
+    else:
+        status = str(getattr(task, "status", "") or "").strip().upper()
+        if all_completed and status != "DONE":
+            next_suggestions = [
+                Suggestion(
+                    action="close_task",
+                    target="tasks_close_task",
+                    reason="Полоса открыта и все шаги завершены — закрыть задачу атомарно (DONE).",
+                    priority="high",
+                    params={"task": focus_id, "apply": True},
+                )
+            ]
+        else:
+            next_suggestions = list(raw_suggestions)[:1]
+
+    next_suggestions = _finalize_suggestions(next_suggestions, focus=focus_payload)
+    if not next_suggestions:
+        next_suggestions = _finalize_suggestions(
+            [
+                Suggestion(
+                    action="radar",
+                    target="tasks_radar",
+                    reason="Нет безопасных подсказок — обнови радар и проверь блокеры/чекпоинты.",
+                    priority="high",
+                    params={"task": focus_id, "limit": 3},
+                )
+            ]
+        )
+    result["next"] = [s.to_dict() for s in next_suggestions]
     return result, next_suggestions
 
 
@@ -5687,8 +5910,6 @@ def handle_close_task(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
     task_id = str(task_id)
 
     apply = bool(data.get("apply", False))
-    # Safety-by-default: when not applying, always behave as dry_run (no history side-effects).
-    dry_run = False if apply else True
 
     force = bool(data.get("force", False))
     override_reason = str(data.get("override_reason", "") or "").strip()
@@ -5792,6 +6013,8 @@ def handle_close_task(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         # Fallback to the next best action for the current task.
         if not recipe and validation_block:
             recipe = _suggestion_to_intent_payload((generate_suggestions(manager, task_id)[:1] or [None])[0])
+        if not recipe:
+            recipe = {"intent": "lint", "task": task_id}
 
     runway_payload = {
         "open": bool(runway_open),
@@ -6119,15 +6342,71 @@ def handle_batch(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
 
 def handle_history(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
     history = OperationHistory(storage_dir=Path(manager.tasks_dir))
+    stream = str(data.get("stream", "ops") or "ops").strip().lower()
+    if stream not in {"ops", "audit"}:
+        return error_response("history", "INVALID_STREAM", "stream должен быть ops|audit")
     limit = int(data.get("limit", 20) or 20)
-    ops = history.operations[-max(0, limit):]
+    limit = max(0, min(limit, 500))
+
+    task_filter = data.get("task") or data.get("task_id") or data.get("filter_task")
+    if task_filter is not None:
+        err = validate_task_id(task_filter)
+        if err:
+            return error_response("history", "INVALID_TASK", err)
+        task_filter = str(task_filter)
+
+    try:
+        intents = _normalize_filter_list(data.get("intents"))
+        paths = _normalize_filter_list(data.get("paths"))
+    except ValueError:
+        return error_response("history", "INVALID_FILTER", "intents/paths должны быть массивом строк")
+
+    def _extract_paths(payload: Any) -> List[str]:
+        found: List[str] = []
+
+        def walk(node: Any, depth: int) -> None:
+            if depth > 5:
+                return
+            if isinstance(node, dict):
+                raw_path = node.get("path")
+                if isinstance(raw_path, str):
+                    text = raw_path.strip()
+                    if text:
+                        found.append(text)
+                for value in node.values():
+                    walk(value, depth + 1)
+                return
+            if isinstance(node, list):
+                for value in node[:50]:
+                    walk(value, depth + 1)
+
+        walk(payload, 0)
+        return _dedupe_strs(found)
+
+    source_ops = list(history.audit_operations if stream == "audit" else history.operations)
+    filtered: List[Any] = []
+    for op in source_ops:
+        if task_filter and str(getattr(op, "task_id", "") or "") != task_filter:
+            continue
+        if intents and str(getattr(op, "intent", "") or "") not in intents:
+            continue
+        if paths:
+            op_paths = _extract_paths(getattr(op, "data", {}) or {})
+            if not any(p in paths for p in op_paths):
+                continue
+        filtered.append(op)
+    ops = filtered[-max(0, limit):]
     return AIResponse(
         success=True,
         intent="history",
         result={
+            "stream": stream,
+            "task": task_filter or None,
+            "intents": intents or None,
+            "paths": paths or None,
             "operations": [op.to_dict() for op in ops],
-            "can_undo": history.can_undo(),
-            "can_redo": history.can_redo(),
+            "can_undo": history.can_undo() if stream == "ops" else False,
+            "can_redo": history.can_redo() if stream == "ops" else False,
         },
     )
 
@@ -6135,6 +6414,9 @@ def handle_history(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
 def handle_delta(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
     """Return operations since a given operation id (delta updates for agents)."""
     history = OperationHistory(storage_dir=Path(manager.tasks_dir))
+    stream = str(data.get("stream", "ops") or "ops").strip().lower()
+    if stream not in {"ops", "audit"}:
+        return error_response("delta", "INVALID_STREAM", "stream должен быть ops|audit")
     since = str(data.get("since") or data.get("since_operation_id") or data.get("since_id") or "").strip()
     task_filter = data.get("task") or data.get("task_id") or data.get("filter_task")
     if task_filter is not None:
@@ -6151,8 +6433,35 @@ def handle_delta(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
     include_undone = bool(data.get("include_undone", True))
     include_details = bool(data.get("include_details", False))
     include_snapshot = bool(data.get("include_snapshot", False))
+    try:
+        intents = _normalize_filter_list(data.get("intents"))
+        paths = _normalize_filter_list(data.get("paths"))
+    except ValueError:
+        return error_response("delta", "INVALID_FILTER", "intents/paths должны быть массивом строк")
 
-    ops = list(history.operations or [])
+    def _extract_paths(payload: Any) -> List[str]:
+        found: List[str] = []
+
+        def walk(node: Any, depth: int) -> None:
+            if depth > 5:
+                return
+            if isinstance(node, dict):
+                raw_path = node.get("path")
+                if isinstance(raw_path, str):
+                    text = raw_path.strip()
+                    if text:
+                        found.append(text)
+                for value in node.values():
+                    walk(value, depth + 1)
+                return
+            if isinstance(node, list):
+                for value in node[:50]:
+                    walk(value, depth + 1)
+
+        walk(payload, 0)
+        return _dedupe_strs(found)
+
+    ops = list(history.audit_operations if stream == "audit" else history.operations)
     start_idx = 0
     if since:
         found = next((idx for idx, op in enumerate(ops) if getattr(op, "id", None) == since), None)
@@ -6169,6 +6478,10 @@ def handle_delta(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
     sliced = ops[start_idx:]
     if task_filter:
         sliced = [op for op in sliced if str(getattr(op, "task_id", "") or "") == task_filter]
+    if intents:
+        sliced = [op for op in sliced if str(getattr(op, "intent", "") or "") in intents]
+    if paths:
+        sliced = [op for op in sliced if any(p in paths for p in _extract_paths(getattr(op, "data", {}) or {}))]
     if not include_undone:
         sliced = [op for op in sliced if not bool(getattr(op, "undone", False))]
     has_more = bool(limit and len(sliced) > limit)
@@ -6204,15 +6517,18 @@ def handle_delta(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         success=True,
         intent="delta",
         result={
+            "stream": stream,
             "since": since or None,
             "task": task_filter or None,
+            "intents": intents or None,
+            "paths": paths or None,
             "latest_id": latest_id,
             "include_details": include_details,
             "include_snapshot": include_snapshot,
             "operations": operations,
             "has_more": has_more,
-            "can_undo": history.can_undo(),
-            "can_redo": history.can_redo(),
+            "can_undo": history.can_undo() if stream == "ops" else False,
+            "can_redo": history.can_redo() if stream == "ops" else False,
         },
     )
 
@@ -6569,11 +6885,21 @@ def process_intent(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             err_resp.context.update(ctx_add or {})
             return err_resp
 
-    # History tracking (undo/redo + delta): capture *before* snapshots for mutations.
+    def _is_preview_request(intent_name: str, payload_obj: Dict[str, Any]) -> bool:
+        if bool(payload_obj.get("dry_run", False)):
+            return True
+        if intent_name == "close_task" and not bool(payload_obj.get("apply", False)):
+            return True
+        return False
+
+    is_preview = _is_preview_request(intent, payload)
+    wants_audit = bool(payload.get("audit", False))
+
+    # History tracking (undo/redo + delta + optional audit): capture *before* snapshots for real mutations only.
     history = OperationHistory(storage_dir=Path(manager.tasks_dir))
     task_id = payload.get("task") or payload.get("plan")
 
-    if expected_revision is not None and intent in _TARGETED_MUTATING_INTENTS and task_id:
+    if expected_revision is not None and intent in _TARGETED_MUTATING_INTENTS and task_id and not is_preview:
         norm_err = validate_task_id(task_id)
         if not norm_err:
             current_detail = manager.load_task(str(task_id), skip_sync=True)
@@ -6589,7 +6915,7 @@ def process_intent(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
 
     task_file: Optional[Path] = None
     before_snapshot_id: Optional[str] = None
-    if intent in _MUTATING_INTENTS and task_id and not bool(payload.get("dry_run", False)):
+    if intent in _MUTATING_INTENTS and task_id and not is_preview:
         norm = validate_task_id(task_id)
         if norm is None:
             # Best-effort: domain might be present, otherwise infer from disk.
@@ -6612,7 +6938,46 @@ def process_intent(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         resp.context = dict(resp.context or {})
         resp.context.update(ctx_add)
 
-    if intent in _MUTATING_INTENTS and resp.success and not bool(payload.get("dry_run", False)):
+    try:
+        focus_id_for_suggestions = None
+        if isinstance(resp.context, dict):
+            focus_id_for_suggestions = resp.context.get("task_id")
+        if not focus_id_for_suggestions:
+            focus_id_for_suggestions = payload.get("task") or payload.get("plan")
+        focus_payload: Optional[Dict[str, Any]] = None
+        if focus_id_for_suggestions and validate_task_id(focus_id_for_suggestions) is None:
+            detail = manager.load_task(str(focus_id_for_suggestions), skip_sync=True)
+            if detail:
+                focus_payload = {
+                    "id": str(getattr(detail, "id", "") or ""),
+                    "kind": str(getattr(detail, "kind", "task") or "task"),
+                    "revision": int(getattr(detail, "revision", 0) or 0),
+                }
+        resp.suggestions = _finalize_suggestions(list(resp.suggestions or []), focus=focus_payload)
+    except Exception:
+        pass
+
+    if intent in _MUTATING_INTENTS and is_preview and wants_audit:
+        try:
+            history_task_id = str(task_id) if task_id else None
+            history_payload = dict(payload)
+            op = history.record(
+                intent=intent,
+                task_id=history_task_id,
+                data=history_payload,
+                task_file=None,
+                result=resp.to_dict(),
+                stream="audit",
+                effect="read",
+                take_snapshot=False,
+            )
+            if op and getattr(op, "id", None):
+                resp.meta = dict(resp.meta or {})
+                resp.meta.setdefault("audit_operation_id", str(op.id))
+        except Exception:
+            pass
+
+    if intent in _MUTATING_INTENTS and resp.success and not is_preview:
         try:
             history_task_id = str(task_id) if task_id else None
             history_task_file = task_file
@@ -6634,6 +6999,8 @@ def process_intent(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
                 data=history_payload,
                 task_file=history_task_file,
                 result=resp.to_dict(),
+                stream="ops",
+                effect="write",
                 before_snapshot_id=before_snapshot_id,
                 take_snapshot=False,
             )

@@ -25,6 +25,7 @@ from core.desktop.devtools.interface.tasks_dir_resolver import (
 MAX_HISTORY_SIZE = 100  # Maximum operations to keep
 SNAPSHOT_DIR = ".snapshots"
 HISTORY_FILE = ".history.json"
+AUDIT_FILE = ".audit.json"
 
 
 @dataclass
@@ -36,6 +37,8 @@ class Operation:
     intent: str
     task_id: Optional[str]
     data: Dict[str, Any]
+    stream: str = "ops"  # "ops" (undoable writes) or "audit" (preview/read trace)
+    effect: str = "write"  # "write" or "read"
     task_file: Optional[str] = None  # relative to tasks_dir (supports domain paths)
     snapshot_id: Optional[str] = None  # Before operation (for undo)
     after_snapshot_id: Optional[str] = None  # After operation (for redo)
@@ -56,6 +59,8 @@ class Operation:
             "timestamp": self.timestamp,
             "intent": self.intent,
             "task_id": self.task_id,
+            "stream": self.stream,
+            "effect": self.effect,
             "task_file": self.task_file,
             "undone": self.undone,
             "has_result": self.result is not None,
@@ -69,6 +74,8 @@ class Operation:
             payload["task_id"] = payload.pop("step_id")
         if "task_file" not in payload and "step_file" in payload:
             payload["task_file"] = payload.pop("step_file")
+        payload.setdefault("stream", "ops")
+        payload.setdefault("effect", "write")
         return cls(**payload)
 
 
@@ -79,11 +86,13 @@ class OperationHistory:
     storage_dir: Path
     operations: List[Operation] = field(default_factory=list)
     current_index: int = -1  # Points to last executed operation
+    audit_operations: List[Operation] = field(default_factory=list)
 
     def __post_init__(self):
         self.storage_dir = Path(self.storage_dir)
         self._ensure_dirs()
         self._load()
+        self._load_audit()
 
     def _ensure_dirs(self) -> None:
         """Ensure storage directories exist."""
@@ -93,6 +102,10 @@ class OperationHistory:
     @property
     def _history_path(self) -> Path:
         return self.storage_dir / HISTORY_FILE
+
+    @property
+    def _audit_path(self) -> Path:
+        return self.storage_dir / AUDIT_FILE
 
     @property
     def _snapshots_dir(self) -> Path:
@@ -109,6 +122,18 @@ class OperationHistory:
                 self.operations = []
                 self.current_index = -1
 
+    def _load_audit(self) -> None:
+        """Load audit trail from disk (non-undoable preview/read operations)."""
+        if self._audit_path.exists():
+            try:
+                data = json.loads(self._audit_path.read_text(encoding="utf-8"))
+                ops = data.get("operations", [])
+                if not isinstance(ops, list):
+                    raise ValueError("operations must be a list")
+                self.audit_operations = [Operation.from_dict(op) for op in ops]
+            except Exception:
+                self.audit_operations = []
+
     def _save(self) -> None:
         """Save history to disk."""
         data = {
@@ -121,10 +146,18 @@ class OperationHistory:
             encoding="utf-8"
         )
 
-    def _generate_id(self) -> str:
+    def _save_audit(self) -> None:
+        """Save audit trail to disk."""
+        data = {
+            "operations": [op.to_dict() for op in self.audit_operations],
+            "updated_at": datetime.now().isoformat(),
+        }
+        self._audit_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _generate_id(self, *, stream: str, seq: int) -> str:
         """Generate unique operation ID."""
         return hashlib.sha256(
-            f"{time.time()}-{len(self.operations)}".encode()
+            f"{stream}:{time.time()}-{seq}".encode()
         ).hexdigest()[:12]
 
     def _create_snapshot(self, task_file: Path) -> Optional[str]:
@@ -178,6 +211,8 @@ class OperationHistory:
         task_file: Optional[Path] = None,
         result: Optional[Dict[str, Any]] = None,
         *,
+        stream: str = "ops",
+        effect: str = "write",
         before_snapshot_id: Optional[str] = None,
         take_snapshot: bool = True,
     ) -> Operation:
@@ -193,6 +228,30 @@ class OperationHistory:
         Returns:
             The recorded operation
         """
+        stream_norm = str(stream or "ops").strip().lower()
+        if stream_norm not in {"ops", "audit"}:
+            stream_norm = "ops"
+        if stream_norm == "audit":
+            # Audit trail is non-undoable and snapshot-free by design.
+            operation = Operation(
+                id=self._generate_id(stream="audit", seq=len(self.audit_operations)),
+                timestamp=time.time(),
+                intent=intent,
+                task_id=task_id,
+                data=data,
+                stream="audit",
+                effect=str(effect or "read").strip().lower() or "read",
+                task_file=None,
+                snapshot_id=None,
+                result=result,
+                undone=False,
+            )
+            self.audit_operations.append(operation)
+            if len(self.audit_operations) > MAX_HISTORY_SIZE:
+                self.audit_operations = self.audit_operations[-MAX_HISTORY_SIZE:]
+            self._save_audit()
+            return operation
+
         snapshot_id = before_snapshot_id
         task_file_rel: Optional[str] = None
         if task_file:
@@ -209,11 +268,13 @@ class OperationHistory:
 
         # Create operation
         operation = Operation(
-            id=self._generate_id(),
+            id=self._generate_id(stream="ops", seq=len(self.operations)),
             timestamp=time.time(),
             intent=intent,
             task_id=task_id,
             data=data,
+            stream="ops",
+            effect=str(effect or "write").strip().lower() or "write",
             task_file=task_file_rel,
             snapshot_id=snapshot_id,
             result=result,
@@ -367,6 +428,11 @@ class OperationHistory:
         start = max(0, len(self.operations) - limit)
         return self.operations[start:]
 
+    def list_recent_audit(self, limit: int = 10) -> List[Operation]:
+        """List recent audit operations."""
+        start = max(0, len(self.audit_operations) - limit)
+        return self.audit_operations[start:]
+
     def clear(self) -> None:
         """Clear all history."""
         self.operations = []
@@ -377,6 +443,8 @@ class OperationHistory:
             snapshot.unlink(missing_ok=True)
 
         self._save()
+        self.audit_operations = []
+        self._save_audit()
 
 
 def get_global_storage_dir() -> Path:
