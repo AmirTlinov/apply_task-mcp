@@ -85,3 +85,12 @@ class TestFocusAndRadarTools:
         assert "task" in props
         assert "plan" in props
         assert "limit" in props
+
+    def test_context_pack_schema_accepts_task_or_plan(self):
+        schema = _tool("tasks_context_pack")["inputSchema"]
+        assert schema["type"] == "object"
+        props = schema["properties"]
+        assert "task" in props
+        assert "plan" in props
+        assert "delta_limit" in props
+        assert "max_chars" in props

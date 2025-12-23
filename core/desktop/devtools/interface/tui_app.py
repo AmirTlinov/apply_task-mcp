@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """TUI application - TaskTrackerTUI class and cmd_tui command."""
 
+import json
 import os
 import re
 import shlex
@@ -58,6 +59,7 @@ from core.desktop.devtools.interface.tui_detail_tree import (
 from core.desktop.devtools.interface.tui_settings_panel import render_settings_panel
 from core.desktop.devtools.interface.tui_status import build_status_text
 from core.desktop.devtools.interface.tui_footer import build_footer_text
+from core.desktop.devtools.interface.intent_api import handle_handoff
 from core.desktop.devtools.interface.tasks_dir_resolver import (
     get_tasks_dir_for_project,
     migrate_legacy_github_namespaces,
@@ -3436,6 +3438,44 @@ class TaskTrackerTUI(ClipboardMixin, CheckpointMixin, EditingMixin, DisplayMixin
         if not detail:
             return None
         return detail.id, (detail.domain or domain), detail
+
+    def export_handoff(self) -> None:
+        """Export handoff snapshot for the current task/plan (copy + file)."""
+        target = self._command_palette_target()
+        if not target:
+            self.set_status_message(self._t("CMD_PALETTE_NO_TASK"), ttl=4)
+            return
+        task_id, domain, detail = target
+        payload = {"intent": "handoff", "task": task_id}
+        if str(getattr(detail, "kind", "task") or "task") == "plan":
+            payload = {"intent": "handoff", "plan": task_id}
+        resp = handle_handoff(self.manager, payload)
+        if not resp.success:
+            msg = resp.error_message or self._t("STATUS_MESSAGE_HANDOFF_FAILED", error=resp.error_code or "failed")
+            self.set_status_message(msg, ttl=6)
+            return
+        snapshot = resp.result or {}
+        text = json.dumps(snapshot, ensure_ascii=False, indent=2)
+
+        export_root = Path(getattr(self, "tasks_dir", Path("."))) / ".handoff"
+        try:
+            export_root.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            export_root = Path(".")
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        export_path = export_root / f"handoff-{task_id}-{stamp}.json"
+        try:
+            export_path.write_text(text, encoding="utf-8")
+        except Exception as exc:
+            msg = self._t("STATUS_MESSAGE_HANDOFF_FAILED", error=str(exc)[:80])
+            self.set_status_message(msg, ttl=6)
+            return
+
+        copied = self._copy_to_clipboard(text)
+        if copied:
+            self.set_status_message(self._t("STATUS_MESSAGE_HANDOFF_EXPORTED", path=str(export_path)), ttl=5)
+        else:
+            self.set_status_message(self._t("STATUS_MESSAGE_HANDOFF_SAVED", path=str(export_path)), ttl=5)
 
     def _open_task_text_editor(self, context: str) -> None:
         """Open a multiline editor for a task-level text field."""

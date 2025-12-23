@@ -314,6 +314,14 @@ def _truncate_utf8(text: str, *, max_bytes: int) -> Tuple[str, bool, int]:
     return truncated, True, original
 
 
+def _json_bytes(value: Any) -> int:
+    try:
+        raw = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        return len(raw)
+    except Exception:
+        return 0
+
+
 def _apply_radar_budget(result: Dict[str, Any], *, max_chars: int) -> None:
     """Enforce a hard output budget for Radar View (agent-friendly, compact-by-default).
 
@@ -321,13 +329,6 @@ def _apply_radar_budget(result: Dict[str, Any], *, max_chars: int) -> None:
     deterministic: it applies reductions in a stable order and never removes the
     main Radar keys (now/why/verify/next/blockers/open_checkpoints).
     """
-
-    def _json_bytes(value: Any) -> int:
-        try:
-            raw = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-            return len(raw)
-        except Exception:
-            return 0
 
     max_bytes = int(max_chars)
     if max_bytes <= 0:
@@ -402,6 +403,76 @@ def _apply_radar_budget(result: Dict[str, Any], *, max_chars: int) -> None:
             result.update(minimal)
 
     used = _json_bytes(result)
+    result["budget"] = {"max_chars": int(max_chars), "used_chars": int(used), "truncated": bool(truncated or used > max_bytes)}
+
+
+def _apply_context_pack_budget(result: Dict[str, Any], *, max_chars: int) -> None:
+    """Enforce a hard output budget for context_pack (radar + delta)."""
+    max_bytes = int(max_chars)
+    if max_bytes <= 0:
+        return
+
+    truncated = False
+    if _json_bytes(result) > max_bytes:
+        truncated = True
+        delta = result.get("delta")
+        if isinstance(delta, dict):
+            ops = delta.get("operations")
+            if isinstance(ops, list):
+                for op in ops:
+                    if isinstance(op, dict):
+                        op.pop("snapshot", None)
+                delta["include_snapshot"] = False
+
+            if _json_bytes(result) > max_bytes and isinstance(ops, list):
+                keep = min(len(ops), 3)
+                delta["operations"] = list(ops)[:keep]
+
+            if _json_bytes(result) > max_bytes and isinstance(delta.get("operations"), list):
+                compact_ops = []
+                for op in list(delta.get("operations") or []):
+                    if not isinstance(op, dict):
+                        continue
+                    compact_ops.append(
+                        {
+                            key: op.get(key)
+                            for key in ("id", "timestamp", "intent", "task_id", "undone", "has_result")
+                            if key in op
+                        }
+                    )
+                delta["operations"] = compact_ops
+                delta["include_details"] = False
+
+            if _json_bytes(result) > max_bytes:
+                result["delta"] = {"operations": [], "truncated": True}
+
+        if _json_bytes(result) > max_bytes:
+            result.pop("radar_budget", None)
+            _apply_radar_budget(result, max_chars=max_bytes)
+
+    result.pop("budget", None)
+    used = _json_bytes(result)
+    if used > max_bytes:
+        focus = result.get("focus") if isinstance(result.get("focus"), dict) else {}
+        minimal = {
+            "focus": {
+                "id": str((focus or {}).get("id") or ""),
+                "kind": str((focus or {}).get("kind") or ""),
+                "revision": int((focus or {}).get("revision") or 0),
+                "domain": str((focus or {}).get("domain") or ""),
+                "title": _preview_text(str((focus or {}).get("title") or ""), max_len=80),
+            },
+            "now": {},
+            "why": {},
+            "verify": {"commands": [], "open_checkpoints": [], "ready": None, "needs": None},
+            "next": [],
+            "blockers": {"blocked": False, "blockers": [], "depends_on": [], "unresolved_depends_on": []},
+            "open_checkpoints": [],
+            "delta": {"operations": [], "truncated": True},
+        }
+        result.clear()
+        result.update(minimal)
+        used = _json_bytes(result)
     result["budget"] = {"max_chars": int(max_chars), "used_chars": int(used), "truncated": bool(truncated or used > max_bytes)}
 
 
@@ -1940,6 +2011,116 @@ def handle_handoff(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
     )
 
 
+def handle_context_pack(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
+    """Cold-start pack: Radar View + delta slice under a hard budget."""
+    focus = data.get("task") or data.get("plan")
+    focus_domain: str = ""
+    if focus is None:
+        last_id, last_domain = get_last_task()
+        focus = last_id
+        focus_domain = str(last_domain or "")
+    if not focus:
+        return error_response(
+            "context_pack",
+            "MISSING_ID",
+            "Не указан task/plan и нет focus",
+            recovery="Передай task=TASK-###|plan=PLAN-### или установи focus через focus_set.",
+            suggestions=_missing_target_suggestions(manager, want=["TASK-", "PLAN-"]),
+        )
+    err = validate_task_id(focus)
+    if err:
+        return error_response(
+            "context_pack",
+            "INVALID_ID",
+            err,
+            recovery="Проверь id через context(include_all=true) или установи focus через focus_set.",
+            suggestions=_missing_target_suggestions(manager, want=["TASK-", "PLAN-"]),
+        )
+    focus_id = str(focus)
+    detail = manager.load_task(focus_id, skip_sync=True)
+    if not detail:
+        return error_response(
+            "context_pack",
+            "NOT_FOUND",
+            f"Не найдено: {focus_id}",
+            recovery="Проверь id через context(include_all=true) или установи focus заново.",
+            suggestions=_missing_target_suggestions(manager, want="PLAN-" if focus_id.startswith("PLAN-") else "TASK-"),
+        )
+
+    try:
+        limit = int(data.get("limit", 3) or 3)
+    except Exception:
+        return error_response("context_pack", "INVALID_LIMIT", "limit должен быть числом")
+    limit = max(0, min(limit, 10))
+
+    try:
+        max_chars = int(data.get("max_chars", 12_000) or 12_000)
+    except Exception:
+        return error_response("context_pack", "INVALID_MAX_CHARS", "max_chars должен быть числом")
+    max_chars = max(1_000, min(max_chars, 50_000))
+
+    try:
+        delta_limit = int(data.get("delta_limit", 20) or 20)
+    except Exception:
+        return error_response("context_pack", "INVALID_DELTA_LIMIT", "delta_limit должен быть числом")
+    delta_limit = max(0, min(delta_limit, 500))
+
+    include_details = bool(data.get("include_details", False))
+    include_snapshot = bool(data.get("include_snapshot", False))
+    include_undone = bool(data.get("include_undone", True))
+    since = str(data.get("since") or data.get("since_operation_id") or data.get("since_id") or "").strip()
+
+    radar_payload, next_suggestions = _build_radar_payload(
+        manager,
+        detail,
+        focus_id,
+        focus_domain,
+        limit=limit,
+        max_chars=max_chars,
+    )
+    _apply_radar_budget(radar_payload, max_chars=max_chars)
+    radar_budget = radar_payload.pop("budget", None)
+
+    delta_resp = handle_delta(
+        manager,
+        {
+            "since": since or None,
+            "task": focus_id,
+            "limit": delta_limit,
+            "include_details": include_details,
+            "include_snapshot": include_snapshot,
+            "include_undone": include_undone,
+        },
+    )
+    if not delta_resp.success:
+        return AIResponse(
+            success=False,
+            intent="context_pack",
+            result={"radar": radar_payload, "radar_budget": radar_budget},
+            context={"task_id": focus_id},
+            suggestions=next_suggestions,
+            warnings=list(delta_resp.warnings or []),
+            meta=dict(delta_resp.meta or {}),
+            error_code=str(delta_resp.error_code or "DELTA_FAILED"),
+            error_message=str(delta_resp.error_message or "delta failed"),
+            error_recovery=delta_resp.error_recovery,
+        )
+
+    payload: Dict[str, Any] = dict(radar_payload)
+    payload["delta"] = delta_resp.result or {}
+    if radar_budget is not None:
+        payload["radar_budget"] = radar_budget
+    _apply_context_pack_budget(payload, max_chars=max_chars)
+
+    return AIResponse(
+        success=True,
+        intent="context_pack",
+        result=payload,
+        context={"task_id": focus_id},
+        suggestions=next_suggestions,
+    )
+
+
 def handle_resume(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
     focus = data.get("task") or data.get("plan")
     if focus is None:
@@ -3466,13 +3647,14 @@ def handle_evidence_capture(manager: TaskManager, data: Dict[str, Any]) -> AIRes
         artifacts_raw = data.get("items")
     attachments_raw = data.get("attachments")
     checks_raw = data.get("checks") or data.get("verification_checks")
+    verification_outcome = data.get("verification_outcome")
 
-    if artifacts_raw is None and attachments_raw is None and checks_raw is None:
+    if artifacts_raw is None and attachments_raw is None and checks_raw is None and verification_outcome is None:
         return error_response(
             "evidence_capture",
             "MISSING_EVIDENCE",
             "Нужно передать хотя бы одно из: artifacts|attachments|checks",
-            recovery="Передай artifacts для cmd_output/url/diff или attachments/checks как в verify (без confirmed).",
+            recovery="Передай artifacts для cmd_output/url/diff или attachments/checks/verification_outcome как в verify (без confirmed).",
             suggestions=_path_help_suggestions(task_id),
             result={"task_id": task_id, "path": path},
         )
@@ -3618,7 +3800,12 @@ def handle_evidence_capture(manager: TaskManager, data: Dict[str, Any]) -> AIRes
                 result={"artifact": item},
             )
 
-    if checks_added or attachments_added or artifacts_written:
+    outcome_updated = False
+    if verification_outcome is not None:
+        st.verification_outcome = str(verification_outcome or "").strip()
+        outcome_updated = True
+
+    if checks_added or attachments_added or artifacts_written or outcome_updated:
         manager.save_task(task, skip_sync=True)
 
     updated = manager.load_task(task_id, task.domain, skip_sync=True) or task
@@ -3633,6 +3820,7 @@ def handle_evidence_capture(manager: TaskManager, data: Dict[str, Any]) -> AIRes
                 "artifacts_written": artifacts_written,
                 "attachments_added": attachments_added,
                 "checks_added": checks_added,
+                "verification_outcome": str(verification_outcome or "").strip() if verification_outcome is not None else None,
             },
             "step": step_to_dict(st1, path=path, compact=False) if st1 else None,
             "task": task_to_dict(updated or task, include_steps=True, compact=False),
@@ -5092,6 +5280,29 @@ def handle_complete(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
     override_reason = str(data.get("override_reason", "") or "").strip()
     if force and not override_reason:
         return error_response("complete", "MISSING_OVERRIDE_REASON", "override_reason обязателен при force=true")
+
+    detail = manager.load_task(task_id, skip_sync=True)
+    if not detail:
+        return error_response(
+            "complete",
+            "NOT_FOUND",
+            f"Не найдено: {task_id}",
+            recovery="Проверь id через context(include_all=true).",
+            suggestions=_missing_target_suggestions(manager, want="PLAN-" if task_id.startswith("PLAN-") else "TASK-"),
+            result={"task": task_id},
+        )
+    if status == "DONE" and not force:
+        all_items = manager.repo.list("", skip_sync=True)
+        report = lint_item(manager, detail, all_items)
+        errors = [i.to_dict() for i in list(getattr(report, "issues", []) or []) if i.severity == "error"]
+        if errors:
+            return error_response(
+                "complete",
+                "LINT_ERRORS_BLOCKING",
+                "Нельзя завершить: есть lint-ошибки",
+                recovery="Исправь lint errors или используй force=true с override_reason.",
+                result={"task": task_id, "lint": report.to_dict(), "blocking_errors": errors},
+            )
     ok, error = manager.update_task_status(task_id, status, domain=str(data.get("domain", "") or ""), force=force)
     if not ok:
         code = (error or {}).get("code", "FAILED")
@@ -5552,6 +5763,7 @@ INTENT_HANDLERS: Dict[str, Callable[[TaskManager, Dict[str, Any]], AIResponse]] 
     "focus_clear": handle_focus_clear,
     "radar": handle_radar,
     "handoff": handle_handoff,
+    "context_pack": handle_context_pack,
     "resume": handle_resume,
     "lint": handle_lint,
     "templates_list": handle_templates_list,
@@ -5901,6 +6113,7 @@ __all__ = [
     "handle_context",
     "handle_radar",
     "handle_handoff",
+    "handle_context_pack",
     "handle_resume",
     "handle_lint",
     "handle_templates_list",

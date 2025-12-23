@@ -53,6 +53,14 @@ def build_status_text(tui) -> FormattedText:
             return None
         return NotImplemented
 
+    def handoff_handler(event):
+        if event.event_type == MouseEventType.MOUSE_UP and event.button == MouseButton.LEFT:
+            export_handoff = getattr(tui, "export_handoff", None)
+            if callable(export_handoff):
+                export_handoff()
+            return None
+        return NotImplemented
+
     parts: List[Tuple[str, str]] = []
     project_mode = bool(getattr(tui, "project_mode", True))
     if getattr(tui, "detail_mode", False) or not project_mode:
@@ -158,9 +166,25 @@ def build_status_text(tui) -> FormattedText:
     except Exception:
         term_width = 120
     current_len = sum(len(text) for _, text, *rest in parts)
+    show_handoff = False
+    target_fn = getattr(tui, "_command_palette_target", None)
+    if callable(target_fn):
+        try:
+            show_handoff = bool(target_fn())
+        except Exception:
+            show_handoff = False
+    if getattr(tui, "project_mode", False) and not getattr(tui, "detail_mode", False):
+        show_handoff = False
     settings_symbol = tui._t("BTN_SETTINGS")
-    needed = max(1, term_width - current_len - len(settings_symbol))
+    handoff_symbol = tui._t("BTN_HANDOFF")
+    extra = len(settings_symbol)
+    if show_handoff:
+        extra += len(handoff_symbol) + 1
+    needed = max(1, term_width - current_len - extra)
     parts.append(("class:text", " " * needed))
+    if show_handoff:
+        parts.append(("class:header.bigicon", handoff_symbol, handoff_handler))
+        parts.append(("class:text", " "))
     parts.append(("class:header.bigicon", settings_symbol, settings_handler))
     return FormattedText(parts)
 

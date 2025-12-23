@@ -2,7 +2,7 @@
  * Task Detail Modal - Full task view with subtask tree and actions
  */
 
-import { useState, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ChevronLeft,
@@ -54,6 +54,7 @@ import {
   updateTaskStatus as apiUpdateTaskStatus,
   deleteTask as apiDeleteTask,
   mirrorList,
+  getHandoff,
   setStepCompleted,
   addStepNote,
   setStepBlocked,
@@ -310,6 +311,7 @@ export function TaskDetailView({
   const [isCompletingSubtask, setIsCompletingSubtask] = useState(false);
   const [taskDeleteOpen, setTaskDeleteOpen] = useState(false);
   const [isDeletingTask, setIsDeletingTask] = useState(false);
+  const [isExportingHandoff, setIsExportingHandoff] = useState(false);
   const [deleteDialog, setDeleteDialog] = useState<{ path: string; title: string; kind: "step" | "task" } | null>(null);
   const [isDeletingSubtask, setIsDeletingSubtask] = useState(false);
   const taskQueryKey = ["task", taskId, domain, namespace] as const;
@@ -364,6 +366,32 @@ export function TaskDetailView({
     // or just let state initialization handle it (which resets only on mount).
     // For now, we keep manual expansion state separate.
   });
+
+  const handleExportHandoff = useCallback(async () => {
+    if (!task?.id) return;
+    setIsExportingHandoff(true);
+    try {
+      const resp = await getHandoff({ taskId: task.id });
+      if (!resp.success || !resp.data) {
+        throw new Error(resp.error || "Failed to export handoff");
+      }
+      const blob = new Blob([JSON.stringify(resp.data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `apply-task-handoff-${task.id}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      toast.success("Handoff exported");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to export handoff";
+      toast.error(message);
+    } finally {
+      setIsExportingHandoff(false);
+    }
+  }, [task?.id]);
 
   const treeNodes = useMemo(() => buildTreeNodes(task?.steps ?? []), [task?.steps]);
   const { nodeMap, parentMap } = useMemo(() => buildNodeIndex(treeNodes), [treeNodes]);
@@ -1041,6 +1069,18 @@ export function TaskDetailView({
                 {task.title}
               </h1>
             </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleExportHandoff}
+              disabled={isExportingHandoff}
+              aria-label="Export handoff"
+            >
+              <NotesIcon className="mr-2 h-4 w-4" />
+              {isExportingHandoff ? "Exporting..." : "Handoff"}
+            </Button>
           </div>
         </div>
       </div>

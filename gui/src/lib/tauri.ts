@@ -203,6 +203,24 @@ export async function resumeEntity(id: string): Promise<{ success: boolean; plan
   };
 }
 
+export async function getHandoff(params: {
+  taskId?: string;
+  planId?: string;
+  limit?: number;
+  maxChars?: number;
+}): Promise<{ success: boolean; data?: Record<string, unknown>; error?: string }> {
+  const resp = await aiIntent<Record<string, unknown>>("handoff", {
+    task: params.taskId,
+    plan: params.planId,
+    limit: params.limit,
+    max_chars: params.maxChars,
+  });
+  if (!resp.success) {
+    return { success: false, error: extractAIError(resp) || "Failed to export handoff" };
+  }
+  return { success: true, data: resp.result ?? {} };
+}
+
 export async function createEntity(params: {
   title: string;
   kind: "plan" | "task";

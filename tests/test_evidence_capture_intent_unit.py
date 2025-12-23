@@ -71,3 +71,26 @@ def test_evidence_capture_writes_artifacts_and_redacts_secrets(tmp_path: Path):
     assert "<redacted>" in url.external_uri
     assert token not in url.external_uri
 
+
+def test_evidence_capture_sets_verification_outcome(tmp_path: Path):
+    tasks_dir = tmp_path / ".tasks"
+    tasks_dir.mkdir()
+    manager = TaskManager(tasks_dir=tasks_dir)
+
+    step = Step(False, "Step", success_criteria=["c"], tests=["t"])
+    task = TaskDetail(id="TASK-001", title="Example", status="TODO", steps=[step])
+    manager.save_task(task, skip_sync=True)
+
+    resp = handle_evidence_capture(
+        manager,
+        {
+            "intent": "evidence_capture",
+            "task": "TASK-001",
+            "path": "s:0",
+            "verification_outcome": "manual-check",
+        },
+    )
+    assert resp.success is True
+
+    updated = manager.load_task("TASK-001", skip_sync=True)
+    assert updated.steps[0].verification_outcome == "manual-check"

@@ -3,7 +3,7 @@
 import subprocess
 from typing import TYPE_CHECKING, Optional
 
-from prompt_toolkit.clipboard import InMemoryClipboard
+from prompt_toolkit.clipboard import InMemoryClipboard, ClipboardData
 
 try:
     from prompt_toolkit.clipboard.pyperclip import PyperclipClipboard
@@ -99,6 +99,33 @@ class ClipboardMixin:
         buf.text = buf.text[:cursor] + text + buf.text[cursor:]
         buf.cursor_position = cursor + len(text)
         self.force_render()
+
+    def _copy_to_clipboard(self, text: str) -> bool:
+        """Copy text to clipboard (best-effort)."""
+        payload = str(text or "")
+        if not payload:
+            return False
+        clipboard = getattr(self, "clipboard", None)
+        if clipboard:
+            try:
+                clipboard.set_data(ClipboardData(payload))
+                return True
+            except Exception:
+                pass
+        commands = [
+            ["pbcopy"],
+            ["wl-copy"],
+            ["xclip", "-selection", "clipboard", "-in"],
+            ["clip.exe"],
+        ]
+        for cmd in commands:
+            try:
+                result = subprocess.run(cmd, input=payload, text=True, timeout=1)
+            except Exception:
+                continue
+            if result.returncode == 0:
+                return True
+        return False
 
 
 __all__ = ["ClipboardMixin"]

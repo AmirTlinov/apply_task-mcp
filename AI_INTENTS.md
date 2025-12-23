@@ -150,6 +150,20 @@ Notes:
 - `done`/`remaining` are capped lists (5 items) with counts + totals.
 - `max_chars` is enforced with the same budget rules as radar.
 
+### context_pack
+
+Cold-start pack: Radar View + delta slice under a hard budget (one call = orientation).
+
+```json
+{"intent":"context_pack","task":"TASK-001","delta_limit":20,"max_chars":12000}
+```
+
+Notes:
+- Returns the stable radar keys (`now/why/verify/next/blockers/open_checkpoints`) plus `delta`.
+- `delta` is metadata-only by default; use `include_details` or `include_snapshot` explicitly.
+- `since` mirrors `delta` semantics; invalid `since` returns `SINCE_NOT_FOUND`.
+- `budget` is enforced for the whole pack.
+
 ### context
 
 Get global context snapshot.
@@ -312,9 +326,10 @@ Capture evidence for a step without confirming checkpoints.
 This is the canonical way to attach:
 - artifacts: `cmd_output` / `diff` / `url` (stored under `<tasks_dir>/.artifacts/` when needed, referenced via `attachment.uri`)
 - plain `attachments[]` and/or `checks[]` (same shapes as in `verify`)
+- optional `verification_outcome`
 
 ```json
-{"intent":"evidence_capture","task":"TASK-001","path":"s:0","artifacts":[{"kind":"cmd_output","command":"pytest -q","stdout":"..."}]}
+{"intent":"evidence_capture","task":"TASK-001","path":"s:0","artifacts":[{"kind":"cmd_output","command":"pytest -q","stdout":"..."}],"verification_outcome":"pass"}
 ```
 
 ### progress
@@ -491,6 +506,9 @@ Set plan/task status (`TODO|ACTIVE|DONE`). For plans: requires checklist complet
 ```json
 {"intent":"complete","task":"TASK-001","status":"DONE","force":false}
 ```
+
+Notes:
+- Lint errors (`tasks_lint` severity=error) block `status=DONE` unless `force=true`.
 
 ### delete
 

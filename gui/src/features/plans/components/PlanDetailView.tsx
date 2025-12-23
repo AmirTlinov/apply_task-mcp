@@ -10,7 +10,7 @@ import {
   Trash2,
 } from "lucide-react";
 import type { Plan, TaskListItem } from "@/types/task";
-import { resumeEntity, listTasks, updatePlan, updateContract, editTask, verifyCheckpoint } from "@/lib/tauri";
+import { resumeEntity, listTasks, updatePlan, updateContract, editTask, verifyCheckpoint, getHandoff } from "@/lib/tauri";
 import { TaskTableView } from "@/features/tasks/components/TaskTableView";
 import { TaskPlanView } from "@/features/tasks/components/TaskPlanView";
 import { CheckpointMarks } from "@/components/common/CheckpointMarks";
@@ -60,6 +60,7 @@ export function PlanDetailView({
   onNewTask,
 }: PlanDetailViewProps) {
   const queryClient = useQueryClient();
+  const [isExportingHandoff, setIsExportingHandoff] = useState(false);
   const planQueryKey = useMemo(() => ["plan", planId] as const, [planId]);
 
   const planQuery = useQuery({
@@ -121,6 +122,32 @@ export function PlanDetailView({
   const criteriaOk = !!plan.criteria_confirmed || !!plan.criteria_auto_confirmed;
   const testsOk = !!plan.tests_confirmed || !!plan.tests_auto_confirmed;
 
+  const handleExportHandoff = async () => {
+    if (!plan?.id) return;
+    setIsExportingHandoff(true);
+    try {
+      const resp = await getHandoff({ planId: plan.id });
+      if (!resp.success || !resp.data) {
+        throw new Error(resp.error || "Failed to export handoff");
+      }
+      const blob = new Blob([JSON.stringify(resp.data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `apply-task-handoff-${plan.id}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      toast.success("Handoff exported");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to export handoff";
+      toast.error(message);
+    } finally {
+      setIsExportingHandoff(false);
+    }
+  };
+
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-background">
       <div className="border-b border-border bg-background px-[var(--density-page-pad)] py-3">
@@ -147,6 +174,16 @@ export function PlanDetailView({
           </div>
 
           <div className="flex items-center gap-2 text-xs font-semibold text-foreground-muted">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleExportHandoff}
+              disabled={isExportingHandoff}
+              aria-label="Export handoff"
+            >
+              <FileText className="mr-2 h-4 w-4" />
+              {isExportingHandoff ? "Exporting..." : "Handoff"}
+            </Button>
             <span className="rounded-full bg-background-muted px-2.5 py-1">
               {planCurrent}/{planStepsCount}
             </span>

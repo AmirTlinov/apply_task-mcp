@@ -1,6 +1,6 @@
 from core import Step, TaskDetail
 from core.desktop.devtools.application.task_manager import TaskManager
-from core.desktop.devtools.interface.intent_api import handle_progress, handle_verify
+from core.desktop.devtools.interface.intent_api import handle_progress, handle_verify, handle_radar, handle_evidence_capture
 from core.desktop.devtools.interface import evidence_collectors
 from core.evidence import Attachment, VerificationCheck
 
@@ -77,6 +77,51 @@ def test_handle_verify_extended_checkpoints_adds_evidence_refs(tmp_path):
     assert "reviewed" in updated_step.security_notes
     assert expected_check_digest in list(updated_step.security_evidence_refs or [])
     assert expected_attachment_digest in list(updated_step.security_evidence_refs or [])
+
+
+def test_radar_evidence_reflects_verify_and_capture(tmp_path):
+    tasks_dir = tmp_path / ".tasks"
+    tasks_dir.mkdir()
+    manager = TaskManager(tasks_dir=tasks_dir)
+
+    step = Step(False, "Step", success_criteria=["c"], tests=["t"])
+    task = TaskDetail(id="TASK-001", title="Example", status="TODO", steps=[step])
+    manager.save_task(task, skip_sync=True)
+
+    verify_resp = handle_verify(
+        manager,
+        {
+            "intent": "verify",
+            "task": "TASK-001",
+            "path": "s:0",
+            "checkpoints": {"criteria": {"confirmed": True}},
+            "checks": [{"kind": "command", "spec": "pytest -q", "outcome": "pass"}],
+            "attachments": [{"kind": "url", "external_uri": "https://example.com/report"}],
+            "verification_outcome": "pass",
+        },
+    )
+    assert verify_resp.success is True
+
+    radar = handle_radar(manager, {"intent": "radar", "task": "TASK-001"})
+    assert radar.success is True
+    evidence = radar.result["verify"]["evidence"]
+    assert evidence["verification_outcome"] == "pass"
+    assert evidence["checks"]["count"] >= 1
+    assert evidence["attachments"]["count"] >= 1
+
+    capture = handle_evidence_capture(
+        manager,
+        {
+            "intent": "evidence_capture",
+            "task": "TASK-001",
+            "path": "s:0",
+            "verification_outcome": "manual",
+        },
+    )
+    assert capture.success is True
+
+    radar2 = handle_radar(manager, {"intent": "radar", "task": "TASK-001"})
+    assert radar2.result["verify"]["evidence"]["verification_outcome"] == "manual"
 
 
 def test_progress_gating_respects_required_checkpoints(tmp_path):
