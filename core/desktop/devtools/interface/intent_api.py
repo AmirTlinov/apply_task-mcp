@@ -1425,7 +1425,11 @@ def generate_suggestions(manager: TaskManager, focus_id: Optional[str] = None) -
         if task and task.steps:
             items = _mirror_items_from_steps(list(getattr(task, "steps", []) or []))
             _normalize_mirror_progress(items)
-            now = next((i for i in items if i.get("status") == "in_progress"), items[0] if items else None)
+            now = next((i for i in items if i.get("status") == "in_progress"), None)
+            if not now:
+                now = next((i for i in items if i.get("status") == "pending"), None)
+            if not now and items:
+                now = items[0]
             if not now or not now.get("path"):
                 return []
             path = str(now.get("path") or "").strip()
@@ -1436,36 +1440,31 @@ def generate_suggestions(manager: TaskManager, focus_id: Optional[str] = None) -
             needs = _step_needs_for_completion(st) if st and not ready else []
             confirmable = {"criteria", "tests", "security", "perf", "docs"}
             missing_checkpoints = [n for n in needs if n in confirmable]
-            checkpoints_payload: Dict[str, Any] = {k: {"confirmed": True} for k in missing_checkpoints}
+            non_confirmable = [n for n in needs if n not in confirmable]
+            if non_confirmable:
+                return []
+            checkpoints_payload: Dict[str, Any] = {}
+            if missing_checkpoints:
+                checkpoints_payload = {k: {"confirmed": True} for k in missing_checkpoints}
+            else:
+                defaults: List[str] = []
+                if st and list(getattr(st, "success_criteria", []) or []):
+                    defaults.append("criteria")
+                if st and (list(getattr(st, "tests", []) or []) or bool(getattr(st, "tests_auto_confirmed", False))):
+                    defaults.append("tests")
+                if not defaults:
+                    defaults = ["criteria"]
+                checkpoints_payload = {k: {"confirmed": True} for k in _dedupe_strs(defaults)}
 
             # Radar suggestions are executable-by-shape: provide a canonical atomic batch skeleton
-            # for the common "did work → attach evidence → close step" loop.
-            if ready:
-                return [
-                    Suggestion(
-                        action="batch",
-                        target=path,
-                        reason="Золотой путь: приложи evidence и заверши шаг одной атомарной пачкой.",
-                        priority="high",
-                        params={
-                            "atomic": True,
-                            "task": focus_id,
-                            "expected_target_id": focus_id,
-                            "expected_kind": "task",
-                            "strict_targeting": True,
-                            "operations": [
-                                {"intent": "evidence_capture", "path": path, "artifacts": []},
-                                {"intent": "done", "path": path, "step_id": step_id},
-                            ],
-                        },
-                    )
-                ]
-
+            # for the common "confirm checkpoints → close step" loop.
+            if st and getattr(st, "completed", False):
+                return []
             return [
                 Suggestion(
                     action="batch",
                     target=path,
-                    reason="Золотой путь: приложи evidence, подтверди чекпоинты и заверши шаг одной атомарной пачкой.",
+                    reason="Золотой путь: подтверди чекпоинты и заверши шаг одной атомарной пачкой.",
                     priority="high",
                     params={
                         "atomic": True,
@@ -1474,7 +1473,6 @@ def generate_suggestions(manager: TaskManager, focus_id: Optional[str] = None) -
                         "expected_kind": "task",
                         "strict_targeting": True,
                         "operations": [
-                            {"intent": "evidence_capture", "path": path, "artifacts": []},
                             {
                                 "intent": "close_step",
                                 "path": path,
@@ -1779,7 +1777,11 @@ def _build_radar_payload(
     task = detail
     items = _mirror_items_from_steps(list(getattr(task, "steps", []) or []))
     _normalize_mirror_progress(items)
-    now = next((i for i in items if i.get("status") == "in_progress"), items[0] if items else None)
+    now = next((i for i in items if i.get("status") == "in_progress"), None)
+    if not now:
+        now = next((i for i in items if i.get("status") == "pending"), None)
+    if not now and items:
+        now = items[0]
     queue = _compute_checkpoint_status(task)
     queue_summary = {
         "pending": len(list(queue.get("pending", []) or [])),
@@ -2270,11 +2272,11 @@ def handle_lint(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             path = str(target.get("path") or "")
             ops: List[Dict[str, Any]] = []
             if code == "STEP_SUCCESS_CRITERIA_MISSING":
-                ops.append({"op": "set", "field": "success_criteria", "value": ["<define measurable outcome>"]})
+                ops.append({"op": "append", "field": "success_criteria", "value": "<define measurable outcome>"})
             if code == "STEP_TESTS_MISSING":
-                ops.append({"op": "set", "field": "tests", "value": ["<how to verify (cmd/test)>"]})
+                ops.append({"op": "append", "field": "tests", "value": "<how to verify (cmd/test)>"})
             if code == "STEP_BLOCKERS_MISSING":
-                ops.append({"op": "set", "field": "blockers", "value": ["<dependency/assumption>"]})
+                ops.append({"op": "append", "field": "blockers", "value": "<dependency/assumption>"})
             if ops:
                 suggestions.append(
                     Suggestion(
@@ -2292,7 +2294,11 @@ def handle_lint(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
                     target="tasks_patch",
                     reason="Добавь root success_criteria (иначе done будет заблокирован).",
                     priority="high",
-                    params={"task": focus_id, "kind": "task_detail", "ops": [{"op": "set", "field": "success_criteria", "value": ["<definition of done>"]}]},
+                    params={
+                        "task": focus_id,
+                        "kind": "task_detail",
+                        "ops": [{"op": "append", "field": "success_criteria", "value": "<definition of done>"}],
+                    },
                 )
             )
         elif code in {"INVALID_DEPENDENCIES", "CIRCULAR_DEPENDENCY", "DEPENDS_ON_INVALID"}:
@@ -3523,6 +3529,16 @@ def handle_verify(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
                 )
             except Exception:
                 pass
+
+            # Link any already captured evidence to this verification (golden path: capture → verify).
+            existing_checks = list(getattr(st, "verification_checks", []) or [])
+            existing_attachments = list(getattr(st, "attachments", []) or [])
+            evidence_digests.extend(
+                [str(getattr(c, "digest", "") or "").strip() for c in existing_checks if str(getattr(c, "digest", "") or "").strip()]
+            )
+            evidence_digests.extend(
+                [str(getattr(a, "digest", "") or "").strip() for a in existing_attachments if str(getattr(a, "digest", "") or "").strip()]
+            )
 
         # Tie evidence to the checkpoints confirmed by this call (evidence-first traceability).
         if evidence_digests:

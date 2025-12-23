@@ -186,11 +186,6 @@ class TaskFileParser:
         for idx, project_id in enumerate(step_project_ids):
             if project_id and idx < len(task.steps):
                 task.steps[idx].project_item_id = project_id
-        try:
-            if not task.status_manual and task.steps and task.calculate_progress() == 100 and not task.blocked:
-                task.status = "DONE"
-        except Exception:
-            pass
         if task.steps:
             changed = ensure_tree_ids(task.steps)
             if changed:

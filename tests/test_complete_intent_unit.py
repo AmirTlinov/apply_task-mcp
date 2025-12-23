@@ -28,6 +28,8 @@ def test_complete_allows_warnings(tmp_path):
 
     step = Step(False, "Step", success_criteria=["c"], tests=["t"])
     step.completed = True
+    step.criteria_confirmed = True
+    step.tests_confirmed = True
     task = TaskDetail(id="TASK-001", title="Example", status="TODO", steps=[step], success_criteria=["done"])
     manager.save_task(task, skip_sync=True)
 

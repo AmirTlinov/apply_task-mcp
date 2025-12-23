@@ -320,6 +320,11 @@ Shorthand:
 - `checks[]` accepts strings (`"pytest -q"`) → `{kind:"command", spec:"...", outcome:"info"}`
 - `attachments[]` accepts string paths or `{file_path:"..."}` → `{kind:"file", path:"..."}`
 
+Golden path (evidence-first):
+1) `evidence_capture` attaches artifacts/checks/outcome to the step.
+2) `verify` confirms checkpoints and links *all existing evidence* (captured + auto checks) to those checkpoints.
+3) `close_step` finalizes the step (atomic verify → done).
+
 Auto evidence (step only, best-effort):
 - When a checkpoint is confirmed, apply_task may append `checks` of kind `ci` (GitHub Actions) and/or `git` (HEAD state), deduped by `digest`.
 

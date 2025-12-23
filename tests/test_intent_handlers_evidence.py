@@ -120,6 +120,45 @@ def test_handle_verify_extended_checkpoints_adds_evidence_refs(tmp_path):
     assert expected_attachment_digest in list(updated_step.security_evidence_refs or [])
 
 
+def test_verify_links_existing_evidence_capture(tmp_path):
+    tasks_dir = tmp_path / ".tasks"
+    tasks_dir.mkdir()
+    manager = TaskManager(tasks_dir=tasks_dir)
+
+    step = Step(False, "Step", success_criteria=["c"], tests=["t"])
+    task = TaskDetail(id="TASK-001", title="Example", status="TODO", steps=[step])
+    manager.save_task(task, skip_sync=True)
+
+    capture = handle_evidence_capture(
+        manager,
+        {
+            "intent": "evidence_capture",
+            "task": "TASK-001",
+            "path": "s:0",
+            "attachments": [{"kind": "log", "path": "logs/test.log"}],
+            "checks": [{"kind": "command", "spec": "pytest -q", "outcome": "pass"}],
+        },
+    )
+    assert capture.success is True
+
+    verify = handle_verify(
+        manager,
+        {
+            "intent": "verify",
+            "task": "TASK-001",
+            "path": "s:0",
+            "checkpoints": {"criteria": {"confirmed": True}},
+        },
+    )
+    assert verify.success is True
+
+    updated = manager.load_task("TASK-001", skip_sync=True)
+    updated_step = updated.steps[0]
+    expected_check_digest = VerificationCheck.from_dict({"kind": "command", "spec": "pytest -q", "outcome": "pass"}).digest
+    expected_attachment_digest = Attachment.from_dict({"kind": "log", "path": "logs/test.log"}).digest
+    assert expected_check_digest in list(updated_step.criteria_evidence_refs or [])
+    assert expected_attachment_digest in list(updated_step.criteria_evidence_refs or [])
+
 def test_radar_evidence_reflects_verify_and_capture(tmp_path):
     tasks_dir = tmp_path / ".tasks"
     tasks_dir.mkdir()

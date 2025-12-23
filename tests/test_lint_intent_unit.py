@@ -27,6 +27,12 @@ def test_lint_task_reports_errors_and_suggestions(tmp_path):
 
     assert resp.result.get("links")
     assert any(s.action in {"patch", "context"} for s in (resp.suggestions or []))
+    patch = next((s for s in (resp.suggestions or []) if s.action == "patch"), None)
+    if patch:
+        ops = list((patch.params or {}).get("ops", []) or [])
+        for op in ops:
+            if op.get("op") != "unset":
+                assert isinstance(op.get("value"), str)
 
 
 def test_lint_plan_detects_plan_current_out_of_range(tmp_path):

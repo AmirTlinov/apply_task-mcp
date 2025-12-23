@@ -217,6 +217,11 @@ def _validate_root_step_ready_for_ok(task: TaskDetail, translator) -> Tuple[bool
         err = _validate_step_requirements(st, idx, translator)
         if err:
             return False, err
+        if not bool(getattr(st, "ready_for_completion", lambda: False)()):
+            return False, {
+                "code": "validation",
+                "message": translator("ERR_TASK_STEP_NOT_READY").format(idx=idx, title=st.title),
+            }
     return True, None
 
 
@@ -629,16 +634,6 @@ class TaskManager:
             migrated = ensure_tree_ids(task.steps)
             if migrated:
                 self.repo.save(task)
-        if task.steps:
-            prog = task.calculate_progress()
-            if not getattr(task, "status_manual", False) and prog == 100 and not task.blocked:
-                if _auto_done_allowed(task):
-                    if task.status != "DONE":
-                        task.status = "DONE"
-                        self.save_task(task)
-                elif task.status == "DONE":
-                    task.status = "ACTIVE"
-                    self.save_task(task)
         if not skip_sync:
             sync = self.sync_service
             if sync.enabled and task.project_item_id:
@@ -770,11 +765,6 @@ class TaskManager:
         self._maybe_auto_clean_done_tasks()
         tasks: List[TaskDetail] = self.repo.list(domain, skip_sync=skip_sync)
         for parsed in tasks:
-            if parsed.steps:
-                prog = parsed.calculate_progress()
-                if not getattr(parsed, "status_manual", False) and prog == 100 and not parsed.blocked and parsed.status != "DONE":
-                    parsed.status = "DONE"
-                    self.save_task(parsed, skip_sync=skip_sync)
             if not skip_sync:
                 sync = self.sync_service
                 if sync.enabled and parsed.project_item_id:
