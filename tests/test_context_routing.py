@@ -37,6 +37,7 @@ class ContextRoutingTests(unittest.TestCase):
         plan = manager.create_plan("Plan")
         manager.save_task(plan)
         task = manager.create_task("X", parent=plan.id, folder="phase1/api")
+        task.success_criteria = ["done"]
         task.steps.append(
             Step(
                 completed=True,

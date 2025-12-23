@@ -112,7 +112,11 @@ class TaskDetail:
         if self.blocked:
             self.status = "TODO"
         elif prog == 100:
-            self.status = "DONE"
+            # Guard against auto-DONE when root success_criteria are missing (lint invariants).
+            if str(getattr(self, "kind", "task") or "task") == "task" and not list(self.success_criteria or []):
+                self.status = "ACTIVE"
+            else:
+                self.status = "DONE"
         elif prog > 0:
             self.status = "ACTIVE"
         else:

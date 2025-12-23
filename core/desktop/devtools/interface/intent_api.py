@@ -245,6 +245,51 @@ def _latest_observed_at(items: List[Any]) -> str:
     return max(observed) if observed else ""
 
 
+def _normalize_checks_payload(raw: Any) -> List[Dict[str, Any]]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError("checks должен быть массивом")
+    normalized: List[Dict[str, Any]] = []
+    for idx, item in enumerate(raw):
+        if isinstance(item, str):
+            value = item.strip()
+            if not value:
+                raise ValueError(f"checks[{idx}] пустая строка")
+            normalized.append({"kind": "command", "spec": value, "outcome": "info"})
+            continue
+        if isinstance(item, dict):
+            normalized.append(dict(item))
+            continue
+        raise ValueError(f"checks[{idx}] должен быть объектом или строкой")
+    return normalized
+
+
+def _normalize_attachments_payload(raw: Any) -> List[Dict[str, Any]]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError("attachments должен быть массивом")
+    normalized: List[Dict[str, Any]] = []
+    for idx, item in enumerate(raw):
+        if isinstance(item, str):
+            value = item.strip()
+            if not value:
+                raise ValueError(f"attachments[{idx}] пустая строка")
+            normalized.append({"kind": "file", "path": value})
+            continue
+        if isinstance(item, dict):
+            payload = dict(item)
+            if not str(payload.get("path", "") or "").strip():
+                file_path = str(payload.get("file_path", "") or "").strip()
+                if file_path:
+                    payload["path"] = file_path
+            normalized.append(payload)
+            continue
+        raise ValueError(f"attachments[{idx}] должен быть объектом или строкой")
+    return normalized
+
+
 def _checkpoint_snapshot_for_node(target: Any) -> Dict[str, Any]:
     """Return a compact before/after snapshot of checkpoint state for mutation responses."""
     return {
@@ -3437,20 +3482,24 @@ def handle_verify(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         needs_save = False
         evidence_digests: List[str] = []
         if checks_raw is not None:
-            if not isinstance(checks_raw, list):
-                return error_response("verify", "INVALID_CHECKS", "checks должен быть массивом")
             try:
-                parsed_checks = [VerificationCheck.from_dict(c) for c in checks_raw if isinstance(c, dict)]
+                normalized_checks = _normalize_checks_payload(checks_raw)
+            except ValueError as exc:
+                return error_response("verify", "INVALID_CHECKS", str(exc))
+            try:
+                parsed_checks = [VerificationCheck.from_dict(c) for c in normalized_checks]
             except Exception:
                 return error_response("verify", "INVALID_CHECKS", "checks содержит некорректные элементы")
             if _extend_unique_checks(parsed_checks):
                 needs_save = True
             evidence_digests.extend([str(getattr(c, "digest", "") or "").strip() for c in parsed_checks if str(getattr(c, "digest", "") or "").strip()])
         if attachments_raw is not None:
-            if not isinstance(attachments_raw, list):
-                return error_response("verify", "INVALID_ATTACHMENTS", "attachments должен быть массивом")
             try:
-                parsed_attachments = [Attachment.from_dict(a) for a in attachments_raw if isinstance(a, dict)]
+                normalized_attachments = _normalize_attachments_payload(attachments_raw)
+            except ValueError as exc:
+                return error_response("verify", "INVALID_ATTACHMENTS", str(exc))
+            try:
+                parsed_attachments = [Attachment.from_dict(a) for a in normalized_attachments]
             except Exception:
                 return error_response("verify", "INVALID_ATTACHMENTS", "attachments содержит некорректные элементы")
             if _extend_unique_attachments(parsed_attachments):
@@ -3500,10 +3549,12 @@ def handle_verify(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
 
     # Attach evidence/evidence_refs to non-step targets (plan/task/task_detail) when attachments are provided.
     if kind != "step" and attachments_raw is not None and updated:
-        if not isinstance(attachments_raw, list):
-            return error_response("verify", "INVALID_ATTACHMENTS", "attachments должен быть массивом")
         try:
-            parsed_attachments = [Attachment.from_dict(a) for a in attachments_raw if isinstance(a, dict)]
+            normalized_attachments = _normalize_attachments_payload(attachments_raw)
+        except ValueError as exc:
+            return error_response("verify", "INVALID_ATTACHMENTS", str(exc))
+        try:
+            parsed_attachments = [Attachment.from_dict(a) for a in normalized_attachments]
         except Exception:
             return error_response("verify", "INVALID_ATTACHMENTS", "attachments содержит некорректные элементы")
         if parsed_attachments:
@@ -3662,10 +3713,12 @@ def handle_evidence_capture(manager: TaskManager, data: Dict[str, Any]) -> AIRes
     # Parse checks (optional)
     checks_added: List[Dict[str, Any]] = []
     if checks_raw is not None:
-        if not isinstance(checks_raw, list):
-            return error_response("evidence_capture", "INVALID_CHECKS", "checks должен быть массивом")
         try:
-            parsed_checks = [VerificationCheck.from_dict(c) for c in checks_raw if isinstance(c, dict)]
+            normalized_checks = _normalize_checks_payload(checks_raw)
+        except ValueError as exc:
+            return error_response("evidence_capture", "INVALID_CHECKS", str(exc))
+        try:
+            parsed_checks = [VerificationCheck.from_dict(c) for c in normalized_checks]
         except Exception:
             return error_response("evidence_capture", "INVALID_CHECKS", "checks содержит некорректные элементы")
         existing = {str(getattr(x, "digest", "") or "").strip() for x in (st.verification_checks or []) if getattr(x, "digest", "")}
@@ -3681,10 +3734,12 @@ def handle_evidence_capture(manager: TaskManager, data: Dict[str, Any]) -> AIRes
     # Parse plain attachments (optional, already-referenced)
     attachments_added: List[Dict[str, Any]] = []
     if attachments_raw is not None:
-        if not isinstance(attachments_raw, list):
-            return error_response("evidence_capture", "INVALID_ATTACHMENTS", "attachments должен быть массивом")
         try:
-            parsed_attachments = [Attachment.from_dict(a) for a in attachments_raw if isinstance(a, dict)]
+            normalized_attachments = _normalize_attachments_payload(attachments_raw)
+        except ValueError as exc:
+            return error_response("evidence_capture", "INVALID_ATTACHMENTS", str(exc))
+        try:
+            parsed_attachments = [Attachment.from_dict(a) for a in normalized_attachments]
         except Exception:
             return error_response("evidence_capture", "INVALID_ATTACHMENTS", "attachments содержит некорректные элементы")
         existing = {str(getattr(x, "digest", "") or "").strip() for x in (st.attachments or []) if getattr(x, "digest", "")}

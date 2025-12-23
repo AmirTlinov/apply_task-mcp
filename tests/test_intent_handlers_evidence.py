@@ -43,6 +43,47 @@ def test_handle_verify_persists_checks_and_attachments(tmp_path):
     assert updated_step.attachments[0].kind == "log"
     assert updated_step.verification_outcome == "pass"
 
+
+def test_handle_verify_normalizes_checks_and_file_paths(tmp_path):
+    tasks_dir = tmp_path / ".tasks"
+    tasks_dir.mkdir()
+    manager = TaskManager(tasks_dir=tasks_dir)
+
+    step = Step(False, "Step", success_criteria=["c"], tests=["t"])
+    task = TaskDetail(id="TASK-001", title="Example", status="TODO", steps=[step])
+    manager.save_task(task, skip_sync=True)
+
+    response = handle_verify(
+        manager,
+        {
+            "intent": "verify",
+            "task": "TASK-001",
+            "path": "s:0",
+            "checkpoints": {"criteria": {"confirmed": True}, "tests": {"confirmed": True}},
+            "checks": ["pytest -q"],
+            "attachments": ["logs/output.log", {"kind": "log", "file_path": "logs/test.log"}],
+        },
+    )
+    assert response.success is True
+
+    updated = manager.load_task("TASK-001", skip_sync=True)
+    updated_step = updated.steps[0]
+    assert any(check.spec == "pytest -q" for check in updated_step.verification_checks)
+    assert any(att.path == "logs/output.log" for att in updated_step.attachments)
+    assert any(att.path == "logs/test.log" for att in updated_step.attachments)
+
+    expected_check_digest = VerificationCheck.from_dict({"kind": "command", "spec": "pytest -q", "outcome": "info"}).digest
+    expected_file_digest = Attachment.from_dict({"kind": "file", "path": "logs/output.log"}).digest
+    expected_log_digest = Attachment.from_dict({"kind": "log", "path": "logs/test.log"}).digest
+    criteria_refs = list(updated_step.criteria_evidence_refs or [])
+    tests_refs = list(updated_step.tests_evidence_refs or [])
+    assert expected_check_digest in criteria_refs
+    assert expected_file_digest in criteria_refs
+    assert expected_log_digest in criteria_refs
+    assert expected_check_digest in tests_refs
+    assert expected_file_digest in tests_refs
+    assert expected_log_digest in tests_refs
+
 def test_handle_verify_extended_checkpoints_adds_evidence_refs(tmp_path):
     tasks_dir = tmp_path / ".tasks"
     tasks_dir.mkdir()

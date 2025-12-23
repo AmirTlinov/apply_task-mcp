@@ -170,7 +170,10 @@ class Attachment:
         raw_meta = dict(data.get("meta", {}) or {})
         meta = _redact(raw_meta)
         kind = str(data.get("kind", "") or "").strip()
-        path = _redact_text(str(data.get("path", "") or "").strip())
+        raw_path = str(data.get("path", "") or "").strip()
+        if not raw_path:
+            raw_path = str(data.get("file_path", "") or "").strip()
+        path = _redact_text(raw_path)
         uri = _redact_text(str(data.get("uri", "") or "").strip())
         external_uri = _redact_text(str(data.get("external_uri", "") or "").strip())
         size = int(data.get("size", 0) or 0)

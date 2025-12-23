@@ -224,6 +224,12 @@ def _normalized_fields(values: Optional[List[str]]) -> List[str]:
     return [v.strip() for v in (values or []) if v and v.strip()]
 
 
+def _auto_done_allowed(task: TaskDetail) -> bool:
+    if str(getattr(task, "kind", "task") or "task") != "task":
+        return True
+    return bool(list(getattr(task, "success_criteria", []) or []))
+
+
 def _build_step(title: str, criteria, tests, blockers) -> Optional[Step]:
     return Step.new(
         title,
@@ -599,7 +605,10 @@ class TaskManager:
         prog = task.calculate_progress()
         task.progress = prog
         if not getattr(task, "status_manual", False) and prog == 100 and not task.blocked:
-            task.status = "DONE"
+            if _auto_done_allowed(task):
+                task.status = "DONE"
+            elif task.status == "DONE":
+                task.status = "ACTIVE"
         task.domain = self.sanitize_domain(task.domain)
         self.repo.save(task)
         if not skip_sync:
@@ -622,9 +631,14 @@ class TaskManager:
                 self.repo.save(task)
         if task.steps:
             prog = task.calculate_progress()
-            if not getattr(task, "status_manual", False) and prog == 100 and not task.blocked and task.status != "DONE":
-                task.status = "DONE"
-                self.save_task(task)
+            if not getattr(task, "status_manual", False) and prog == 100 and not task.blocked:
+                if _auto_done_allowed(task):
+                    if task.status != "DONE":
+                        task.status = "DONE"
+                        self.save_task(task)
+                elif task.status == "DONE":
+                    task.status = "ACTIVE"
+                    self.save_task(task)
         if not skip_sync:
             sync = self.sync_service
             if sync.enabled and task.project_item_id:

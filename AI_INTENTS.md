@@ -316,6 +316,10 @@ Optional evidence (step only):
 - `checks[]` / `verification_outcome` (step only)
 - `attachments[]` (any checkpoint target)
 
+Shorthand:
+- `checks[]` accepts strings (`"pytest -q"`) → `{kind:"command", spec:"...", outcome:"info"}`
+- `attachments[]` accepts string paths or `{file_path:"..."}` → `{kind:"file", path:"..."}`
+
 Auto evidence (step only, best-effort):
 - When a checkpoint is confirmed, apply_task may append `checks` of kind `ci` (GitHub Actions) and/or `git` (HEAD state), deduped by `digest`.
 
