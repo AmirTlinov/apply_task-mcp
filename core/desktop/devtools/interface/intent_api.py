@@ -2041,31 +2041,20 @@ def generate_suggestions(manager: TaskManager, focus_id: Optional[str] = None) -
                     defaults = ["criteria"]
                 checkpoints_payload = {k: {"confirmed": True} for k in _dedupe_strs(defaults)}
 
-            # Radar suggestions are executable-by-shape: provide a canonical atomic batch skeleton
-            # for the common "confirm checkpoints → close step" loop.
             if st and getattr(st, "completed", False):
                 return []
             return [
                 Suggestion(
-                    action="batch",
-                    target=path,
-                    reason="Золотой путь: подтверди чекпоинты и заверши шаг одной атомарной пачкой.",
+                    action="close_step",
+                    target="tasks_close_step",
+                    reason="Золотой путь: подтверди чекпоинты и заверши шаг одним close_step (atomic verify→done).",
                     priority="high",
                     params={
-                        "atomic": True,
                         "task": focus_id,
-                        "expected_target_id": focus_id,
-                        "expected_kind": "task",
-                        "strict_targeting": True,
-                        "operations": [
-                            {
-                                "intent": "close_step",
-                                "path": path,
-                                "step_id": step_id,
-                                "note": "",
-                                "checkpoints": checkpoints_payload or {"criteria": {"confirmed": True}},
-                            },
-                        ],
+                        "path": path,
+                        "step_id": step_id,
+                        "note": "",
+                        "checkpoints": checkpoints_payload or {"criteria": {"confirmed": True}},
                     },
                 )
             ]
