@@ -21,6 +21,5 @@ def test_radar_suggestions_skip_completed_steps(tmp_path):
     assert resp.suggestions
     suggestion = resp.suggestions[0]
     params = suggestion.params or {}
-    ops = params.get("operations") or []
-    assert all(op.get("intent") != "evidence_capture" for op in ops if isinstance(op, dict))
-    assert any(op.get("path") == "s:1" for op in ops if isinstance(op, dict))
+    assert suggestion.action == "close_step"
+    assert params.get("path") == "s:1"
