@@ -74,6 +74,11 @@ def _task_path_description() -> str:
 
 
 _COMMON_REQUEST_PROPERTIES: Dict[str, Any] = {
+    "compact": {
+        "type": "boolean",
+        "default": True,
+        "description": "When true (default), return a short summary payload; set false for full payloads.",
+    },
     "audit": {
         "type": "boolean",
         "default": False,

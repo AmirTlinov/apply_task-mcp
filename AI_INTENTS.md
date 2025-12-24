@@ -123,6 +123,14 @@ If you need a trace of previews for debugging/analytics, pass `audit=true` on th
 - The server records the preview call into a separate **audit** stream (non-undoable, does not affect `ops` undo/redo).
 - Preview responses may include `meta.audit_operation_id` for `delta(stream="audit", since=...)` chaining.
 
+## Compact outputs (compact)
+
+Most intents accept `compact` (default `true`) to keep payloads “one-screen” sized.
+
+- `compact=true` returns summary-sized `plan`/`task`/`step` snapshots (nested trees are omitted unless explicitly requested).
+- `compact=false` returns full snapshots (including nested trees where applicable).
+- `compact` affects **output only** (no behavior change).
+
 ## Intents
 
 ### focus_get
@@ -604,6 +612,8 @@ Notes:
 - When `apply=false` (default), `close_task` is always a dry-run (no history side-effects).
 - To record the preview in the audit stream, pass `audit=true` and query `history(stream=\"audit\")` / `delta(stream=\"audit\")`.
 - Returns `runway` + `diff` so you can see exactly what would change.
+- `result.diff.patches[]` is an applyable patch list (same shape as `close_task.patches[]`). When `runway.open=false` and `runway.recipe.intent == "patch"`, `diff.patches[0]` mirrors that recipe in patch-item form (so the loop is: preview → `patch` → `close_task(apply=true)`).
+- `result.diff.patch_results[]` is the in-memory simulation metadata for any provided `patches[]` (updated fields + resolved path).
 - If the runway is closed and `force=false`, `apply=true` fails with `RUNWAY_CLOSED` and includes the same `runway` + `diff` in the error payload.
 - `patches[]` use the same shape as `patch` requests but omit the root `task` id (it’s implied by `close_task.task`).
 - Status is explicit: a 100% complete task is not auto-flipped to `DONE` on save/patch; use `close_task(apply=true)` or `complete(status=\"DONE\")`.

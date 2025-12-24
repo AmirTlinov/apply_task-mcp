@@ -28,6 +28,20 @@ def test_close_task_dry_run_reports_runway_and_recipe(manager: TaskManager):
     assert runway.get("open") is False
     recipe = runway.get("recipe") or {}
     assert recipe.get("intent") == "patch"
+    diff = resp.result.get("diff") or {}
+    patches = diff.get("patches") or []
+    assert len(patches) == 1
+    assert (diff.get("patch_results") or []) == []
+    assert patches[0].get("kind") == "task_detail"
+    ops = patches[0].get("ops") or []
+    assert ops and ops[0].get("field") == "success_criteria"
+
+    # Apply the suggested patch item via the regular patch intent (by adding the task id).
+    patched = process_intent(manager, {"intent": "patch", "task": "TASK-001", **patches[0]})
+    assert patched.success is True
+    reloaded = manager.load_task("TASK-001", skip_sync=True)
+    assert reloaded is not None
+    assert reloaded.success_criteria
 
 
 def test_close_task_apply_completes_when_ready(manager: TaskManager):
@@ -56,4 +70,3 @@ def test_close_task_apply_blocks_when_runway_closed(manager: TaskManager):
     resp = process_intent(manager, {"intent": "close_task", "task": "TASK-001", "apply": True})
     assert resp.success is False
     assert resp.error_code == "RUNWAY_CLOSED"
-

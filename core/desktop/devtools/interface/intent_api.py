@@ -340,6 +340,32 @@ def _suggestion_to_intent_payload(suggestion: Optional["Suggestion"]) -> Optiona
     return payload
 
 
+def _patch_item_from_patch_intent_payload(payload: Any) -> Optional[Dict[str, Any]]:
+    """Convert a patch intent payload into a close_task.patches[]-compatible item."""
+    if not isinstance(payload, dict):
+        return None
+    if str(payload.get("intent", "") or "").strip().lower() != "patch":
+        return None
+
+    ops = payload.get("ops")
+    if ops is None:
+        ops = payload.get("operations")
+    if not isinstance(ops, list) or not ops:
+        return None
+
+    kind = _infer_patch_kind(payload)
+    if kind not in {"task_detail", "step", "task"}:
+        return None
+
+    item: Dict[str, Any] = {"kind": kind, "ops": list(ops or [])}
+    for key in ("path", "step_id", "task_node_id"):
+        val = payload.get(key)
+        if val is None:
+            continue
+        item[key] = str(val)
+    return item
+
+
 def _lint_issue_fix_recipe(focus_id: str, *, detail: Any, issue: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     code = str(issue.get("code", "") or "").strip()
     target = issue.get("target")
@@ -1244,6 +1270,23 @@ def _parse_cursor(value: Any, field: str) -> Tuple[Optional[int], Optional[str]]
     return cursor, None
 
 
+def _parse_compact(value: Any, *, default: bool = True) -> bool:
+    """Parse a best-effort boolean flag used for output verbosity (compact vs full)."""
+    if value is None:
+        return bool(default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+    return bool(value)
+
+
 def _apply_filters(
     items: List[TaskDetail],
     *,
@@ -1307,6 +1350,8 @@ def _build_subtree_payload(
     compact: bool,
 ) -> Optional[Dict[str, Any]]:
     kind = str(kind or "").strip().lower()
+    # Subtree is an explicit detail request: keep structure (children) but control per-node verbosity via `compact`.
+    include_steps = True
     if kind == "task":
         node, _, _ = _find_task_by_path(list(getattr(task, "steps", []) or []), path)
         if not node:
@@ -1314,7 +1359,7 @@ def _build_subtree_payload(
         return {
             "kind": "task",
             "path": path,
-            "node": task_node_to_dict(node, path=path, compact=compact, include_steps=True),
+            "node": task_node_to_dict(node, path=path, compact=compact, include_steps=include_steps),
         }
     if kind == "plan":
         step, _, _ = _find_step_by_path(list(getattr(task, "steps", []) or []), path)
@@ -1324,7 +1369,7 @@ def _build_subtree_payload(
         return {
             "kind": "plan",
             "path": path,
-            "node": plan_node_to_dict(plan, base_path=path, compact=compact, include_steps=True),
+            "node": plan_node_to_dict(plan, base_path=path, compact=compact, include_steps=include_steps),
         }
     step, _, _ = _find_step_by_path(list(getattr(task, "steps", []) or []), path)
     if not step:
@@ -1332,7 +1377,7 @@ def _build_subtree_payload(
     return {
         "kind": "step",
         "path": path,
-        "node": step_to_dict(step, path=path, compact=compact, include_steps=True),
+        "node": step_to_dict(step, path=path, compact=compact, include_steps=include_steps),
     }
 
 
@@ -1714,6 +1759,7 @@ def build_context(
         "by_status": by_status,
     }
     if include_all_tasks:
+        include_steps = compact is not True
         filtered_plans = plans
         filtered_tasks = tasks
         if plans_filter:
@@ -1744,7 +1790,7 @@ def build_context(
         tasks_slice, tasks_meta = _paginate_items(tasks_sorted, cursor=tasks_cursor, limit=tasks_limit)
 
         ctx["plans"] = [plan_to_dict(p, compact=compact) for p in plans_slice]
-        ctx["tasks"] = [task_to_dict(t, include_steps=True, compact=compact) for t in tasks_slice]
+        ctx["tasks"] = [task_to_dict(t, include_steps=include_steps, compact=compact) for t in tasks_slice]
         ctx["plans_pagination"] = plans_meta
         ctx["tasks_pagination"] = tasks_meta
         if plans_filter or tasks_filter:
@@ -1754,9 +1800,9 @@ def build_context(
         focus = manager.load_task(focus_id, skip_sync=True)
         if focus:
             if getattr(focus, "kind", "task") == "plan":
-                ctx["current_plan"] = plan_to_dict(focus, compact=False)
+                ctx["current_plan"] = plan_to_dict(focus, compact=compact)
             else:
-                ctx["current_task"] = task_to_dict(focus, include_steps=True, compact=False)
+                ctx["current_task"] = task_to_dict(focus, include_steps=compact is not True, compact=compact)
     return ctx
 
 
@@ -1894,7 +1940,7 @@ def handle_context(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             return error_response("context", "INVALID_ID", err)
         focus = str(focus)
     include_all = bool(data.get("include_all", False))
-    compact = bool(data.get("compact", True))
+    compact = _parse_compact(data.get("compact"), default=True)
 
     tasks_filter: Dict[str, Any] = {}
     plans_filter: Dict[str, Any] = {}
@@ -2009,12 +2055,43 @@ def handle_context(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             return error_response("context", "SUBTREE_NOT_FOUND", "Узел не найден по subtree.path")
         subtree_payload["task_id"] = str(subtree_task_id)
         ctx["subtree"] = subtree_payload
+
+    raw_suggestions = list(generate_suggestions(manager, focus))
+    suggestions: List[Suggestion] = []
+    focus_payload: Optional[Dict[str, Any]] = None
+    if focus:
+        focus_detail = manager.load_task(focus, skip_sync=True)
+        if focus_detail:
+            focus_payload = {
+                "id": str(focus),
+                "kind": str(getattr(focus_detail, "kind", "task") or "task"),
+                "revision": int(getattr(focus_detail, "revision", 0) or 0),
+                "domain": str(getattr(focus_detail, "domain", "") or ""),
+                "title": str(getattr(focus_detail, "title", "") or ""),
+            }
+            raw_status = str(getattr(focus_detail, "status", "") or "").strip()
+            if raw_status:
+                focus_payload["lifecycle_status"] = status_label(raw_status)
+            runway = _build_runway_payload(manager, detail=focus_detail, focus_id=str(focus), next_suggestions=raw_suggestions)
+            if not bool(runway.get("open", True)) and isinstance(runway.get("recipe"), dict):
+                candidate = _suggestion_from_intent_payload(
+                    runway.get("recipe"),
+                    reason="Полоса закрыта — открой её этим рецептом.",
+                    priority="high",
+                )
+                suggestions = [candidate] if candidate else []
+            else:
+                suggestions = list(raw_suggestions)[:1]
+    else:
+        suggestions = list(raw_suggestions)
+    suggestions = _finalize_suggestions(suggestions, focus=focus_payload)
+
     return AIResponse(
         success=True,
         intent="context",
         result=ctx,
         context={"focus_id": focus} if focus else {},
-        suggestions=generate_suggestions(manager, focus),
+        suggestions=suggestions,
     )
 
 
@@ -2888,6 +2965,8 @@ def handle_scaffold(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         return error_response("scaffold", "INVALID_TITLE", title_err)
 
     dry_run = bool(data.get("dry_run", True))
+    compact = _parse_compact(data.get("compact"), default=True)
+    include_steps = compact is not True
     priority = str(data.get("priority", "MEDIUM") or "MEDIUM")
 
     used_focus_parent = False
@@ -2964,7 +3043,7 @@ def handle_scaffold(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
                     "parent": str(parent),
                     "parent_source": parent_source,
                     "task_id": task.id,
-                    "task": task_to_dict(task, include_steps=True, compact=False),
+                    "task": task_to_dict(task, include_steps=include_steps, compact=compact),
                 },
                 context={"used_focus_parent": used_focus_parent} if used_focus_parent else {},
                 suggestions=[
@@ -3017,7 +3096,7 @@ def handle_scaffold(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
                 "parent": str(parent),
                 "parent_source": parent_source,
                 "task_id": task.id,
-                "task": task_to_dict(task, include_steps=True, compact=False),
+                "task": task_to_dict(task, include_steps=include_steps, compact=compact),
             },
             context={"task_id": task.id, "used_focus_parent": used_focus_parent} if used_focus_parent else {"task_id": task.id},
             suggestions=[
@@ -3068,7 +3147,7 @@ def handle_scaffold(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
                 "kind": "plan",
                 "template": template.to_dict(),
                 "plan_id": plan.id,
-                "plan": plan_to_dict(plan, compact=False),
+                "plan": plan_to_dict(plan, compact=compact),
             },
             suggestions=[
                 Suggestion(
@@ -3110,7 +3189,7 @@ def handle_scaffold(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             "kind": "plan",
             "template": template.to_dict(),
             "plan_id": plan.id,
-            "plan": plan_to_dict(plan, compact=False),
+            "plan": plan_to_dict(plan, compact=compact),
         },
         context={"task_id": plan.id},
         suggestions=[
@@ -3165,6 +3244,8 @@ def handle_create(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         kind = "task" if parent else "plan"
 
     dry_run = bool(data.get("dry_run", False))
+    compact = _parse_compact(data.get("compact"), default=True)
+    include_steps = compact is not True
 
     if kind == "plan":
         plan = manager.create_plan(title, priority=str(data.get("priority", "MEDIUM") or "MEDIUM"))
@@ -3199,7 +3280,7 @@ def handle_create(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             return AIResponse(
                 success=True,
                 intent="create",
-                result={"dry_run": True, "would_execute": True, "plan": plan_to_dict(plan, compact=False)},
+                result={"dry_run": True, "would_execute": True, "plan": plan_to_dict(plan, compact=compact)},
             )
         if str(getattr(plan, "contract", "") or "").strip() or dict(getattr(plan, "contract_data", {}) or {}) or list(getattr(plan, "success_criteria", []) or []):
             append_contract_version_if_changed(plan, note="create")
@@ -3207,7 +3288,7 @@ def handle_create(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         return AIResponse(
             success=True,
             intent="create",
-            result={"plan_id": plan.id, "plan": plan_to_dict(plan, compact=False)},
+            result={"plan_id": plan.id, "plan": plan_to_dict(plan, compact=compact)},
             context={"task_id": plan.id},
         )
 
@@ -3254,13 +3335,13 @@ def handle_create(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         return AIResponse(
             success=True,
             intent="create",
-            result={"dry_run": True, "would_execute": True, "task": task_to_dict(task, include_steps=True, compact=False)},
+            result={"dry_run": True, "would_execute": True, "task": task_to_dict(task, include_steps=include_steps, compact=compact)},
         )
     manager.save_task(task, skip_sync=True)
     return AIResponse(
         success=True,
         intent="create",
-        result={"task_id": task.id, "task": task_to_dict(task, include_steps=True, compact=False)},
+        result={"task_id": task.id, "task": task_to_dict(task, include_steps=include_steps, compact=compact)},
         context={"task_id": task.id},
     )
 
@@ -3291,6 +3372,8 @@ def handle_decompose(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
     err = validate_steps_data(steps_payload)
     if err:
         return error_response("decompose", "INVALID_STEPS", err)
+    compact = _parse_compact(data.get("compact"), default=True)
+    include_steps = compact is not True
 
     parent_path = data.get("parent")
     parent_task_node_id = data.get("parent_task_node_id")
@@ -3365,7 +3448,7 @@ def handle_decompose(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         result={
             "task_id": task_id,
             "total_created": created,
-            "task": task_to_dict(updated or task, include_steps=True, compact=False),
+            "task": task_to_dict(updated or task, include_steps=include_steps, compact=compact),
         },
         context={"task_id": task_id},
     )
@@ -3406,6 +3489,8 @@ def handle_task_add(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
     title = str(data.get("title", "") or "").strip()
     if not title:
         return error_response("task_add", "MISSING_TITLE", "title обязателен")
+    compact = _parse_compact(data.get("compact"), default=True)
+    include_steps = compact is not True
 
     task = manager.load_task(task_id, skip_sync=True)
     if not task:
@@ -3499,8 +3584,8 @@ def handle_task_add(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         result={
             "task_id": task_id,
             "task_path": task_path,
-            "task_node": task_node_to_dict(node, path=task_path, compact=False, include_steps=True) if node and task_path else None,
-            "task": task_to_dict(updated or task, include_steps=True, compact=False),
+            "task_node": task_node_to_dict(node, path=task_path, compact=compact, include_steps=include_steps) if node and task_path else None,
+            "task": task_to_dict(updated or task, include_steps=include_steps, compact=compact),
         },
         context={"task_id": task_id},
     )
@@ -3530,6 +3615,8 @@ def handle_task_define(manager: TaskManager, data: Dict[str, Any]) -> AIResponse
     allowed_fields = {"title", "status", "priority", "description", "context", "success_criteria", "tests", "dependencies", "next_steps", "problems", "risks", "blocked", "blockers", "status_manual"}
     if not any(field in data for field in allowed_fields):
         return error_response("task_define", "NO_FIELDS", "Нечего обновлять: укажи хотя бы одно поле")
+    compact = _parse_compact(data.get("compact"), default=True)
+    include_steps = compact is not True
 
     task = manager.load_task(task_id, skip_sync=True)
     if not task:
@@ -3602,8 +3689,8 @@ def handle_task_define(manager: TaskManager, data: Dict[str, Any]) -> AIResponse
         result={
             "task_id": task_id,
             "path": path,
-            "updated": task_node_to_dict(node, path=path, compact=False, include_steps=True) if node else None,
-            "task": task_to_dict(updated or task, include_steps=True, compact=False),
+            "updated": task_node_to_dict(node, path=path, compact=compact, include_steps=include_steps) if node else None,
+            "task": task_to_dict(updated or task, include_steps=include_steps, compact=compact),
         },
         context={"task_id": task_id},
     )
@@ -3642,6 +3729,8 @@ def handle_task_delete(manager: TaskManager, data: Dict[str, Any]) -> AIResponse
         )
     if getattr(task, "kind", "task") != "task":
         return error_response("task_delete", "NOT_A_TASK", "task_delete применим только к заданиям (TASK-###)")
+    compact = _parse_compact(data.get("compact"), default=True)
+    include_steps = compact is not True
 
     path, path_err = _resolve_task_path(manager, task, data)
     if path_err:
@@ -3671,8 +3760,8 @@ def handle_task_delete(manager: TaskManager, data: Dict[str, Any]) -> AIResponse
             "task_id": task_id,
             "path": path,
             "deleted": True,
-            "deleted_task": task_node_to_dict(deleted, path=path, compact=False, include_steps=True) if deleted else None,
-            "task": task_to_dict(updated or task, include_steps=True, compact=False),
+            "deleted_task": task_node_to_dict(deleted, path=path, compact=compact, include_steps=include_steps) if deleted else None,
+            "task": task_to_dict(updated or task, include_steps=include_steps, compact=compact),
         },
         context={"task_id": task_id},
     )
@@ -3706,6 +3795,8 @@ def handle_define(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
 
     if title is None and success_criteria is None and tests is None and blockers is None:
         return error_response("define", "NO_FIELDS", "Нечего обновлять: укажи title/success_criteria/tests/blockers")
+    compact = _parse_compact(data.get("compact"), default=True)
+    include_steps = compact is not True
 
     task = manager.load_task(task_id, skip_sync=True)
     if not task:
@@ -3764,8 +3855,8 @@ def handle_define(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         result={
             "task_id": task_id,
             "path": path,
-            "updated": step_to_dict(updated_step, path=path, compact=False) if updated_step else None,
-            "task": task_to_dict(updated or task, include_steps=True, compact=False),
+            "updated": step_to_dict(updated_step, path=path, compact=compact, include_steps=include_steps) if updated_step else None,
+            "task": task_to_dict(updated or task, include_steps=include_steps, compact=compact),
         },
         context={"task_id": task_id},
     )
@@ -3791,6 +3882,8 @@ def handle_verify(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             suggestions=_missing_target_suggestions(manager, want=["TASK-", "PLAN-"]),
         )
     task_id = str(task_id)
+    compact = _parse_compact(data.get("compact"), default=True)
+    include_steps = compact is not True
 
     checkpoints = data.get("checkpoints") or {}
     if not isinstance(checkpoints, dict):
@@ -4141,10 +4234,10 @@ def handle_verify(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             "checkpoints_after": checkpoints_after,
             "ready": ready,
             "needs": needs,
-            "step": step_to_dict(st, path=path, compact=False) if st else None,
-            payload_key: plan_to_dict(updated or task, compact=False)
+            "step": step_to_dict(st, path=path, compact=compact, include_steps=include_steps) if st else None,
+            payload_key: plan_to_dict(updated or task, compact=compact)
             if payload_key == "plan"
-            else task_to_dict(updated or task, include_steps=True, compact=False),
+            else task_to_dict(updated or task, include_steps=include_steps, compact=compact),
         },
         context={"task_id": task_id},
     )
@@ -4175,6 +4268,8 @@ def handle_evidence_capture(manager: TaskManager, data: Dict[str, Any]) -> AIRes
             suggestions=_missing_target_suggestions(manager, want="TASK-"),
         )
     task_id = str(task_id)
+    compact = _parse_compact(data.get("compact"), default=True)
+    include_steps = compact is not True
 
     task = manager.load_task(task_id, skip_sync=True)
     if not task:
@@ -4395,8 +4490,8 @@ def handle_evidence_capture(manager: TaskManager, data: Dict[str, Any]) -> AIRes
                 "checks_added": checks_added,
                 "verification_outcome": str(verification_outcome or "").strip() if verification_outcome is not None else None,
             },
-            "step": step_to_dict(st1, path=path, compact=False) if st1 else None,
-            "task": task_to_dict(updated or task, include_steps=True, compact=False),
+            "step": step_to_dict(st1, path=path, compact=compact, include_steps=include_steps) if st1 else None,
+            "task": task_to_dict(updated or task, include_steps=include_steps, compact=compact),
         },
         context={"task_id": task_id},
     )
@@ -4423,6 +4518,8 @@ def _handle_close_step_like(manager: TaskManager, data: Dict[str, Any], *, inten
             suggestions=_missing_target_suggestions(manager, want="TASK-"),
         )
     task_id = str(task_id)
+    compact = _parse_compact(data.get("compact"), default=True)
+    include_steps = compact is not True
 
     force = bool(data.get("force", False))
     override_reason = str(data.get("override_reason", "") or "").strip()
@@ -4510,7 +4607,7 @@ def _handle_close_step_like(manager: TaskManager, data: Dict[str, Any], *, inten
                 "missing_checkpoints": missing_checkpoints,
                 "checkpoints_before": checkpoints_before,
                 "checkpoints_after": checkpoints_after,
-                "step": step_to_dict(st0, path=path, compact=False),
+                "step": step_to_dict(st0, path=path, compact=compact, include_steps=include_steps),
             },
         )
 
@@ -4541,7 +4638,7 @@ def _handle_close_step_like(manager: TaskManager, data: Dict[str, Any], *, inten
                     "missing_checkpoints": missing1,
                     "checkpoints_before": checkpoints_before,
                     "checkpoints_after": _checkpoint_snapshot_for_node(st1),
-                    "step": step_to_dict(st1, path=path, compact=False),
+                    "step": step_to_dict(st1, path=path, compact=compact, include_steps=include_steps),
                 },
             )
         return error_response(intent_name, code, msg or "Не удалось завершить шаг", result={"task": task_id, "path": path})
@@ -4563,8 +4660,8 @@ def _handle_close_step_like(manager: TaskManager, data: Dict[str, Any], *, inten
         "checkpoints_after": checkpoints_final,
         "ready": True,
         "needs": [],
-        "task": task_to_dict(updated, include_steps=True, compact=False),
-        "step": step_to_dict(st, path=path, compact=False) if st else None,
+        "task": task_to_dict(updated, include_steps=include_steps, compact=compact),
+        "step": step_to_dict(st, path=path, compact=compact, include_steps=include_steps) if st else None,
     }
     return AIResponse(success=True, intent=intent_name, result=payload, context={"task_id": task_id})
 
@@ -4593,6 +4690,8 @@ def handle_progress(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             suggestions=_missing_target_suggestions(manager, want="TASK-"),
         )
     task_id = str(task_id)
+    compact = _parse_compact(data.get("compact"), default=True)
+    include_steps = compact is not True
 
     completed = bool(data.get("completed", False))
     force = bool(data.get("force", False))
@@ -4654,7 +4753,7 @@ def handle_progress(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
                 "missing_checkpoints": missing0,
                 "checkpoints_before": checkpoints_before,
                 "checkpoints_after": checkpoints_before,
-                "step": step_to_dict(st0, path=path, compact=False),
+                "step": step_to_dict(st0, path=path, compact=compact, include_steps=include_steps),
             },
         )
 
@@ -4682,7 +4781,7 @@ def handle_progress(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
                     "missing_checkpoints": missing1,
                     "checkpoints_before": checkpoints_before,
                     "checkpoints_after": _checkpoint_snapshot_for_node(st1),
-                    "step": step_to_dict(st1, path=path, compact=False),
+                    "step": step_to_dict(st1, path=path, compact=compact, include_steps=include_steps),
                 },
             )
         return error_response("progress", code, msg or "Не удалось обновить completed", result={"task": task_id, "path": path})
@@ -4709,8 +4808,8 @@ def handle_progress(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             "checkpoints_after": checkpoints_after,
             "ready": ready,
             "needs": needs,
-            "step": step_to_dict(st, path=path, compact=False) if st else None,
-            "task": task_to_dict(updated or task, include_steps=True, compact=False),
+            "step": step_to_dict(st, path=path, compact=compact, include_steps=include_steps) if st else None,
+            "task": task_to_dict(updated or task, include_steps=include_steps, compact=compact),
         },
         context={"task_id": task_id},
     )
@@ -4739,6 +4838,8 @@ def handle_done(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             suggestions=_missing_target_suggestions(manager, want="TASK-"),
         )
     task_id = str(task_id)
+    compact = _parse_compact(data.get("compact"), default=True)
+    include_steps = compact is not True
 
     force = bool(data.get("force", False))
     override_reason = str(data.get("override_reason", "") or "").strip()
@@ -4799,7 +4900,7 @@ def handle_done(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
                 "missing_checkpoints": missing0,
                 "checkpoints_before": checkpoints_before,
                 "checkpoints_after": checkpoints_before,
-                "step": step_to_dict(st0, path=path, compact=False),
+                "step": step_to_dict(st0, path=path, compact=compact, include_steps=include_steps),
             },
         )
 
@@ -4828,7 +4929,7 @@ def handle_done(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
                     "missing_checkpoints": missing1,
                     "checkpoints_before": checkpoints_before,
                     "checkpoints_after": _checkpoint_snapshot_for_node(st1),
-                    "step": step_to_dict(st1, path=path, compact=False),
+                    "step": step_to_dict(st1, path=path, compact=compact, include_steps=include_steps),
                 },
             )
         return error_response("done", code, msg or "Не удалось завершить шаг")
@@ -4855,8 +4956,8 @@ def handle_done(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             "checkpoints_after": checkpoints_after,
             "ready": ready,
             "needs": needs,
-            "task": task_to_dict(updated or task, include_steps=True, compact=False),
-            "step": step_to_dict(st, path=path, compact=False) if st else None,
+            "task": task_to_dict(updated or task, include_steps=include_steps, compact=compact),
+            "step": step_to_dict(st, path=path, compact=compact, include_steps=include_steps) if st else None,
         },
         context={"task_id": task_id},
     )
@@ -4960,7 +5061,13 @@ def handle_edit(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         manager.save_task(task, skip_sync=True)
 
     reloaded = manager.load_task(task.id, task.domain, skip_sync=True) or task
-    snapshot = plan_to_dict(reloaded, compact=False) if getattr(reloaded, "kind", "task") == "plan" else task_to_dict(reloaded, include_steps=True, compact=False)
+    compact = _parse_compact(data.get("compact"), default=True)
+    include_steps = compact is not True
+    snapshot = (
+        plan_to_dict(reloaded, compact=compact)
+        if getattr(reloaded, "kind", "task") == "plan"
+        else task_to_dict(reloaded, include_steps=include_steps, compact=compact)
+    )
     key = "plan" if getattr(reloaded, "kind", "task") == "plan" else "task"
     return AIResponse(
         success=True,
@@ -5884,6 +5991,7 @@ def handle_contract(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         )
     if getattr(plan, "kind", "task") != "plan":
         return error_response("contract", "NOT_A_PLAN", "contract применим только к планам (PLAN-###)")
+    compact = _parse_compact(data.get("compact"), default=True)
 
     if bool(data.get("clear", False)):
         plan.contract = ""
@@ -5899,7 +6007,7 @@ def handle_contract(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
     return AIResponse(
         success=True,
         intent="contract",
-        result={"plan": plan_to_dict(plan, compact=False)},
+        result={"plan": plan_to_dict(plan, compact=compact)},
         context={"task_id": plan_id},
     )
 
@@ -5930,6 +6038,7 @@ def handle_plan(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         )
     if getattr(plan, "kind", "task") != "plan":
         return error_response("plan", "NOT_A_PLAN", "plan intent применим только к планам (PLAN-###)")
+    compact = _parse_compact(data.get("compact"), default=True)
 
     if data.get("doc") is not None:
         plan.plan_doc = str(data.get("doc") or "")
@@ -5958,7 +6067,7 @@ def handle_plan(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
     return AIResponse(
         success=True,
         intent="plan",
-        result={"plan": plan_to_dict(plan, compact=False)},
+        result={"plan": plan_to_dict(plan, compact=compact)},
         context={"task_id": plan_id},
     )
 
@@ -6168,7 +6277,9 @@ def handle_complete(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         except Exception:
             pass
     key = "plan" if getattr(detail, "kind", "task") == "plan" else "task"
-    payload = plan_to_dict(detail, compact=False) if key == "plan" else task_to_dict(detail, include_steps=True, compact=False)
+    compact = _parse_compact(data.get("compact"), default=True)
+    include_steps = compact is not True
+    payload = plan_to_dict(detail, compact=compact) if key == "plan" else task_to_dict(detail, include_steps=include_steps, compact=compact)
     return AIResponse(success=True, intent="complete", result={key: payload}, context={"task_id": task_id})
 
 
@@ -6233,7 +6344,7 @@ def handle_close_task(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
                 "dry_run": True,
                 "apply": False,
                 "already_done": True,
-                "diff": {"patches": [], "complete": None},
+                "diff": {"patches": [], "patch_results": [], "complete": None},
                 "runway": {"open": True, "blocking": {"lint": {"summary": {}, "errors_count": 0, "top_errors": []}, "validation": None}, "recipe": None},
             },
             context={"task_id": task_id},
@@ -6241,6 +6352,7 @@ def handle_close_task(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
 
     # Simulate patches in-memory for diff/runway determination.
     sim = copy.deepcopy(base)
+    patch_items: List[Dict[str, Any]] = []
     patch_results: List[Dict[str, Any]] = []
     for idx, patch in enumerate(list(raw_patches or [])):
         if not isinstance(patch, dict):
@@ -6256,6 +6368,13 @@ def handle_close_task(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         kind = _infer_patch_kind(patch)
         if kind not in {"task_detail", "step", "task"}:
             return error_response("close_task", "INVALID_KIND", f"patches[{idx}].kind должен быть: task_detail|step|task")
+        patch_item: Dict[str, Any] = {"kind": kind, "ops": list(ops or [])}
+        for key in ("path", "step_id", "task_node_id"):
+            val = patch.get(key)
+            if val is None:
+                continue
+            patch_item[key] = str(val)
+        patch_items.append(patch_item)
         err_resp, meta = _apply_patch_request_inplace(
             manager,
             "close_task",
@@ -6317,7 +6436,13 @@ def handle_close_task(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             "progress": {"from": int(getattr(base, "progress", 0) or 0), "to": 100},
         }
 
-    diff = {"patches": patch_results, "complete": complete_diff}
+    diff_patches = list(patch_items)
+    if not diff_patches and isinstance(recipe, dict):
+        derived = _patch_item_from_patch_intent_payload(recipe)
+        if derived:
+            diff_patches = [derived]
+
+    diff = {"patches": diff_patches, "patch_results": patch_results, "complete": complete_diff}
 
     if not apply:
         return AIResponse(
@@ -6373,6 +6498,8 @@ def handle_close_task(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         )
 
     reloaded = manager.load_task(task_id, skip_sync=True)
+    compact = _parse_compact(data.get("compact"), default=True)
+    include_steps = compact is not True
     return AIResponse(
         success=True,
         intent="close_task",
@@ -6382,7 +6509,7 @@ def handle_close_task(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             "apply": True,
             "diff": diff,
             "batch": batch_resp.result,
-            "task": task_to_dict(reloaded, include_steps=True, compact=False) if reloaded else None,
+            "task": task_to_dict(reloaded, include_steps=include_steps, compact=compact) if reloaded else None,
         },
         context={"task_id": task_id},
     )
@@ -6424,6 +6551,8 @@ def handle_delete(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         )
     if getattr(task, "kind", "task") != "task":
         return error_response("delete", "NOT_A_TASK", "delete path применим только к заданиям (TASK-###)")
+    compact = _parse_compact(data.get("compact"), default=True)
+    include_steps = compact is not True
     path, path_err = _resolve_step_path(manager, task, data)
     if path_err:
         code, message = path_err
@@ -6441,7 +6570,11 @@ def handle_delete(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
     return AIResponse(
         success=True,
         intent="delete",
-        result={"task_id": task_id, "path": path, "deleted_step": step_to_dict(deleted_step, path=path, compact=False) if deleted_step else None},
+        result={
+            "task_id": task_id,
+            "path": path,
+            "deleted_step": step_to_dict(deleted_step, path=path, compact=compact, include_steps=include_steps) if deleted_step else None,
+        },
         context={"task_id": task_id},
     )
 
