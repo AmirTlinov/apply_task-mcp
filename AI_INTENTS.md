@@ -625,7 +625,7 @@ Notes:
   - `runway.recipe` is also guarded when it targets the current task/plan and is a mutating intent (`patch/plan/complete/batch`).
 - `result.diff.patch_results[]` is the in-memory simulation metadata for any provided `patches[]` (updated fields + resolved path).
 - If the runway is closed and `force=false`, `apply=true` fails with `RUNWAY_CLOSED` and returns exactly one validated suggestion (the repair recipe) with safety guards; the error payload is intentionally minimal (no `runway`/`diff`/`lint` noise).
-- Auto-land: if `apply=true`, `force=false`, and the runway is closed only due to a deterministic patch recipe (no template values like `<...>`) that would open the runway, `close_task` applies that recipe and completes `DONE` in one atomic batch (guarded by `expected_revision`).
+- Auto-land: if `apply=true`, `force=false`, and the runway is closed only due to a patch recipe that would open the runway, `close_task` applies that recipe and completes `DONE` in one atomic batch (guarded by `expected_revision`).
 - `patches[]` use the same shape as `patch` requests but omit the root `task` id (it’s implied by `close_task.task`).
 - Status is explicit: a 100% complete task is not auto-flipped to `DONE` on save/patch; use `close_task(apply=true)` or `complete(status=\"DONE\")`.
 - DONE is not “sticky”: if later mutations violate DONE invariants (e.g., reopening a step or removing root success_criteria), the task deterministically reopens (DONE → ACTIVE) to avoid contradictory UI.

@@ -122,7 +122,7 @@ def test_close_task_apply_blocks_when_runway_closed(manager: TaskManager):
     assert isinstance((sug.params or {}).get("expected_revision"), int)
 
 
-def test_close_task_apply_when_root_lint_blocks_returns_single_patch_recipe(manager: TaskManager):
+def test_close_task_apply_autolands_even_with_template_recipe(manager: TaskManager):
     step = Step.new("Ready step title long enough 12345", criteria=["c"], tests=["t"])
     assert step is not None
     step.completed = True
@@ -133,18 +133,11 @@ def test_close_task_apply_when_root_lint_blocks_returns_single_patch_recipe(mana
     manager.save_task(task, skip_sync=True)
 
     resp = process_intent(manager, {"intent": "close_task", "task": "TASK-001", "apply": True})
-    assert resp.success is False
-    assert resp.error_code == "RUNWAY_CLOSED"
-    assert resp.suggestions and len(resp.suggestions) == 1
-    sug = resp.suggestions[0]
-    assert sug.validated is True
-    assert sug.action == "patch"
-    assert (sug.params or {}).get("strict_targeting") is True
-    assert (sug.params or {}).get("expected_target_id") == "TASK-001"
-    assert isinstance((sug.params or {}).get("expected_revision"), int)
-    assert (sug.params or {}).get("task") == "TASK-001"
-    ops = (sug.params or {}).get("ops") or []
-    assert ops and ops[0].get("field") == "success_criteria"
+    assert resp.success is True
+    reloaded = manager.load_task("TASK-001", skip_sync=True)
+    assert reloaded is not None
+    assert str(getattr(reloaded, "status", "") or "").upper() == "DONE"
+    assert "<definition of done>" in list(getattr(reloaded, "success_criteria", []) or [])
 
 
 def test_close_task_apply_autolands_when_contract_done_can_fill_success_criteria(manager: TaskManager):

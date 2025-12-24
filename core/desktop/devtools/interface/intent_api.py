@@ -6730,7 +6730,6 @@ def handle_close_task(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
                 recipe_kind in {"task_detail", "step", "task"}
                 and isinstance(recipe_ops, list)
                 and recipe_ops
-                and not _ops_contain_placeholder_values(recipe_ops)
             ):
                 sim2 = copy.deepcopy(sim)
                 err_resp, _meta = _apply_patch_request_inplace(
