@@ -525,6 +525,45 @@ def _close_task_patch_ops_from_patch_items(task_id: str, patch_items: List[Dict[
     return ops
 
 
+def _build_close_task_apply_package(
+    task_id: str,
+    *,
+    expected_revision: int,
+    diff_patches: List[Dict[str, Any]],
+    force: bool,
+    override_reason: str,
+) -> Dict[str, Any]:
+    """Build the exact atomic batch plan for close_task (patches → complete).
+
+    Used for both:
+    - dry_run previews (diff.apply)
+    - apply execution (handle_batch payload)
+    """
+    operations: List[Dict[str, Any]] = []
+    operations.extend(_close_task_patch_ops_from_patch_items(task_id, diff_patches))
+    operations.append(
+        {
+            "intent": "complete",
+            "task": task_id,
+            "status": "DONE",
+            "force": force,
+            "override_reason": override_reason,
+            "strict_targeting": True,
+            "expected_target_id": task_id,
+            "expected_kind": "task",
+        }
+    )
+    return {
+        "atomic": True,
+        "task": task_id,
+        "expected_revision": int(expected_revision),
+        "expected_target_id": task_id,
+        "expected_kind": "task",
+        "strict_targeting": True,
+        "operations": operations,
+    }
+
+
 def _lint_issue_fix_recipe(focus_id: str, *, detail: Any, issue: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     code = str(issue.get("code", "") or "").strip()
     target = issue.get("target")
@@ -661,7 +700,9 @@ def _build_runway_payload(
                 "errors_count": len(blocking_lint),
                 "top_errors": blocking_lint[:3],
             },
-            "validation": validation_block,
+            # Reduce noise: when lint already blocks, validation is secondary and
+            # often redundant (radar already shows 'now' for step progress).
+            "validation": validation_block if not blocking_lint else None,
         },
         "recipe": recipe,
     }
@@ -2523,7 +2564,12 @@ def _build_radar_payload(
             "queue": queue_summary,
         }
     elif all_completed:
-        now_payload = {"kind": "task", "queue_status": "ready", "queue": queue_summary}
+        status = str(getattr(task, "status", "") or "").strip().upper()
+        now_payload = {
+            "kind": "task",
+            "queue_status": ("completed" if status == "DONE" else "ready"),
+            "queue": queue_summary,
+        }
     else:
         now_payload = {"kind": "step", "queue_status": "missing", "queue": queue_summary}
     result["now"] = now_payload
@@ -6689,17 +6735,12 @@ def handle_close_task(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         "open": bool(runway_open),
         "blocking": {
             "lint": {"summary": dict((report_dict.get("summary") or {})), "errors_count": len(blocking_lint), "top_errors": blocking_lint[:3]},
-            "validation": validation_block,
+            # Keep a single dominant blocker in the UX: if lint has errors,
+            # validation is redundant noise.
+            "validation": validation_block if not blocking_lint else None,
         },
         "recipe": recipe,
     }
-
-    complete_diff: Optional[Dict[str, Any]] = None
-    if runway_open and base_status != "DONE":
-        complete_diff = {
-            "status": {"from": base_status, "to": "DONE"},
-            "progress": {"from": int(getattr(base, "progress", 0) or 0), "to": 100},
-        }
 
     diff_patches = list(patch_items)
     if isinstance(recipe, dict):
@@ -6718,33 +6759,54 @@ def handle_close_task(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             secured_patches.append(secured)
     diff_patches = secured_patches
 
-    apply_package: Optional[Dict[str, Any]] = None
-    if runway_open and base_status != "DONE":
-        operations: List[Dict[str, Any]] = []
-        operations.extend(_close_task_patch_ops_from_patch_items(task_id, diff_patches))
-        operations.append(
-            {
-                "intent": "complete",
-                "task": task_id,
-                "status": "DONE",
-                "force": force,
-                "override_reason": override_reason,
-                "strict_targeting": True,
-                "expected_target_id": task_id,
-                "expected_kind": "task",
-            }
+    autoland_secured_item: Optional[Dict[str, Any]] = None
+    autoland_runway_after: Optional[Dict[str, Any]] = None
+    autoland_recipe_meta: Optional[Dict[str, Any]] = None
+    if not runway_open and not force and isinstance(recipe, dict):
+        autoland_secured_item, autoland_runway_after, autoland_recipe_meta = _simulate_runway_after_recipe_patch(
+            manager,
+            detail=sim,
+            focus_id=task_id,
+            recipe=recipe,
+            next_suggestions=[],
+            revision=base_revision,
+            source_intent="close_task",
         )
-        apply_package = {
-            "atomic": True,
-            "task": task_id,
-            "expected_revision": base_revision,
-            "expected_target_id": task_id,
-            "expected_kind": "task",
-            "strict_targeting": True,
-            "operations": operations,
+
+    apply_package: Optional[Dict[str, Any]] = None
+    apply_mode: Optional[str] = None
+    if base_status != "DONE":
+        if runway_open:
+            apply_package = _build_close_task_apply_package(
+                task_id,
+                expected_revision=base_revision,
+                diff_patches=diff_patches,
+                force=force,
+                override_reason=override_reason,
+            )
+            apply_mode = "direct"
+        elif autoland_secured_item and bool((autoland_runway_after or {}).get("open", False)):
+            # Even though runway is currently closed, the deterministic recipe patch makes it open.
+            # Surface the exact apply plan in dry_run for preview→apply trust.
+            apply_package = _build_close_task_apply_package(
+                task_id,
+                expected_revision=base_revision,
+                diff_patches=diff_patches,
+                force=force,
+                override_reason=override_reason,
+            )
+            apply_mode = "autoland"
+
+    complete_diff: Optional[Dict[str, Any]] = None
+    if apply_package and base_status != "DONE":
+        complete_diff = {
+            "status": {"from": base_status, "to": "DONE"},
+            "progress": {"from": int(getattr(base, "progress", 0) or 0), "to": 100},
         }
 
-    diff = {"patches": diff_patches, "patch_results": patch_results, "complete": complete_diff, "apply": apply_package}
+    diff: Dict[str, Any] = {"patches": diff_patches, "patch_results": patch_results, "complete": complete_diff, "apply": apply_package}
+    if apply_mode:
+        diff["apply_mode"] = apply_mode
 
     if not apply:
         return AIResponse(
@@ -6766,16 +6828,7 @@ def handle_close_task(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
 
     if not runway_open and not force:
         # Auto-land: if recipe is a deterministic patch that opens runway, apply it + complete atomically.
-        secured_item, runway_after, recipe_meta = _simulate_runway_after_recipe_patch(
-            manager,
-            detail=sim,
-            focus_id=task_id,
-            recipe=recipe,
-            next_suggestions=[],
-            revision=base_revision,
-            source_intent="close_task",
-        )
-        if secured_item and bool((runway_after or {}).get("open", False)):
+        if autoland_secured_item and bool((autoland_runway_after or {}).get("open", False)):
             # Reflect completion in the diff (we are going to close).
             if base_status != "DONE":
                 diff["complete"] = {
@@ -6786,35 +6839,20 @@ def handle_close_task(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             # Make the response fully transparent (as if recipe was an explicit patch):
             # - diff.patch_results includes the recipe patch meta
             # - diff.apply is the exact atomic plan executed
-            if isinstance(recipe_meta, dict):
-                meta_payload = dict(recipe_meta)
+            if isinstance(autoland_recipe_meta, dict):
+                meta_payload = dict(autoland_recipe_meta)
                 meta_payload.setdefault("index", len(list(patch_results or [])))
                 patch_results.append(meta_payload)
 
-            operations: List[Dict[str, Any]] = []
-            operations.extend(_close_task_patch_ops_from_patch_items(task_id, diff_patches))
-            operations.append(
-                {
-                    "intent": "complete",
-                    "task": task_id,
-                    "status": "DONE",
-                    "force": force,
-                    "override_reason": override_reason,
-                    "strict_targeting": True,
-                    "expected_target_id": task_id,
-                    "expected_kind": "task",
-                }
+            apply_package = _build_close_task_apply_package(
+                task_id,
+                expected_revision=base_revision,
+                diff_patches=diff_patches,
+                force=force,
+                override_reason=override_reason,
             )
-            apply_package = {
-                "atomic": True,
-                "task": task_id,
-                "expected_revision": base_revision,
-                "expected_target_id": task_id,
-                "expected_kind": "task",
-                "strict_targeting": True,
-                "operations": operations,
-            }
             diff["apply"] = dict(apply_package)
+            diff["apply_mode"] = "autoland"
 
             batch_payload: Dict[str, Any] = {"intent": "batch", **apply_package}
             batch_resp = handle_batch(manager, batch_payload)
@@ -6866,20 +6904,23 @@ def handle_close_task(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             suggestions=[sug],
         )
 
-    operations: List[Dict[str, Any]] = []
-    operations.extend(_close_task_patch_ops_from_patch_items(task_id, diff_patches))
-    operations.append({"intent": "complete", "task": task_id, "status": "DONE", "force": force, "override_reason": override_reason})
+    apply_package_for_apply = _build_close_task_apply_package(
+        task_id,
+        expected_revision=base_revision,
+        diff_patches=diff_patches,
+        force=force,
+        override_reason=override_reason,
+    )
+    diff["apply"] = dict(apply_package_for_apply)
+    if "apply_mode" not in diff:
+        diff["apply_mode"] = "direct" if runway_open else ("forced" if force else "direct")
+    if base_status != "DONE" and not diff.get("complete"):
+        diff["complete"] = {
+            "status": {"from": base_status, "to": "DONE"},
+            "progress": {"from": int(getattr(base, "progress", 0) or 0), "to": 100},
+        }
 
-    batch_payload: Dict[str, Any] = {
-        "intent": "batch",
-        "atomic": True,
-        "task": task_id,
-        "expected_revision": base_revision,
-        "expected_target_id": task_id,
-        "expected_kind": "task",
-        "strict_targeting": True,
-        "operations": operations,
-    }
+    batch_payload: Dict[str, Any] = {"intent": "batch", **apply_package_for_apply}
     batch_resp = handle_batch(manager, batch_payload)
     if not batch_resp.success:
         return error_response(

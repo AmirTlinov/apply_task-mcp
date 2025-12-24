@@ -22,6 +22,7 @@ def test_radar_runway_surfaces_blocking_lint_and_patch_recipe(tmp_path):
     blocking = runway.get("blocking") or {}
     lint_blocking = (blocking.get("lint") or {}).get("top_errors") or []
     assert any(i.get("code") == "TASK_SUCCESS_CRITERIA_MISSING" for i in lint_blocking)
+    assert blocking.get("validation") is None, "validation must not duplicate lint blockers in runway payload"
     recipe = runway.get("recipe") or {}
     assert recipe.get("intent") == "patch"
     assert recipe.get("task") == "TASK-001"

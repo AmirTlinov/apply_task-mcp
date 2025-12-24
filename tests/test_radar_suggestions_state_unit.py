@@ -119,3 +119,18 @@ def test_radar_completion_semantics_match_full_nested_step_tree(tmp_path):
     now = resp.result.get("now") or {}
     assert now.get("kind") == "step"
     assert now.get("path") == "s:0.t:0.s:0"
+
+
+def test_radar_queue_status_completed_when_task_already_done(tmp_path):
+    tasks_dir = tmp_path / ".tasks"
+    tasks_dir.mkdir()
+    manager = TaskManager(tasks_dir=tasks_dir)
+
+    task = TaskDetail(id="TASK-001", title="Task", status="DONE", steps=[], success_criteria=["done"])
+    manager.save_task(task, skip_sync=True)
+
+    resp = handle_radar(manager, {"intent": "radar", "task": "TASK-001"})
+    assert resp.success is True
+    now = resp.result.get("now") or {}
+    assert now.get("kind") == "task"
+    assert now.get("queue_status") == "completed"
