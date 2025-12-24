@@ -135,3 +135,59 @@ def test_close_task_apply_autolands_when_contract_done_can_fill_success_criteria
     assert reloaded is not None
     assert str(getattr(reloaded, "status", "") or "").upper() == "DONE"
     assert "All checks green" in list(getattr(reloaded, "success_criteria", []) or [])
+
+
+def test_close_task_preview_includes_recipe_patch_even_with_user_patches(manager: TaskManager):
+    step = Step.new("Ready step title long enough 12345", criteria=["c"], tests=["t"])
+    assert step is not None
+    step.completed = True
+    step.criteria_confirmed = True
+    step.tests_confirmed = True
+
+    task = TaskDetail(id="TASK-001", title="Task", status="ACTIVE", steps=[step], success_criteria=[])
+    task.contract_data = {"goal": "Ship", "done": ["All checks green"], "checks": ["pytest -q"]}
+    manager.save_task(task, skip_sync=True)
+
+    resp = process_intent(
+        manager,
+        {
+            "intent": "close_task",
+            "task": "TASK-001",
+            "patches": [{"kind": "task_detail", "ops": [{"op": "append", "field": "next_steps", "value": "x"}]}],
+        },
+    )
+    assert resp.success is True
+    assert resp.result.get("dry_run") is True
+    diff = resp.result.get("diff") or {}
+    patches = diff.get("patches") or []
+    assert len(patches) == 2
+    fields = [(p.get("ops") or [{}])[0].get("field") for p in patches]
+    assert fields == ["next_steps", "success_criteria"]
+
+
+def test_close_task_apply_uses_computed_diff_patches_to_land(manager: TaskManager):
+    step = Step.new("Ready step title long enough 12345", criteria=["c"], tests=["t"])
+    assert step is not None
+    step.completed = True
+    step.criteria_confirmed = True
+    step.tests_confirmed = True
+
+    task = TaskDetail(id="TASK-001", title="Task", status="ACTIVE", steps=[step], success_criteria=[])
+    task.contract_data = {"goal": "Ship", "done": ["All checks green"], "checks": ["pytest -q"]}
+    manager.save_task(task, skip_sync=True)
+
+    resp = process_intent(
+        manager,
+        {
+            "intent": "close_task",
+            "task": "TASK-001",
+            "apply": True,
+            "patches": [{"kind": "task_detail", "ops": [{"op": "append", "field": "next_steps", "value": "x"}]}],
+        },
+    )
+    assert resp.success is True
+    reloaded = manager.load_task("TASK-001", skip_sync=True)
+    assert reloaded is not None
+    assert str(getattr(reloaded, "status", "") or "").upper() == "DONE"
+    assert "x" in list(getattr(reloaded, "next_steps", []) or [])
+    assert "All checks green" in list(getattr(reloaded, "success_criteria", []) or [])

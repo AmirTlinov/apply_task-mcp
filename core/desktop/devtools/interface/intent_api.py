@@ -456,6 +456,37 @@ def _secure_intent_payload_for_focus(payload: Any, *, focus_id: str, focus_kind:
     return secured
 
 
+def _patch_item_signature(item: Dict[str, Any]) -> str:
+    """Stable signature for deduping patch items (ignores safe guards)."""
+    keep: Dict[str, Any] = {}
+    for key in ("kind", "path", "step_id", "task_node_id", "ops"):
+        if key in item:
+            keep[key] = item.get(key)
+    try:
+        return json.dumps(keep, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except Exception:
+        return str(keep)
+
+
+def _close_task_patch_ops_from_patch_items(task_id: str, patch_items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Convert close_task.diff.patches (patch-items) into executable patch intents.
+
+    Important: we strip expected_revision to avoid intra-batch revision mismatch. The
+    close_task batch uses expected_revision preflight at the batch level instead.
+    """
+    ops: List[Dict[str, Any]] = []
+    for item in list(patch_items or []):
+        if not isinstance(item, dict):
+            continue
+        payload = dict(item)
+        payload.pop("expected_revision", None)
+        payload.pop("expected_version", None)
+        payload["intent"] = "patch"
+        payload["task"] = task_id
+        ops.append(payload)
+    return ops
+
+
 def _lint_issue_fix_recipe(focus_id: str, *, detail: Any, issue: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     code = str(issue.get("code", "") or "").strip()
     target = issue.get("target")
@@ -6562,10 +6593,13 @@ def handle_close_task(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         }
 
     diff_patches = list(patch_items)
-    if not diff_patches and isinstance(recipe, dict):
+    if isinstance(recipe, dict):
         derived = _patch_item_from_patch_intent_payload(recipe)
         if derived:
-            diff_patches = [derived]
+            existing = {_patch_item_signature(p) for p in diff_patches if isinstance(p, dict)}
+            sig = _patch_item_signature(derived)
+            if sig not in existing:
+                diff_patches.append(derived)
 
     # Previews must be copy/paste safe: add strict targeting + expected_* guards.
     secured_patches: List[Dict[str, Any]] = []
@@ -6642,14 +6676,7 @@ def handle_close_task(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
                                 "progress": {"from": int(getattr(base, "progress", 0) or 0), "to": 100},
                             }
                         operations: List[Dict[str, Any]] = []
-                        for patch in list(raw_patches or []):
-                            op_payload = dict(patch)
-                            op_payload["intent"] = "patch"
-                            op_payload.setdefault("task", task_id)
-                            operations.append(op_payload)
-                        recipe_op = dict(recipe)
-                        recipe_op.setdefault("task", task_id)
-                        operations.append(recipe_op)
+                        operations.extend(_close_task_patch_ops_from_patch_items(task_id, diff_patches))
                         operations.append(
                             {
                                 "intent": "complete",
@@ -6719,11 +6746,7 @@ def handle_close_task(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         )
 
     operations: List[Dict[str, Any]] = []
-    for patch in list(raw_patches or []):
-        op_payload = dict(patch)
-        op_payload["intent"] = "patch"
-        op_payload.setdefault("task", task_id)
-        operations.append(op_payload)
+    operations.extend(_close_task_patch_ops_from_patch_items(task_id, diff_patches))
     operations.append({"intent": "complete", "task": task_id, "status": "DONE", "force": force, "override_reason": override_reason})
 
     batch_payload: Dict[str, Any] = {
