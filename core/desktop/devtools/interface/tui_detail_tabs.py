@@ -2,11 +2,25 @@
 
 from __future__ import annotations
 
+import json
+
 from typing import List, Tuple
 
 from prompt_toolkit.formatted_text import FormattedText
 
 from core.desktop.devtools.application.task_manager import _flatten_steps
+
+def detail_tab_definitions(tui, detail) -> List[Tuple[str, str]]:
+    """Single source of truth for detail tabs + labels (used by overview + tab renderers)."""
+    overview_label = tui._t("TAB_TASKS") if getattr(detail, "kind", "task") == "plan" else tui._t("TAB_OVERVIEW")
+    return [
+        ("radar", tui._t("TAB_RADAR", fallback="Radar")),
+        ("overview", overview_label),
+        ("plan", tui._t("TAB_PLAN")),
+        ("contract", tui._t("TAB_CONTRACT")),
+        ("notes", tui._t("TAB_NOTES")),
+        ("meta", tui._t("TAB_META")),
+    ]
 
 def render_detail_tab_text(tui) -> FormattedText:
     """Render the currently selected non-overview detail tab."""
@@ -19,6 +33,8 @@ def render_detail_tab_text(tui) -> FormattedText:
         tab = "overview"
     if tab == "notes":
         return _render_notes_tab(tui)
+    if tab == "radar":
+        return _render_radar_tab(tui)
     if tab == "plan":
         return _render_plan_tab(tui)
     if tab == "contract":
@@ -27,6 +43,120 @@ def render_detail_tab_text(tui) -> FormattedText:
         return _render_meta_tab(tui)
     # Fallback to overview if the tab is unknown.
     return _render_plan_tab(tui)
+
+def _render_radar_tab(tui) -> FormattedText:
+    detail = tui.current_task_detail
+    if not detail:
+        return FormattedText([("class:text.dim", tui._t("STATUS_TASK_NOT_SELECTED"))])
+    content_width = tui._detail_content_width()
+    header_lines = _header_lines(tui, detail, content_width)
+    tab_lines, tab_hitboxes = _tab_bar_lines(tui, content_width)
+    tui._detail_tab_hitboxes = {"y": len(header_lines), "ranges": tab_hitboxes}
+    footer_lines = _footer_lines(tui, content_width)
+
+    body_lines: List[List[Tuple[str, str]]] = []
+    _append_section_header(tui, body_lines, content_width, tui._t("TAB_RADAR", fallback="Radar"))
+
+    payload = None
+    err = ""
+    getter = getattr(tui, "_radar_snapshot", None)
+    if callable(getter):
+        try:
+            payload, err = getter(force=False)
+        except Exception as exc:  # pragma: no cover
+            payload, err = None, str(exc)
+    if not isinstance(payload, dict):
+        payload = {}
+
+    if err:
+        _append_blank_line(body_lines, content_width)
+        _append_paragraph(tui, body_lines, content_width, f"⚠ {err}", style="class:icon.warn")
+        return _compose_tab_view(
+            tui=tui,
+            tab="radar",
+            content_width=content_width,
+            header_lines=header_lines + tab_lines,
+            body_lines=body_lines,
+            footer_lines=footer_lines,
+        )
+
+    runway = payload.get("runway") if isinstance(payload.get("runway"), dict) else {}
+    open_runway = bool(runway.get("open", True))
+    runway_line = tui._t("RADAR_RUNWAY_OPEN") if open_runway else tui._t("RADAR_RUNWAY_CLOSED")
+    _append_blank_line(body_lines, content_width)
+    _append_paragraph(
+        tui,
+        body_lines,
+        content_width,
+        f"{'✓' if open_runway else '✗'} {runway_line}",
+        style="class:icon.check" if open_runway else "class:icon.fail",
+    )
+
+    blocking = runway.get("blocking") if isinstance(runway.get("blocking"), dict) else {}
+    lint = blocking.get("lint") if isinstance(blocking.get("lint"), dict) else {}
+    errors_count = int(lint.get("errors_count", 0) or 0)
+    top_errors = lint.get("top_errors") if isinstance(lint.get("top_errors"), list) else []
+    validation = blocking.get("validation") if isinstance(blocking.get("validation"), dict) else None
+    if errors_count > 0 and top_errors:
+        top = top_errors[0] if isinstance(top_errors[0], dict) else {}
+        msg = str(top.get("message", "") or "").strip()
+        code = str(top.get("code", "") or "").strip()
+        summary = f"{code}: {msg}" if code and msg else (code or msg or tui._t("RADAR_LINT_ERRORS", count=errors_count))
+        _append_blank_line(body_lines, content_width)
+        _append_paragraph(tui, body_lines, content_width, f"lint: {errors_count} errors · {summary}", style="class:icon.warn")
+    elif validation and str(validation.get("message", "") or "").strip():
+        _append_blank_line(body_lines, content_width)
+        _append_paragraph(tui, body_lines, content_width, f"validation: {validation.get('message')}", style="class:icon.warn")
+
+    verify = payload.get("verify") if isinstance(payload.get("verify"), dict) else {}
+    evidence = verify.get("evidence_task") if isinstance(verify.get("evidence_task"), dict) else {}
+    if evidence:
+        steps_total = int(evidence.get("steps_total", 0) or 0)
+        steps_with = int(evidence.get("steps_with_any_evidence", 0) or 0)
+        checks = evidence.get("checks") if isinstance(evidence.get("checks"), dict) else {}
+        atts = evidence.get("attachments") if isinstance(evidence.get("attachments"), dict) else {}
+        checks_count = int(checks.get("count", 0) or 0)
+        atts_count = int(atts.get("count", 0) or 0)
+        last = str(checks.get("last_observed_at", "") or atts.get("last_observed_at", "") or "").strip()
+        last_part = f" · last {last}" if last else ""
+        _append_blank_line(body_lines, content_width)
+        _append_paragraph(
+            tui,
+            body_lines,
+            content_width,
+            f"evidence: steps {steps_with}/{steps_total} · checks {checks_count} · attachments {atts_count}{last_part}",
+            style="class:text.dim",
+        )
+
+    next_list = payload.get("next") if isinstance(payload.get("next"), list) else []
+    next_item = next_list[0] if next_list and isinstance(next_list[0], dict) else {}
+    if next_item:
+        reason = str(next_item.get("reason", "") or "").strip() or str(next_item.get("action", "") or "")
+        action = str(next_item.get("action", "") or "").strip()
+        params = next_item.get("params") if isinstance(next_item.get("params"), dict) else {}
+        validated = bool(next_item.get("validated", False))
+        cmd = {"intent": action, **dict(params or {})} if action else {}
+        _append_blank_line(body_lines, content_width)
+        _append_section_header(tui, body_lines, content_width, tui._t("RADAR_NEXT", fallback="Next"), compact=True)
+        _append_paragraph(tui, body_lines, content_width, reason, style="class:text")
+        _append_paragraph(tui, body_lines, content_width, json.dumps(cmd, ensure_ascii=False), style="class:text.dim")
+        if not validated:
+            _append_paragraph(tui, body_lines, content_width, tui._t("RADAR_NEXT_NOT_VALIDATED"), style="class:icon.warn")
+    else:
+        _append_blank_line(body_lines, content_width)
+        _append_paragraph(tui, body_lines, content_width, tui._t("RADAR_NO_NEXT"), style="class:text.dim")
+
+    _append_blank_line(body_lines, content_width)
+    _append_paragraph(tui, body_lines, content_width, tui._t("RADAR_HINT"), style="class:text.dim")
+
+    return _compose_tab_view(
+        tui=tui,
+        tab="radar",
+        content_width=content_width,
+        header_lines=header_lines + tab_lines,
+        body_lines=body_lines,
+        footer_lines=footer_lines,
+    )
 
 
 def _render_plan_tab(tui) -> FormattedText:
@@ -319,14 +449,7 @@ def _tab_bar_lines(tui, content_width: int) -> tuple[List[List[Tuple[str, str]]]
     inner = max(0, content_width - 2)
     current = getattr(tui, "detail_tab", "overview") or "overview"
     detail = getattr(tui, "current_task_detail", None)
-    overview_label = tui._t("TAB_TASKS") if getattr(detail, "kind", "task") == "plan" else tui._t("TAB_OVERVIEW")
-    all_tabs = [
-        ("overview", overview_label),
-        ("plan", tui._t("TAB_PLAN")),
-        ("contract", tui._t("TAB_CONTRACT")),
-        ("notes", tui._t("TAB_NOTES")),
-        ("meta", tui._t("TAB_META")),
-    ]
+    all_tabs = detail_tab_definitions(tui, detail)
     allowed_ids = None
     try:
         allowed_ids = set(getattr(tui, "_detail_tabs")() or [])

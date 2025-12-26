@@ -42,6 +42,7 @@ def test_detail_view_resizes_for_various_widths(tmp_path, term_width, term_heigh
 
     tui.detail_mode = True
     tui.current_task_detail = detail
+    tui.detail_tab = "overview"
     rendered = "".join(text for _, text in tui.get_detail_text())
     lines = rendered.split("\n")
 

@@ -163,3 +163,33 @@ def test_checkpoint_marks_fragments_use_color_only():
     assert fragments[3][1] == "•"
     assert "class:icon.check" in fragments[1][0]
     assert "class:text.dim" in fragments[3][0]
+
+
+def test_render_radar_tab_shows_runway_evidence_and_next(tmp_path, monkeypatch):
+    tasks_dir = tmp_path / ".tasks"
+    tasks_dir.mkdir()
+    tui = TaskTrackerTUI(tasks_dir=tasks_dir)
+    tui.language = "en"
+
+    detail = TaskDetail(id="TASK-001", title="Test", status="ACTIVE", domain="dom/a", created="", updated="")
+    tui.current_task_detail = detail
+    tui.detail_mode = True
+    tui.detail_tab = "radar"
+
+    payload = {
+        "runway": {
+            "open": False,
+            "blocking": {"lint": {"summary": {}, "errors_count": 1, "top_errors": [{"code": "X", "message": "broken"}]}, "validation": None},
+            "recipe": {"intent": "patch"},
+        },
+        "verify": {"evidence_task": {"steps_total": 2, "steps_with_any_evidence": 1, "checks": {"count": 3, "last_observed_at": ""}, "attachments": {"count": 1, "last_observed_at": ""}}},
+        "next": [{"action": "patch", "reason": "Fix it", "validated": True, "params": {"task": "TASK-001", "ops": [{"op": "set", "field": "description", "value": "x"}]}}],
+    }
+    monkeypatch.setattr(tui, "_radar_snapshot", lambda force=False: (payload, ""))
+
+    text = _plain_text(render_detail_text_impl(tui))
+    assert "Radar" in text
+    assert "Runway closed" in text
+    assert "evidence:" in text
+    assert '"intent": "patch"' in text
+    assert "Enter — run next" in text

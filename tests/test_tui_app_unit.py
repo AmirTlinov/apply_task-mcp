@@ -345,9 +345,11 @@ class TestTaskTrackerTUIInstanceMethods:
         tui.cycle_detail_tab(1)
         assert tui.detail_tab == "meta"
         tui.cycle_detail_tab(1)
+        assert tui.detail_tab == "radar"
+        tui.cycle_detail_tab(1)
         assert tui.detail_tab == "overview"
 
-    def test_show_task_details_sets_overview_tab_for_plan(self, tmp_path):
+    def test_show_task_details_sets_radar_tab_for_plan(self, tmp_path):
         tasks_dir = tmp_path / ".tasks"
         tasks_dir.mkdir()
         tui = TaskTrackerTUI(tasks_dir=tasks_dir)
@@ -357,7 +359,7 @@ class TestTaskTrackerTUIInstanceMethods:
         task = Task(id="PLAN-001", name="Plan", status=Status.TODO, description="", category="plan", detail=plan_detail)
 
         tui.show_task_details(task)
-        assert tui.detail_tab == "overview"
+        assert tui.detail_tab == "radar"
 
     def test_move_vertical_selection_scrolls_in_non_overview_detail_tabs(self, tui):
         detail = TaskDetail(id="TASK-001", title="T", status="ACTIVE", domain="dom/a", created="", updated="")

@@ -6,7 +6,7 @@
  * - Frontend types match Python serializers (plan_to_dict/task_to_dict/step_to_dict).
  */
 
-import type { AIResponse, ContextData, MirrorData, ResumeData } from "@/types/api";
+import type { AIResponse, ContextData, MirrorData, ResumeData, RadarData, Suggestion } from "@/types/api";
 import type { Plan, PlanListItem, StorageInfo, Task, TaskListItem, TaskStatus, Step } from "@/types/task";
 
 // Check if we're running inside Tauri (Tauri 2.0 uses __TAURI_INTERNALS__)
@@ -181,7 +181,7 @@ export interface TaskResponse {
 }
 
 export async function showTask(taskId: string): Promise<TaskResponse> {
-  const resp = await aiIntent<ResumeData>("resume", { task: taskId, events_limit: 50 });
+  const resp = await aiIntent<ResumeData>("resume", { task: taskId, compact: false, events_limit: 50 });
   if (!resp.success) {
     return { success: false, error: extractAIError(resp) || "Failed to load task" };
   }
@@ -192,7 +192,7 @@ export async function showTask(taskId: string): Promise<TaskResponse> {
 }
 
 export async function resumeEntity(id: string): Promise<{ success: boolean; plan?: Plan; task?: Task; error?: string }> {
-  const resp = await aiIntent<ResumeData>("resume", { task: id, events_limit: 50 });
+  const resp = await aiIntent<ResumeData>("resume", { task: id, compact: false, events_limit: 50 });
   if (!resp.success) {
     return { success: false, error: extractAIError(resp) || "Failed to resume" };
   }
@@ -201,6 +201,36 @@ export async function resumeEntity(id: string): Promise<{ success: boolean; plan
     plan: (resp.result?.plan as unknown as Plan | undefined) ?? undefined,
     task: (resp.result?.task as unknown as Task | undefined) ?? undefined,
   };
+}
+
+export async function getRadar(params: {
+  taskId: string;
+  limit?: number;
+  maxChars?: number;
+}): Promise<{ success: boolean; data?: RadarData; error?: string }> {
+  const resp = await aiIntent<RadarData>("radar", {
+    task: params.taskId,
+    limit: params.limit ?? 3,
+    max_chars: params.maxChars ?? 12_000,
+  });
+  if (!resp.success) {
+    return { success: false, error: extractAIError(resp) || "Failed to load radar" };
+  }
+  return { success: true, data: resp.result as unknown as RadarData };
+}
+
+export async function runValidatedSuggestion(suggestion: Suggestion): Promise<{ success: boolean; response?: AIResponse; error?: string }> {
+  const validated = Boolean((suggestion as { validated?: boolean }).validated);
+  if (!validated) {
+    return { success: false, error: "Suggestion is not validated" };
+  }
+  const intent = String(suggestion.action || "").trim();
+  if (!intent) return { success: false, error: "Suggestion has no action" };
+  const resp = await aiIntent(intent, suggestion.params ?? {});
+  if (!resp.success) {
+    return { success: false, response: resp, error: extractAIError(resp) || "Failed to execute suggestion" };
+  }
+  return { success: true, response: resp };
 }
 
 export async function getHandoff(params: {
@@ -253,6 +283,24 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus): Prom
   const resp = await aiIntent("complete", { task: taskId, status });
   if (!resp.success) return { success: false, error: extractAIError(resp) || "Failed to update status" };
   return { success: true };
+}
+
+export async function closeTask(params: {
+  taskId: string;
+  patches?: unknown[];
+  expectedRevision?: number;
+}): Promise<{ success: boolean; result?: unknown; error?: string }> {
+  const resp = await aiIntent("close_task", {
+    task: params.taskId,
+    apply: true,
+    patches: params.patches,
+    strict_targeting: true,
+    expected_target_id: params.taskId,
+    expected_kind: "task",
+    expected_revision: typeof params.expectedRevision === "number" ? params.expectedRevision : undefined,
+  });
+  if (!resp.success) return { success: false, result: resp.result, error: extractAIError(resp) || "Failed to close task" };
+  return { success: true, result: resp.result };
 }
 
 export async function deleteTask(taskId: string): Promise<{ success: boolean; error?: string }> {
@@ -553,7 +601,12 @@ export async function getTaskTimelineEvents(params: {
   taskId: string;
   limit?: number;
 }): Promise<{ success: boolean; events?: TaskTimelineEventRecord[]; error?: string }> {
-  const resp = await aiIntent<ResumeData>("resume", { task: params.taskId, events_limit: params.limit ?? 50 });
+  const resp = await aiIntent<ResumeData>("resume", {
+    task: params.taskId,
+    compact: false,
+    include_steps: false,
+    events_limit: params.limit ?? 50,
+  });
   if (!resp.success) return { success: false, error: extractAIError(resp) || "Failed to load timeline" };
   const events = (resp.result?.timeline as unknown as TaskTimelineEventRecord[] | undefined) ?? [];
   return { success: true, events: Array.isArray(events) ? events : [] };

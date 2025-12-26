@@ -59,7 +59,6 @@ export function PlanDetailView({
   onOpenTask,
   onNewTask,
 }: PlanDetailViewProps) {
-  const queryClient = useQueryClient();
   const [isExportingHandoff, setIsExportingHandoff] = useState(false);
   const planQueryKey = useMemo(() => ["plan", planId] as const, [planId]);
 

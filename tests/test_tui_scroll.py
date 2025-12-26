@@ -9,6 +9,7 @@ def build_tui(tmp_path, *, project_mode: bool = False):
     tasks_dir = tmp_path / ".tasks"
     tui = TaskTrackerTUI(tasks_dir=tasks_dir)
     tui.project_mode = project_mode
+    tui.detail_tab = "overview"
     return tui
 
 
@@ -113,6 +114,7 @@ def test_detail_drilldown_cycle_step_plan_task(tmp_path):
     # Enter Step → Plan (Tasks list)
     tui.show_subtask_details("s:0")
     assert getattr(tui.current_task_detail, "kind", "") == "plan"
+    tui.detail_tab = "overview"
     rendered_plan = "".join(text for _, text in tui.get_detail_text())
     assert "Nested task" in rendered_plan
     assert "Child item" not in rendered_plan
@@ -120,6 +122,7 @@ def test_detail_drilldown_cycle_step_plan_task(tmp_path):
     # Enter Task → Steps list
     tui._open_selected_plan_task_detail()
     assert getattr(tui.current_task_detail, "kind", "") == "task"
+    tui.detail_tab = "overview"
     rendered_task = "".join(text for _, text in tui.get_detail_text())
     assert "Child item" in rendered_task
 
@@ -159,11 +162,13 @@ def test_collapse_state_persists_per_task(tmp_path):
     task.detail = detail
 
     tui.show_task_details(task)
+    tui.detail_tab = "overview"
     tui._toggle_collapse_selected(expand=False)
     collapsed = "".join(text for _, text in tui.get_detail_text())
     assert "1.T1.1" not in collapsed
 
     tui.show_task_details(task)  # reopen should keep collapsed
+    tui.detail_tab = "overview"
     reopened = "".join(text for _, text in tui.get_detail_text())
     assert "1.T1.1" not in reopened
 

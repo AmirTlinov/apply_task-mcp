@@ -373,14 +373,9 @@ def render_detail_text_impl(tui) -> FormattedText:
     # ---------- Tab bar (overview is a tab too) ----------
     inner_width = max(0, content_width - 2)
     current_tab = getattr(tui, "detail_tab", "overview") or "overview"
-    overview_label = tui._t("TAB_TASKS") if getattr(detail, "kind", "task") == "plan" else tui._t("TAB_OVERVIEW")
-    all_tabs = [
-        ("overview", overview_label),
-        ("plan", tui._t("TAB_PLAN")),
-        ("contract", tui._t("TAB_CONTRACT")),
-        ("notes", tui._t("TAB_NOTES")),
-        ("meta", tui._t("TAB_META")),
-    ]
+    from core.desktop.devtools.interface.tui_detail_tabs import detail_tab_definitions
+
+    all_tabs = detail_tab_definitions(tui, detail)
     allowed_ids = None
     try:
         allowed_ids = set(getattr(tui, "_detail_tabs")() or [])

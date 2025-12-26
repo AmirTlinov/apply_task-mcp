@@ -20,6 +20,7 @@ export interface Suggestion {
   target: string;
   reason: string;
   priority?: string;
+  validated?: boolean;
   params?: Record<string, unknown>;
 }
 
@@ -117,6 +118,92 @@ export interface ResumeData {
   task?: Task;
   timeline?: TaskEvent[];
   checkpoint_status?: { pending: string[]; ready: string[] };
+}
+
+export type FocusKind = "plan" | "task";
+export type QueueStatus = "pending" | "in_progress" | "blocked" | "ready" | "completed" | "missing";
+
+export interface RadarFocus {
+  id: string;
+  kind: FocusKind;
+  revision: number;
+  domain: string;
+  title: string;
+  lifecycle_status?: "TODO" | "ACTIVE" | "DONE" | string;
+}
+
+export interface RadarNow {
+  kind: "step" | "task" | "plan_step";
+  queue_status: QueueStatus;
+  queue?: { pending: number; ready: number; next_pending?: string | null; next_ready?: string | null };
+  // Step-only fields
+  path?: string;
+  id?: string;
+  title?: string;
+  progress?: number;
+  children_done?: number;
+  children_total?: number;
+  blocked?: boolean;
+  criteria_confirmed?: boolean;
+  tests_confirmed?: boolean;
+  criteria_auto_confirmed?: boolean;
+  tests_auto_confirmed?: boolean;
+  // Plan-only fields
+  index?: number;
+  total?: number;
+}
+
+export interface RunwayBlockingLint {
+  summary: Record<string, unknown>;
+  errors_count: number;
+  top_errors: Array<Record<string, unknown>>;
+}
+
+export interface RunwayBlockingValidation {
+  code: string;
+  message: string;
+  target?: Record<string, unknown>;
+}
+
+export interface RadarRunway {
+  open: boolean;
+  blocking: {
+    lint: RunwayBlockingLint;
+    validation: RunwayBlockingValidation | null;
+  };
+  recipe: Record<string, unknown> | null;
+}
+
+export interface EvidenceTaskSummary {
+  steps_total: number;
+  steps_with_any_evidence: number;
+  verification_outcomes: { count: number; kinds: Record<string, number> };
+  checks: { count: number; kinds: Record<string, number>; last_observed_at: string };
+  attachments: { count: number; kinds: Record<string, number>; last_observed_at: string };
+}
+
+export interface EvidenceContractSummary {
+  max_items: number;
+  max_artifact_bytes: number;
+  kinds: string[];
+}
+
+export interface RadarVerifySummary {
+  commands: string[];
+  open_checkpoints?: string[];
+  evidence_task?: EvidenceTaskSummary;
+  evidence_contract?: EvidenceContractSummary;
+}
+
+export interface RadarData {
+  focus: RadarFocus;
+  now: RadarNow;
+  runway: RadarRunway;
+  verify: RadarVerifySummary;
+  next: Suggestion[];
+  blockers?: Record<string, unknown>;
+  open_checkpoints?: string[];
+  links?: Record<string, unknown>;
 }
 
 /** List command payload */

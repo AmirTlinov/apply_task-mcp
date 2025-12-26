@@ -3051,6 +3051,9 @@ def handle_resume(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
             result={"task": focus_id},
         )
     compact = _parse_compact(data.get("compact"), default=True)
+    include_steps = True
+    if not compact and "include_steps" in data:
+        include_steps = bool(data.get("include_steps"))
 
     # Keep suggestions consistent with radar: runway-gated, single best next action.
     focus_domain = str(getattr(detail, "domain", "") or "")
@@ -3089,7 +3092,7 @@ def handle_resume(manager: TaskManager, data: Dict[str, Any]) -> AIResponse:
         if getattr(detail, "kind", "task") == "plan":
             result["plan"] = plan_to_dict(detail, compact=False)
         else:
-            result["task"] = task_to_dict(detail, include_steps=True, compact=False)
+            result["task"] = task_to_dict(detail, include_steps=include_steps, compact=False)
             result["checkpoint_status"] = _compute_checkpoint_status(detail)
         # Timeline: expose events if present (already structured)
         events = list(getattr(detail, "events", []) or [])

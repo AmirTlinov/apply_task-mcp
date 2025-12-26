@@ -140,6 +140,7 @@ export interface Task {
   id: string;
   kind: "task";
   title: string;
+  revision: number;
   status: TaskStatus;
   status_code: TaskStatus;
   progress: number;
@@ -182,6 +183,7 @@ export interface TaskListItem {
   id: string;
   kind: "task";
   title: string;
+  revision: number;
   status: TaskStatus;
   status_code: TaskStatus;
   progress: number;

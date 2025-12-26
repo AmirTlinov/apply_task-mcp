@@ -19,6 +19,7 @@ def test_detail_view_clamped_to_terminal(tmp_path):
 
     tui.detail_mode = True
     tui.current_task_detail = detail
+    tui.detail_tab = "overview"
     text = tui.get_detail_text()
     rendered = "".join(fragment for _, fragment in text)
     lines = rendered.split("\n")

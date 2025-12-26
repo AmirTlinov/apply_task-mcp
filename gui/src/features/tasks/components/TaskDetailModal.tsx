@@ -43,6 +43,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -52,9 +53,12 @@ import { useKeyboardListNavigation } from "@/hooks/useKeyboardListNavigation";
 import {
   showTask,
   updateTaskStatus as apiUpdateTaskStatus,
+  closeTask as apiCloseTask,
   deleteTask as apiDeleteTask,
   mirrorList,
   getHandoff,
+  getRadar,
+  runValidatedSuggestion,
   setStepCompleted,
   addStepNote,
   setStepBlocked,
@@ -65,11 +69,12 @@ import {
   deleteTaskNode,
 } from "@/lib/tauri";
 import type { Step, StepStatus, Task, TaskNode, TaskStatus } from "@/types/task";
-import type { MirrorItem } from "@/types/api";
+import type { MirrorItem, RadarData, Suggestion } from "@/types/api";
 import { TaskContractSection } from "@/features/tasks/components/TaskContractSection";
 import { TaskPlanSection } from "@/features/tasks/components/TaskPlanSection";
 import { TaskNotesSection } from "@/features/tasks/components/TaskNotesSection";
 import { TaskMetaSection } from "@/features/tasks/components/TaskMetaSection";
+import { TaskRadarSection } from "@/features/tasks/components/TaskRadarSection";
 import { toast } from "@/components/common/toast";
 import { useSettingsStore } from "@/stores/settingsStore";
 
@@ -114,20 +119,9 @@ function parseTreePath(path: string | undefined): PathSegment[] {
   return segments;
 }
 
-function buildTreePath(segments: PathSegment[]): string {
-  return segments.map((seg) => `${seg.kind}:${seg.index}`).join(".");
-}
-
 function appendTreePath(base: string | undefined, kind: "s" | "t", index: number): string {
   const prefix = base ? `${base}.` : "";
   return `${prefix}${kind}:${index}`;
-}
-
-function parentTreePath(path: string): string | null {
-  if (!path) return null;
-  const parts = path.split(".").filter(Boolean);
-  if (parts.length <= 1) return null;
-  return parts.slice(0, -1).join(".");
 }
 
 function isTaskPath(path: string | undefined): boolean {
@@ -422,6 +416,86 @@ export function TaskDetailView({
     if (subtasksFilter === "ALL") return mirrorItems;
     return mirrorItems.filter((item) => mirrorStatusToTaskStatus(item.status) === subtasksFilter);
   }, [mirrorItems, subtasksFilter]);
+
+  const radarQueryKey = useMemo(() => ["radar", taskId] as const, [taskId]);
+  const radarQuery = useQuery({
+    queryKey: radarQueryKey,
+    queryFn: async () => {
+      const resp = await getRadar({ taskId: taskId! });
+      if (!resp.success || !resp.data) {
+        throw new Error(resp.error || "Failed to load radar");
+      }
+      return resp.data;
+    },
+    enabled: !!taskId,
+  });
+
+  const runRadarNextMutation = useMutation({
+    mutationFn: async (next: Suggestion) => {
+      const resp = await runValidatedSuggestion(next);
+      if (!resp.success) throw new Error(resp.error || "Failed to execute suggestion");
+      return resp.response;
+    },
+    onError: (err) => {
+      toast.error(err instanceof Error ? err.message : "Failed to execute next step");
+    },
+    onSuccess: () => {
+      toast.success("Next step executed");
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: radarQueryKey });
+      queryClient.invalidateQueries({ queryKey: taskQueryKey });
+      queryClient.invalidateQueries({ queryKey: mirrorQueryKey });
+      queryClient.invalidateQueries({ queryKey: ["tasks"] });
+    },
+  });
+
+  const closeTaskMutation = useMutation({
+    mutationFn: async ({ taskId: id, expectedRevision }: { taskId: string; expectedRevision?: number }) => {
+      const resp = await apiCloseTask({ taskId: id, expectedRevision });
+      if (!resp.success) throw new Error(resp.error || "Failed to close task");
+      return resp.result;
+    },
+    onError: (err) => {
+      toast.error(err instanceof Error ? err.message : "Failed to close task");
+    },
+    onSuccess: () => {
+      toast.success("Task closed (DONE)");
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: radarQueryKey });
+      queryClient.invalidateQueries({ queryKey: taskQueryKey });
+      queryClient.invalidateQueries({ queryKey: mirrorQueryKey });
+      queryClient.invalidateQueries({ queryKey: ["tasks"] });
+    },
+  });
+
+  const radarNext = useMemo(() => radarQuery.data?.next?.[0], [radarQuery.data]);
+  const runwayKnownClosed = useMemo(() => (radarQuery.data ? radarQuery.data.runway?.open === false : false), [radarQuery.data]);
+  const radarNextIsOneCallClose = useMemo(() => {
+    if (!radarNext) return false;
+    if (!radarNext.validated) return false;
+    if (radarNext.action !== "close_task") return false;
+    const params = (radarNext.params ?? {}) as Record<string, unknown>;
+    return Boolean(params.apply);
+  }, [radarNext]);
+
+  const handleRunRadarNext = useCallback(
+    (next: Suggestion) => {
+      runRadarNextMutation.mutate(next);
+    },
+    [runRadarNextMutation]
+  );
+
+  const handleCopyRadarNext = useCallback(async (next: Suggestion) => {
+    try {
+      const payload = { intent: next.action, ...(next.params ?? {}) };
+      await navigator.clipboard.writeText(JSON.stringify(payload));
+      toast.success("Copied");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to copy");
+    }
+  }, []);
   const listLabelForPath = useCallback((pathValue: string | null | undefined) => {
     const path = (pathValue || "").trim();
     if (!path) return "Steps";
@@ -534,6 +608,7 @@ export function TaskDetailView({
         return steps.every((child) => child.completed && areStepChildrenDone(child));
       });
     }
+    return false;
   }
 
   function computeMissingCheckpoints(step: Step): Array<"criteria" | "tests" | "children"> {
@@ -811,7 +886,20 @@ export function TaskDetailView({
 
   const handleStatusChange = (status: TaskStatus) => {
     if (!task) return;
-    updateStatusMutation.mutate({ taskId: task.id, status });
+    if (status !== "DONE") {
+      updateStatusMutation.mutate({ taskId: task.id, status });
+      return;
+    }
+
+    if (runwayKnownClosed && !radarNextIsOneCallClose) {
+      toast.error("Runway closed — fix via Radar first");
+      return;
+    }
+    if (radarNextIsOneCallClose && radarNext) {
+      runRadarNextMutation.mutate(radarNext);
+      return;
+    }
+    closeTaskMutation.mutate({ taskId: task.id, expectedRevision: task.revision });
   };
 
   const requestDeleteTask = () => {
@@ -855,15 +943,6 @@ export function TaskDetailView({
     setSubtasksView("table");
     if (!path) return;
     setDrilldownPath(path);
-  };
-
-  const selectSubtaskAtPath = (path: string) => {
-    setCardsPath(path);
-  };
-
-  const openCardsAtPath = (path: string) => {
-    setSubtasksView("cards");
-    setCardsPath(path);
   };
 
   // Don't render if no taskId
@@ -1087,6 +1166,17 @@ export function TaskDetailView({
 
       {/* Content */}
       <div className="custom-scrollbar flex-1 overflow-y-auto px-[var(--density-page-pad)] pb-[var(--density-page-pad)] pt-3">
+        <TaskRadarSection
+          radar={radarQuery.data as RadarData | undefined}
+          isLoading={radarQuery.isLoading}
+          error={radarQuery.error instanceof Error ? radarQuery.error.message : radarQuery.error ? String(radarQuery.error) : undefined}
+          isRunning={runRadarNextMutation.isPending || closeTaskMutation.isPending}
+          onRunNext={handleRunRadarNext}
+          onCopyNext={handleCopyRadarNext}
+          onRefresh={() => {
+            void radarQuery.refetch();
+          }}
+        />
         <TaskNotesSection task={task} />
         <TaskMetaSection task={task} />
 
@@ -1221,17 +1311,23 @@ export function TaskDetailView({
               {(["TODO", "ACTIVE", "DONE"] as TaskStatus[]).map((status) => {
                 const isSelected = task.status === status;
                 const ui = TASK_STATUS_UI[status];
+                const disableDone = status === "DONE" && runwayKnownClosed && !radarNextIsOneCallClose && task.status !== "DONE";
+                const isBusy = updateStatusMutation.isPending || runRadarNextMutation.isPending || closeTaskMutation.isPending;
+                const disabled = isBusy || disableDone;
 
                 return (
                   <button
                     key={status}
                     type="button"
                     onClick={() => handleStatusChange(status)}
+                    disabled={disabled}
+                    title={disableDone ? "Runway closed — fix via Radar first" : undefined}
                     className={cn(
                       "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
                       isSelected
                         ? cn(ui.classes.bg, ui.classes.text)
-                        : "text-foreground-muted hover:bg-background-hover"
+                        : "text-foreground-muted hover:bg-background-hover",
+                      disabled && "cursor-not-allowed opacity-50 hover:bg-transparent"
                     )}
                   >
                     {ui.label}
@@ -2234,8 +2330,7 @@ export function SubtaskItem({
                 onClick={(e) => {
                   e.stopPropagation();
                   setEditingSection(key);
-                  setDraftText(list.join("
-"));
+                  setDraftText(list.join("\n"));
                 }}
               >
                 Edit
@@ -2280,8 +2375,7 @@ export function SubtaskItem({
                 onClick={async (e) => {
                   e.stopPropagation();
                   const next = draftText
-                    .split("
-")
+                    .split("\n")
                     .map((l) => l.trim())
                     .filter(Boolean);
                   setSavingSection(key);
@@ -2304,8 +2398,7 @@ export function SubtaskItem({
             onClick={(e) => {
               e.stopPropagation();
               setEditingSection(key);
-              setDraftText(list.join("
-"));
+              setDraftText(list.join("\n"));
             }}
           >
             {list.map((item, i) => (

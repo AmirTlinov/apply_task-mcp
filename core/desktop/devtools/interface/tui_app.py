@@ -110,7 +110,7 @@ from .tui_checkpoint import CheckpointMixin
 from .tui_editing import EditingMixin
 from .tui_display import DisplayMixin
 
-DETAIL_TABS: Tuple[str, ...] = ("overview", "plan", "contract", "notes", "meta")
+DETAIL_TABS: Tuple[str, ...] = ("radar", "overview", "plan", "contract", "notes", "meta")
 
 
 class TaskTrackerTUI(ClipboardMixin, CheckpointMixin, EditingMixin, DisplayMixin):
@@ -204,9 +204,15 @@ class TaskTrackerTUI(ClipboardMixin, CheckpointMixin, EditingMixin, DisplayMixin
         # Cached step-tree counts for TASK rows in Plan detail: key -> (fingerprint, total, done)
         self._detail_task_step_counts_cache: Dict[Tuple[str, str], Tuple[Tuple[Any, ...], int, int]] = {}
         self.navigation_stack = []
-        self.detail_tab: str = "overview"
-        self.detail_tab_scroll_offsets: Dict[str, int] = {"notes": 0, "plan": 0, "contract": 0, "meta": 0}
+        # Radar is the primary "cockpit" screen in detail view.
+        self.detail_tab: str = "radar"
+        self.detail_tab_scroll_offsets: Dict[str, int] = {"radar": 0, "notes": 0, "plan": 0, "contract": 0, "meta": 0}
         self.task_details_cache: Dict[str, TaskDetail] = {}
+        # Cached radar payload to keep rendering snappy (linting can be expensive).
+        self._radar_cache_focus_id: str = ""
+        self._radar_cache_payload: Optional[Dict[str, Any]] = None
+        self._radar_cache_error: str = ""
+        self._radar_cache_at: float = 0.0
         self._last_signature = None
         self._last_check = 0.0
         self.horizontal_offset = 0  # For horizontal scrolling
@@ -320,6 +326,9 @@ class TaskTrackerTUI(ClipboardMixin, CheckpointMixin, EditingMixin, DisplayMixin
         )
         checkpoint_open_allowed = detail_tab_allowed & Condition(
             lambda: getattr(self, "detail_tab", "overview") == "overview"
+        )
+        radar_tab_allowed = detail_tab_allowed & Condition(
+            lambda: getattr(self, "detail_tab", "radar") == "radar"
         )
         list_editor_active = Condition(
             lambda: (
@@ -515,6 +524,12 @@ class TaskTrackerTUI(ClipboardMixin, CheckpointMixin, EditingMixin, DisplayMixin
         def _(event):
             self.cycle_detail_tab(1)
 
+        @kb.add("c", filter=radar_tab_allowed)
+        @kb.add("с", filter=radar_tab_allowed)
+        def _(event):
+            """c - copy current radar next suggestion (JSON)."""
+            self.copy_radar_next()
+
         @kb.add("t", filter=not_editing)
         @kb.add("е", filter=not_editing)
         def _(event):
@@ -613,7 +628,11 @@ class TaskTrackerTUI(ClipboardMixin, CheckpointMixin, EditingMixin, DisplayMixin
                 self.activate_list_editor()
                 return
             if self.detail_mode and self.current_task_detail:
-                if getattr(self, "detail_tab", "overview") != "overview":
+                current_tab = getattr(self, "detail_tab", "radar") or "radar"
+                if current_tab == "radar":
+                    self.execute_radar_next()
+                    return
+                if current_tab != "overview":
                     return
                 if getattr(self.current_task_detail, "kind", "task") == "plan":
                     self._open_selected_plan_task_detail()
@@ -2975,8 +2994,8 @@ class TaskTrackerTUI(ClipboardMixin, CheckpointMixin, EditingMixin, DisplayMixin
             self.detail_selected_index = 0
             self.detail_selected_path = ""
             self.detail_selected_task_id = None
-            self.detail_tab = "overview"
-            self.detail_tab_scroll_offsets = {"notes": 0, "plan": 0, "contract": 0, "meta": 0}
+            self.detail_tab = "radar"
+            self.detail_tab_scroll_offsets = {"radar": 0, "notes": 0, "plan": 0, "contract": 0, "meta": 0}
             self.detail_flat_dirty = True
             self._rebuild_detail_flat()
             self.detail_view_offset = 0
@@ -3009,8 +3028,8 @@ class TaskTrackerTUI(ClipboardMixin, CheckpointMixin, EditingMixin, DisplayMixin
         self.detail_plan_tasks = []
         self.detail_selected_task_id = None
         self._invalidate_plan_detail_tasks_cache()
-        self.detail_tab = "overview"
-        self.detail_tab_scroll_offsets = {"notes": 0, "plan": 0, "contract": 0, "meta": 0}
+        self.detail_tab = "radar"
+        self.detail_tab_scroll_offsets = {"radar": 0, "notes": 0, "plan": 0, "contract": 0, "meta": 0}
         self.detail_collapsed = set(self.collapsed_by_task.get(self.current_task_detail.id, set()))
         self.detail_flat_dirty = True
         self._rebuild_detail_flat()
@@ -3059,8 +3078,8 @@ class TaskTrackerTUI(ClipboardMixin, CheckpointMixin, EditingMixin, DisplayMixin
         self.detail_selected_index = 0
         self.detail_selected_path = ""
         self.detail_selected_task_id = None
-        self.detail_tab = "overview"
-        self.detail_tab_scroll_offsets = {"notes": 0, "plan": 0, "contract": 0, "meta": 0}
+        self.detail_tab = "radar"
+        self.detail_tab_scroll_offsets = {"radar": 0, "notes": 0, "plan": 0, "contract": 0, "meta": 0}
         if getattr(new_detail, "kind", "task") == "plan":
             self.detail_plan_tasks = []
             self._invalidate_plan_detail_tasks_cache()
@@ -3492,6 +3511,132 @@ class TaskTrackerTUI(ClipboardMixin, CheckpointMixin, EditingMixin, DisplayMixin
         else:
             self.set_status_message(self._t("STATUS_MESSAGE_HANDOFF_SAVED", path=str(export_path)), ttl=5)
 
+    # ---------- Radar (AI cockpit) ----------
+
+    def _invalidate_radar_cache(self) -> None:
+        self._radar_cache_focus_id = ""
+        self._radar_cache_payload = None
+        self._radar_cache_error = ""
+        self._radar_cache_at = 0.0
+
+    def _radar_focus_id(self) -> str:
+        if not getattr(self, "detail_mode", False) or not getattr(self, "current_task_detail", None):
+            return ""
+        try:
+            root_task_id, _root_domain, _path_prefix = self._get_root_task_context()
+            return str(root_task_id or "").strip()
+        except Exception:
+            return str(getattr(self.current_task_detail, "id", "") or "").strip()
+
+    def _radar_snapshot(self, *, force: bool = False) -> Tuple[Optional[Dict[str, Any]], str]:
+        """Return cached radar payload for current focus (fast, deterministic)."""
+        focus_id = self._radar_focus_id()
+        if not focus_id:
+            return None, self._t("STATUS_TASK_NOT_SELECTED")
+        now = time.time()
+        if (
+            not force
+            and self._radar_cache_focus_id == focus_id
+            and (now - float(self._radar_cache_at or 0.0)) < 0.6
+            and isinstance(self._radar_cache_payload, dict)
+        ):
+            return self._radar_cache_payload, str(self._radar_cache_error or "")
+
+        from core.desktop.devtools.interface.intent_api import process_intent
+
+        resp = process_intent(self.manager, {"intent": "radar", "task": focus_id, "limit": 3, "max_chars": 12_000})
+        payload = resp.result if isinstance(resp.result, dict) else {}
+        err = "" if resp.success else str(resp.error_message or resp.error_code or "radar failed")
+        self._radar_cache_focus_id = focus_id
+        self._radar_cache_payload = dict(payload or {})
+        self._radar_cache_error = err
+        self._radar_cache_at = now
+        return self._radar_cache_payload, err
+
+    def _refresh_current_detail_from_disk(self) -> None:
+        """Reload current detail view from the root task file (handles nested navigation)."""
+        if not getattr(self, "current_task_detail", None):
+            return
+        try:
+            root_task_id, root_domain, path_prefix = self._get_root_task_context()
+        except Exception:
+            return
+        updated_root = self.manager.load_task(root_task_id, root_domain, skip_sync=True)
+        if not updated_root:
+            return
+        self.task_details_cache[root_task_id] = updated_root
+        if path_prefix:
+            derived = self._derive_nested_detail(updated_root, root_task_id, path_prefix)
+            if derived:
+                derived.domain = root_domain
+                self.current_task_detail = derived
+            else:
+                self.current_task_detail = updated_root
+        else:
+            self.current_task_detail = updated_root
+        self.detail_flat_dirty = True
+        try:
+            self._rebuild_detail_flat()
+        except Exception:
+            pass
+        if self.current_task_detail and getattr(self.current_task_detail, "kind", "task") == "plan":
+            self._detail_plan_tasks_dirty = True
+
+    def copy_radar_next(self) -> None:
+        payload, err = self._radar_snapshot(force=True)
+        if err:
+            self.set_status_message(err[:120], ttl=5)
+            return
+        data = payload if isinstance(payload, dict) else {}
+        next_items = data.get("next") if isinstance(data.get("next"), list) else []
+        next_item = next_items[0] if next_items and isinstance(next_items[0], dict) else {}
+        action = str(next_item.get("action", "") or "").strip()
+        params = next_item.get("params") if isinstance(next_item.get("params"), dict) else {}
+        if not action:
+            self.set_status_message(self._t("RADAR_NO_NEXT"), ttl=4)
+            return
+        cmd = {"intent": action, **dict(params or {})}
+        text = json.dumps(cmd, ensure_ascii=False)
+        if self._copy_to_clipboard(text):
+            self.set_status_message(self._t("RADAR_COPIED"), ttl=3)
+        else:
+            self.set_status_message(self._t("CLIPBOARD_EMPTY"), ttl=3)
+
+    def execute_radar_next(self) -> None:
+        payload, err = self._radar_snapshot(force=True)
+        if err:
+            self.set_status_message(err[:120], ttl=5)
+            return
+        data = payload if isinstance(payload, dict) else {}
+        next_items = data.get("next") if isinstance(data.get("next"), list) else []
+        next_item = next_items[0] if next_items and isinstance(next_items[0], dict) else {}
+        action = str(next_item.get("action", "") or "").strip()
+        params = next_item.get("params") if isinstance(next_item.get("params"), dict) else {}
+        validated = bool(next_item.get("validated", False))
+        if not action:
+            self.set_status_message(self._t("RADAR_NO_NEXT"), ttl=4)
+            return
+        if not validated:
+            self.set_status_message(self._t("RADAR_NEXT_NOT_VALIDATED"), ttl=4)
+            return
+        request = {"intent": action, **dict(params or {})}
+
+        from core.desktop.devtools.interface.intent_api import process_intent
+
+        with self._spinner(self._t("SPINNER_EXECUTE_NEXT", fallback="Выполняю следующий шаг")):
+            resp = process_intent(self.manager, request)
+
+        self._invalidate_radar_cache()
+        if not resp.success:
+            msg = str(resp.error_message or resp.error_code or "FAILED")
+            self.set_status_message(msg[:140], ttl=6)
+            self.force_render()
+            return
+
+        self._refresh_current_detail_from_disk()
+        self.set_status_message(self._t("RADAR_EXECUTED"), ttl=3)
+        self.force_render()
+
     def _open_task_text_editor(self, context: str) -> None:
         """Open a multiline editor for a task-level text field."""
         target = self._command_palette_target()
@@ -3814,13 +3959,13 @@ class TaskTrackerTUI(ClipboardMixin, CheckpointMixin, EditingMixin, DisplayMixin
             self.detail_selected_index = prev.get("selected_index", 0)
             self.detail_selected_path = prev.get("selected_key", prev.get("selected_path", ""))
             self.detail_selected_task_id = prev.get("selected_task_id", None)
-            self.detail_tab = prev.get("detail_tab", "overview")
+            self.detail_tab = prev.get("detail_tab", "radar")
             restored_offsets = prev.get("detail_tab_scroll_offsets", None)
             if isinstance(restored_offsets, dict):
                 self.detail_tab_scroll_offsets = dict(restored_offsets)
             else:
-                self.detail_tab_scroll_offsets = {"notes": 0, "plan": 0, "contract": 0, "meta": 0}
-            for tab in ("notes", "plan", "contract", "meta"):
+                self.detail_tab_scroll_offsets = {"radar": 0, "notes": 0, "plan": 0, "contract": 0, "meta": 0}
+            for tab in ("radar", "notes", "plan", "contract", "meta"):
                 self.detail_tab_scroll_offsets.setdefault(tab, 0)
             self._rebuild_detail_flat()
             # If we returned to a Plan view, mark its tasks list cache dirty so progress reflects
@@ -3835,16 +3980,16 @@ class TaskTrackerTUI(ClipboardMixin, CheckpointMixin, EditingMixin, DisplayMixin
             self.detail_selected_path = ""
             self.detail_view_offset = 0
             self.horizontal_offset = 0
-            self.detail_tab = "overview"
-            self.detail_tab_scroll_offsets = {"notes": 0, "plan": 0, "contract": 0, "meta": 0}
+            self.detail_tab = "radar"
+            self.detail_tab_scroll_offsets = {"radar": 0, "notes": 0, "plan": 0, "contract": 0, "meta": 0}
             self.settings_mode = False
             self._set_footer_height(self._footer_height_default_for_mode())
 
     def cycle_detail_tab(self, delta: int = 1) -> None:
-        """Cycle between detail tabs (overview/plan/contract/meta)."""
+        """Cycle between detail tabs (radar/overview/plan/contract/notes/meta)."""
         if not getattr(self, "detail_mode", False) or not getattr(self, "current_task_detail", None):
             return
-        current = getattr(self, "detail_tab", "overview") or "overview"
+        current = getattr(self, "detail_tab", "radar") or "radar"
         available = self._detail_tabs()
         try:
             idx = available.index(current)
@@ -3867,9 +4012,10 @@ class TaskTrackerTUI(ClipboardMixin, CheckpointMixin, EditingMixin, DisplayMixin
         """
         detail = getattr(self, "current_task_detail", None)
         if getattr(self, "navigation_stack", None):
-            return ("overview",)
+            # Radar is read-only and always targets the root task id (safe in nested views).
+            return ("radar", "overview")
         if detail and "/" in str(getattr(detail, "id", "") or ""):
-            return ("overview",)
+            return ("radar", "overview")
         return DETAIL_TABS
 
     # ---------- list editor (task/subtask lists) ----------

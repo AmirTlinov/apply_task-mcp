@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { TaskListItem, TaskStatus } from "@/types/task";
+import type { TaskListItem } from "@/types/task";
 import { TaskListSkeleton } from "@/components/common/Skeleton";
 import { EmptyState } from "@/components/common/EmptyState";
 import { useKeyboardListNavigation } from "@/hooks/useKeyboardListNavigation";
